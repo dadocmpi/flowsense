@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, IChartApi } from 'lightweight-charts';
+import * as LightweightCharts from 'lightweight-charts';
 import { Timeframe } from '../../types/trading';
 import { generateMockCandles } from '../../hooks/useTradingData';
 
@@ -10,23 +10,24 @@ interface MainChartProps {
 
 export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
+  const chartRef = useRef<LightweightCharts.IChartApi | null>(null);
   const [timeframes] = useState<Timeframe[]>(['M1', 'M5', 'M15', 'H1', 'H4', 'D1']);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    const chart = createChart(chartContainerRef.current, {
+    // Criar o gráfico usando a importação completa para evitar erros de 'not a function'
+    const chart = LightweightCharts.createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#0d0f14' },
+        background: { type: LightweightCharts.ColorType.Solid, color: '#0d0f14' },
         textColor: '#d1d4dc',
       },
       grid: {
-        vertLines: { color: 'rgba(42, 46, 57, 0.2)' },
-        horzLines: { color: 'rgba(42, 46, 57, 0.2)' },
+        vertLines: { color: 'rgba(42, 46, 57, 0.05)' },
+        horzLines: { color: 'rgba(42, 46, 57, 0.05)' },
       },
       crosshair: {
-        mode: 0,
+        mode: LightweightCharts.CrosshairMode.Normal,
       },
       rightPriceScale: {
         borderColor: 'rgba(197, 203, 206, 0.1)',
@@ -36,6 +37,8 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
         timeVisible: true,
         secondsVisible: false,
       },
+      handleScroll: true,
+      handleScale: true,
     });
 
     const candlestickSeries = chart.addCandlestickSeries({
@@ -51,24 +54,22 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
     const data = generateMockCandles(100);
     candlestickSeries.setData(data);
 
-    // Simular Overlays SMC
-    // Order Block (OB)
-    const obPrice = data[data.length - 20].low;
+    // Simular Overlays SMC (Order Blocks)
     const obSeries = chart.addHistogramSeries({
       color: 'rgba(38, 166, 154, 0.15)',
-      priceFormat: { type: 'price' },
     });
     
-    // FVG
-    const fvgSeries = chart.addHistogramSeries({
-      color: 'rgba(245, 158, 11, 0.1)',
-    });
+    // Ajustar o gráfico ao container
+    chart.timeScale().fitContent();
 
     chartRef.current = chart;
 
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ 
+          width: chartContainerRef.current.clientWidth,
+          height: chartContainerRef.current.clientHeight 
+        });
       }
     };
 
@@ -106,7 +107,7 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
         </div>
       </div>
       
-      <div ref={chartContainerRef} className="flex-grow relative" />
+      <div ref={chartContainerRef} className="flex-grow relative w-full h-full" />
       
       <div className="h-24 border-t border-white/5 p-4 bg-white/[0.02]">
         <div className="flex items-start space-x-3">
