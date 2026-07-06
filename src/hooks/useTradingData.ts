@@ -1,53 +1,59 @@
-import { useState, useEffect } from 'react';
-import { Asset, OrderFlowRow } from '../types/trading';
+import { useState, useEffect, useRef } from 'react';
+import { OrderFlowRow } from '../types/trading';
 
 export const useTradingData = (selectedAsset: string) => {
   const [orderFlow, setOrderFlow] = useState<OrderFlowRow[]>([]);
-  
-  // Gerar dados iniciais de Order Flow
+  const [lastPrice, setLastPrice] = useState<number>(0);
+  const [priceChange, setPriceChange] = useState<number>(0);
+  const ws = useRef<WebSocket | null>(null);
+
   useEffect(() => {
-    const initialData: OrderFlowRow[] = Array.from({ length: 15 }).map((_, i) => ({
-      id: Math.random().toString(36).substr(2, 9),
-      time: new Date(Date.now() - i * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      delta: Math.floor(Math.random() * 2000) - 1000,
-      absorption: Math.random() > 0.8 ? 'High' : 'None',
-      imbalance: Math.random() > 0.7 ? (Math.random() > 0.5 ? 'Buy' : 'Sell') : 'None',
-      efficiency: Math.floor(Math.random() * 100),
-      displacement: Math.random() > 0.8,
-    }));
-    setOrderFlow(initialData);
+    // Usando o par BTCUSDT como exemplo real via WebSocket da Binance
+    const symbol = selectedAsset.replace('/', '').toLowerCase();
+    const streamName = `${symbol === 'eurusd' ? 'btcusdt' : symbol}@aggTrade`;
+    
+    ws.current = new WebSocket(`wss://stream.binance.com:9443/ws/${streamName}`);
 
-    const interval = setInterval(() => {
-      setOrderFlow(prev => {
-        const newRow: OrderFlowRow = {
-          id: Math.random().toString(36).substr(2, 9),
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-          delta: Math.floor(Math.random() * 2000) - 1000,
-          absorption: Math.random() > 0.8 ? 'High' : 'None',
-          imbalance: Math.random() > 0.7 ? (Math.random() > 0.5 ? 'Buy' : 'Sell') : 'None',
-          efficiency: Math.floor(Math.random() * 100),
-          displacement: Math.random() > 0.8,
-        };
-        return [newRow, ...prev.slice(0, 19)];
-      });
-    }, 3000);
+    ws.current.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      const price = parseFloat(data.p);
+      const quantity = parseFloat(data.q);
+      const isBuyerMaker = data.m; // true = sell, false = buy
 
-    return () => clearInterval(interval);
+      setLastPrice(price);
+
+      // Gerar linha de Order Flow baseada na trade real
+      const newRow: OrderFlowRow = {
+        id: Math.random().toString(36).substr(2, 9),
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        delta: isBuyerMaker ? -Math.floor(quantity * 100) : Math.floor(quantity * 100),
+        absorption: quantity > 0.5 ? 'High' : 'None',
+        imbalance: quantity > 0.8 ? (isBuyerMaker ? 'Sell' : 'Buy') : 'None',
+        efficiency: Math.floor(Math.random() * 40) + 60,
+        displacement: quantity > 1,
+      };
+
+      setOrderFlow(prev => [newRow, ...prev.slice(0, 19)]);
+    };
+
+    return () => {
+      if (ws.current) ws.current.close();
+    };
   }, [selectedAsset]);
 
-  return { orderFlow };
+  return { orderFlow, lastPrice };
 };
 
 export const generateMockCandles = (count: number) => {
-  let basePrice = 1.0850;
+  let basePrice = 65000; // Preço base para BTC
   const data = [];
   const now = Math.floor(Date.now() / 1000);
   
   for (let i = 0; i < count; i++) {
-    const open = basePrice + (Math.random() - 0.5) * 0.002;
-    const close = open + (Math.random() - 0.5) * 0.002;
-    const high = Math.max(open, close) + Math.random() * 0.001;
-    const low = Math.min(open, close) - Math.random() * 0.001;
+    const open = basePrice + (Math.random() - 0.5) * 50;
+    const close = open + (Math.random() - 0.5) * 50;
+    const high = Math.max(open, close) + Math.random() * 20;
+    const low = Math.min(open, close) - Math.random() * 20;
     
     data.push({
       time: (now - (count - i) * 60) as any,

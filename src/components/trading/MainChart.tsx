@@ -21,53 +21,40 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Inicialização do gráfico com imports nomeados
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#0d0f14' },
+        background: { type: ColorType.Solid, color: '#000000' },
         textColor: '#d1d4dc',
       },
       grid: {
-        vertLines: { color: 'rgba(42, 46, 57, 0.05)' },
-        horzLines: { color: 'rgba(42, 46, 57, 0.05)' },
+        vertLines: { color: 'rgba(255, 255, 255, 0.03)' },
+        horzLines: { color: 'rgba(255, 255, 255, 0.03)' },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
       },
       rightPriceScale: {
-        borderColor: 'rgba(197, 203, 206, 0.1)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
       },
       timeScale: {
-        borderColor: 'rgba(197, 203, 206, 0.1)',
+        borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
-        secondsVisible: false,
       },
       width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientHeight || 400,
+      height: chartContainerRef.current.clientHeight,
     });
 
-    // Verificação de segurança antes de adicionar as séries
-    if (chart && typeof chart.addCandlestickSeries === 'function') {
-      const candlestickSeries = chart.addCandlestickSeries({
-        upColor: '#ffffff',
-        downColor: '#1a1a1a',
-        borderVisible: true,
-        wickUpColor: '#888888',
-        wickDownColor: '#888888',
-        borderUpColor: '#ffffff',
-        borderDownColor: '#ffffff',
-      });
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: '#ffffff',
+      downColor: '#000000',
+      borderVisible: true,
+      wickUpColor: '#ffffff',
+      wickDownColor: '#ffffff',
+      borderUpColor: '#ffffff',
+      borderDownColor: '#ffffff',
+    });
 
-      const data = generateMockCandles(100);
-      candlestickSeries.setData(data);
-
-      // Adicionando histograma para simular Order Blocks
-      const obSeries = chart.addHistogramSeries({
-        color: 'rgba(38, 166, 154, 0.15)',
-      });
-
-      chart.timeScale().fitContent();
-    }
+    candlestickSeries.setData(generateMockCandles(100));
 
     chartRef.current = chart;
 
@@ -81,7 +68,6 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
     };
 
     window.addEventListener('resize', handleResize);
-
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
@@ -89,7 +75,7 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
   }, [asset, timeframe]);
 
   return (
-    <div className="flex flex-col h-full bg-[#0d0f14]">
+    <div className="flex flex-col h-full bg-black">
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/5">
         <div className="flex items-center space-x-4">
           <span className="text-sm font-bold text-white">{asset}</span>
@@ -106,25 +92,15 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
             ))}
           </div>
         </div>
-        <div className="flex items-center space-x-3 text-[10px] font-mono text-white/40">
-          <span className="flex items-center"><div className="w-2 h-2 bg-white border border-white/20 mr-1"></div> BULL</span>
-          <span className="flex items-center"><div className="w-2 h-2 bg-[#1a1a1a] border border-white/20 mr-1"></div> BEAR</span>
-          <span className="flex items-center"><div className="w-2 h-2 bg-[#26a69a]/20 mr-1"></div> OB</span>
-          <span className="flex items-center"><div className="w-2 h-2 bg-[#f59e0b]/20 mr-1"></div> FVG</span>
-        </div>
       </div>
-      
-      <div ref={chartContainerRef} className="flex-grow relative w-full h-full min-h-[400px]" />
-      
-      <div className="h-24 border-t border-white/5 p-4 bg-white/[0.02]">
+      <div ref={chartContainerRef} className="flex-grow relative w-full h-full" />
+      <div className="h-24 border-t border-white/5 p-4 bg-white/[0.01]">
         <div className="flex items-start space-x-3">
           <div className="px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] font-bold text-amber-500 uppercase tracking-tighter">
             IA Veredito
           </div>
-          <p className="text-xs text-white/70 leading-relaxed max-w-3xl">
-            Sweep de liquidez detectado abaixo do low de Londres. O preço reagiu em um <span className="text-white font-bold">H1 Bullish Order Block</span>. 
-            Aguardando <span className="text-white font-bold">CHoCH em M5</span> para confirmar reversão estrutural. 
-            Viés: <span className="text-[#26a69a] font-bold">COMPRA</span> em zona de desconto (abaixo de 50% do range atual).
+          <p className="text-xs text-white/70 leading-relaxed">
+            Monitorando fluxo institucional em tempo real. Dados via WebSocket ativos.
           </p>
         </div>
       </div>
