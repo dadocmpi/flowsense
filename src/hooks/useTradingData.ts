@@ -4,11 +4,9 @@ import { OrderFlowRow } from '../types/trading';
 export const useTradingData = (selectedAsset: string) => {
   const [orderFlow, setOrderFlow] = useState<OrderFlowRow[]>([]);
   const [lastPrice, setLastPrice] = useState<number>(0);
-  const [priceChange, setPriceChange] = useState<number>(0);
   const ws = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    // Usando o par BTCUSDT como exemplo real via WebSocket da Binance
     const symbol = selectedAsset.replace('/', '').toLowerCase();
     const streamName = `${symbol === 'eurusd' ? 'btcusdt' : symbol}@aggTrade`;
     
@@ -18,11 +16,10 @@ export const useTradingData = (selectedAsset: string) => {
       const data = JSON.parse(event.data);
       const price = parseFloat(data.p);
       const quantity = parseFloat(data.q);
-      const isBuyerMaker = data.m; // true = sell, false = buy
+      const isBuyerMaker = data.m;
 
       setLastPrice(price);
 
-      // Gerar linha de Order Flow baseada na trade real
       const newRow: OrderFlowRow = {
         id: Math.random().toString(36).substr(2, 9),
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
@@ -45,9 +42,11 @@ export const useTradingData = (selectedAsset: string) => {
 };
 
 export const generateMockCandles = (count: number) => {
-  let basePrice = 65000; // Preço base para BTC
+  let basePrice = 65000;
   const data = [];
+  // Usar timestamp em segundos (padrão lightweight-charts)
   const now = Math.floor(Date.now() / 1000);
+  const secondsInMinute = 60;
   
   for (let i = 0; i < count; i++) {
     const open = basePrice + (Math.random() - 0.5) * 50;
@@ -56,7 +55,7 @@ export const generateMockCandles = (count: number) => {
     const low = Math.min(open, close) - Math.random() * 20;
     
     data.push({
-      time: (now - (count - i) * 60) as any,
+      time: (now - (count - i) * secondsInMinute) as any,
       open,
       high,
       low,

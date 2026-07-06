@@ -1,10 +1,14 @@
+"use client";
+
 import React, { useEffect, useRef, useState } from 'react';
 import { 
   createChart, 
   ColorType, 
   CrosshairMode, 
   IChartApi,
-  ISeriesApi
+  ISeriesApi,
+  CandlestickData,
+  Time
 } from 'lightweight-charts';
 import { Timeframe } from '../../types/trading';
 import { generateMockCandles } from '../../hooks/useTradingData';
@@ -23,10 +27,9 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Garantir que o container tenha dimensões antes de criar o gráfico
     const container = chartContainerRef.current;
-    const { clientWidth, clientHeight } = container;
-
+    
+    // Criar o gráfico
     const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: '#000000' },
@@ -45,26 +48,30 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
       timeScale: {
         borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
+        secondsVisible: false,
       },
-      width: clientWidth || 800,
-      height: clientHeight || 600,
+      width: container.clientWidth || 800,
+      height: container.clientHeight || 600,
     });
 
-    // Adicionar a série de candles
+    // Adicionar a série de candles - Usando a API correta
     const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#ffffff',
-      downColor: '#000000',
-      borderVisible: true,
-      wickUpColor: '#ffffff',
-      wickDownColor: '#ffffff',
-      borderUpColor: '#ffffff',
-      borderDownColor: '#ffffff',
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderVisible: false,
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
     });
 
-    candlestickSeries.setData(generateMockCandles(100));
+    // Gerar e formatar dados
+    const data = generateMockCandles(100) as CandlestickData<Time>[];
+    candlestickSeries.setData(data);
     
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
+
+    // Ajustar o conteúdo inicial
+    chart.timeScale().fitContent();
 
     const handleResize = () => {
       if (container && chart) {
@@ -77,14 +84,11 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
 
     window.addEventListener('resize', handleResize);
 
-    // Ajustar o conteúdo inicial
-    chart.timeScale().fitContent();
-
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [asset]); // Recriar apenas se o asset mudar
+  }, [asset]); // Recriar se o asset mudar
 
   return (
     <div className="flex flex-col h-full bg-black">
@@ -112,7 +116,8 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
             IA Veredito
           </div>
           <p className="text-xs text-white/70 leading-relaxed">
-            Monitorando fluxo institucional em tempo real. Dados via WebSocket ativos.
+            Monitorando fluxo institucional em tempo real. Dados via WebSocket ativos. 
+            Análise de volume detectando absorção passiva em níveis de suporte.
           </p>
         </div>
       </div>
