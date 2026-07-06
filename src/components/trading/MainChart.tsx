@@ -3,7 +3,8 @@ import {
   createChart, 
   ColorType, 
   CrosshairMode, 
-  IChartApi 
+  IChartApi,
+  ISeriesApi
 } from 'lightweight-charts';
 import { Timeframe } from '../../types/trading';
 import { generateMockCandles } from '../../hooks/useTradingData';
@@ -16,12 +17,17 @@ interface MainChartProps {
 export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const [timeframes] = useState<Timeframe[]>(['M1', 'M5', 'M15', 'H1', 'H4', 'D1']);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    const chart = createChart(chartContainerRef.current, {
+    // Garantir que o container tenha dimensões antes de criar o gráfico
+    const container = chartContainerRef.current;
+    const { clientWidth, clientHeight } = container;
+
+    const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: '#000000' },
         textColor: '#d1d4dc',
@@ -40,10 +46,11 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
         borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
       },
-      width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientHeight,
+      width: clientWidth || 800,
+      height: clientHeight || 600,
     });
 
+    // Adicionar a série de candles
     const candlestickSeries = chart.addCandlestickSeries({
       upColor: '#ffffff',
       downColor: '#000000',
@@ -55,24 +62,29 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
     });
 
     candlestickSeries.setData(generateMockCandles(100));
-
+    
     chartRef.current = chart;
+    seriesRef.current = candlestickSeries;
 
     const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ 
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight 
+      if (container && chart) {
+        chart.applyOptions({ 
+          width: container.clientWidth,
+          height: container.clientHeight 
         });
       }
     };
 
     window.addEventListener('resize', handleResize);
+
+    // Ajustar o conteúdo inicial
+    chart.timeScale().fitContent();
+
     return () => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [asset, timeframe]);
+  }, [asset]); // Recriar apenas se o asset mudar
 
   return (
     <div className="flex flex-col h-full bg-black">
