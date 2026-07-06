@@ -8,7 +8,8 @@ import {
   IChartApi,
   ISeriesApi,
   CandlestickData,
-  Time
+  Time,
+  SeriesType
 } from 'lightweight-charts';
 import { Timeframe } from '../../types/trading';
 import { generateMockCandles } from '../../hooks/useTradingData';
@@ -29,7 +30,7 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
 
     const container = chartContainerRef.current;
     
-    // Criar o gráfico
+    // Criar o gráfico com opções robustas
     const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: '#000000' },
@@ -44,34 +45,54 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
       },
       rightPriceScale: {
         borderColor: 'rgba(255, 255, 255, 0.1)',
+        visible: true,
       },
       timeScale: {
         borderColor: 'rgba(255, 255, 255, 0.1)',
         timeVisible: true,
         secondsVisible: false,
       },
-      width: container.clientWidth || 800,
-      height: container.clientHeight || 600,
+      width: container.clientWidth,
+      height: container.clientHeight,
     });
 
-    // Adicionar a série de candles - Usando a API correta
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
-    });
-
-    // Gerar e formatar dados
-    const data = generateMockCandles(100) as CandlestickData<Time>[];
-    candlestickSeries.setData(data);
+    // Na v5, usamos addCandlestickSeries, mas vamos garantir que o objeto existe
+    // Se por algum motivo a versão instalada for diferente, tentamos o método genérico
+    let candlestickSeries: ISeriesApi<"Candlestick">;
     
-    chartRef.current = chart;
-    seriesRef.current = candlestickSeries;
+    try {
+      // @ts-ignore - Fallback para diferentes versões da API
+      if (typeof chart.addCandlestickSeries === 'function') {
+        candlestickSeries = chart.addCandlestickSeries({
+          upColor: '#26a69a',
+          downColor: '#ef5350',
+          borderVisible: false,
+          wickUpColor: '#26a69a',
+          wickDownColor: '#ef5350',
+        });
+      } else {
+        // Fallback para addSeries se addCandlestickSeries não estiver disponível
+        candlestickSeries = chart.addSeries(SeriesType.Candlestick, {
+          upColor: '#26a69a',
+          downColor: '#ef5350',
+          borderVisible: false,
+          wickUpColor: '#26a69a',
+          wickDownColor: '#ef5350',
+        });
+      }
 
-    // Ajustar o conteúdo inicial
-    chart.timeScale().fitContent();
+      // Gerar e formatar dados
+      const data = generateMockCandles(100) as CandlestickData<Time>[];
+      candlestickSeries.setData(data);
+      
+      chartRef.current = chart;
+      seriesRef.current = candlestickSeries;
+
+      // Ajustar o conteúdo inicial
+      chart.timeScale().fitContent();
+    } catch (err) {
+      console.error("Erro ao inicializar série do gráfico:", err);
+    }
 
     const handleResize = () => {
       if (container && chart) {
@@ -88,7 +109,7 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [asset]); // Recriar se o asset mudar
+  }, [asset]);
 
   return (
     <div className="flex flex-col h-full bg-black">
