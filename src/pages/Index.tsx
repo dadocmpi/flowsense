@@ -1,57 +1,57 @@
 import React, { useState } from 'react';
-import { Watchlist } from '../components/trading/Watchlist';
-import { MainChart } from '../components/trading/MainChart';
+import { Sidebar } from '../components/trading/Sidebar';
 import { DirectionalCompass } from '../components/trading/DirectionalCompass';
+import { MetricsGrid } from '../components/trading/MetricsGrid';
 import { OrderFlowFeed } from '../components/trading/OrderFlowFeed';
+import { AssetSelector } from '../components/trading/AssetSelector';
 import { useTradingData } from '../hooks/useTradingData';
-import { Timeframe } from '../types/trading';
 
 const Index = () => {
-  const [selectedAsset, setSelectedAsset] = useState('BTC/USDT');
-  const [timeframe, setTimeframe] = useState<Timeframe>('M15');
-  const { orderFlow, lastPrice } = useTradingData(selectedAsset);
+  const [selectedAsset, setSelectedAsset] = useState('XAU/USD');
+  const { price, metrics, bids, asks } = useTradingData(selectedAsset);
 
-  // Cálculo simples de bias baseado no último delta
-  const biasScore = orderFlow.length > 0 
-    ? Math.min(Math.max(50 + (orderFlow[0].delta / 10), 10), 90) 
-    : 50;
+  // Calcular score da bússola baseado na porcentagem de compradores
+  const compassScore = metrics.buyersPercent;
 
   return (
-    <div className="h-screen w-screen bg-black text-white overflow-hidden font-sans selection:bg-white/20">
-      {/* Wrapper para o Zoom de 90% */}
-      <div 
-        className="flex h-full w-full origin-top-left"
-        style={{ 
-          transform: 'scale(0.9)', 
-          width: '111.11%', 
-          height: '111.11%' 
-        }}
-      >
-        {/* Coluna Esquerda: Watchlist */}
-        <div className="w-72 flex-shrink-0 border-r border-white/5">
-          <Watchlist 
-            selectedAsset={selectedAsset} 
-            onSelect={setSelectedAsset} 
-          />
-        </div>
+    <div className="h-screen w-screen bg-[#050608] text-white overflow-hidden font-sans flex items-center justify-center selection:bg-white/20">
+      {/* Container Principal com Proporção de Monitor Vertical */}
+      <div className="w-full max-w-[420px] h-full max-h-[900px] bg-[#0a0b0d] border border-white/[0.04] shadow-[0_20px_50px_rgba(0,0,0,0.8)] flex overflow-hidden rounded-2xl">
+        
+        {/* Barra Lateral Esquerda */}
+        <Sidebar />
 
-        {/* Coluna Central: Gráfico */}
-        <div className="flex-grow flex flex-col min-w-0">
-          <MainChart 
-            asset={selectedAsset} 
-            timeframe={timeframe} 
-          />
-        </div>
+        {/* Conteúdo Principal do Terminal */}
+        <div className="flex-grow flex flex-col min-w-0 relative">
+          
+          {/* Barra de Topo com Seletor de Ativos */}
+          <div className="absolute top-4 right-4 z-30">
+            <AssetSelector 
+              selectedAsset={selectedAsset} 
+              onSelect={setSelectedAsset} 
+            />
+          </div>
 
-        {/* Coluna Direita: IA & Order Flow */}
-        <div className="w-80 flex-shrink-0 border-l border-white/5 flex flex-col">
+          {/* Bússola do Trader */}
           <DirectionalCompass 
-            score={Math.round(biasScore)} 
-            bias={biasScore > 55 ? 'Bullish' : biasScore < 45 ? 'Bearish' : 'Neutral'} 
+            score={compassScore} 
+            asset={selectedAsset} 
           />
+
+          {/* Grade de Métricas */}
+          <MetricsGrid 
+            metrics={metrics} 
+          />
+
+          {/* Fluxo de Ordens (Order Flow Ladder) */}
           <OrderFlowFeed 
-            data={orderFlow} 
+            bids={bids}
+            asks={asks}
+            currentPrice={price}
+            metrics={metrics}
+            asset={selectedAsset}
           />
+
         </div>
       </div>
     </div>

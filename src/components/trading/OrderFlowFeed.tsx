@@ -1,52 +1,123 @@
 import React from 'react';
-import { OrderFlowRow } from '../../types/trading';
+import { OrderBookLevel, TradingMetrics } from '../../types/trading';
 import { cn } from '@/lib/utils';
 
 interface OrderFlowFeedProps {
-  data: OrderFlowRow[];
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  currentPrice: number;
+  metrics: TradingMetrics;
+  asset: string;
 }
 
-export const OrderFlowFeed: React.FC<OrderFlowFeedProps> = ({ data }) => {
+export const OrderFlowFeed: React.FC<OrderFlowFeedProps> = ({ 
+  bids, 
+  asks, 
+  currentPrice, 
+  metrics,
+  asset
+}) => {
+  // Formatar preço de acordo com o ativo
+  const formatPrice = (val: number) => {
+    if (!val) return '0.00';
+    if (asset.includes('EUR')) return val.toFixed(5);
+    return val.toFixed(2);
+  };
+
   return (
-    <div className="flex flex-col h-1/2 bg-black overflow-hidden">
-      <div className="p-4 border-b border-white/5 flex justify-between items-center">
-        <h3 className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Order Flow Real-Time</h3>
-        <div className="flex items-center space-x-2">
-          <div className="w-1.5 h-1.5 bg-[#26a69a] rounded-full animate-pulse" />
-          <span className="text-[9px] text-white/40 font-mono uppercase">Binance Live</span>
+    <div className="flex flex-col flex-grow bg-[#0d0e12] overflow-hidden select-none">
+      {/* Cabeçalho da Seção */}
+      <div className="p-4 border-b border-white/[0.03]">
+        <h3 className="text-[10px] font-bold text-white/40 uppercase tracking-[0.2em]">Order Flow</h3>
+      </div>
+
+      {/* Compradores vs Vendedores */}
+      <div className="grid grid-cols-2 gap-4 px-6 py-3 border-b border-white/[0.02]">
+        <div className="text-left">
+          <span className="text-[8px] font-bold text-white/30 uppercase tracking-wider block">Compradores</span>
+          <span className="text-lg font-mono font-bold text-[#26a69a]">{metrics.buyersPercent}%</span>
+        </div>
+        <div className="text-right">
+          <span className="text-[8px] font-bold text-white/30 uppercase tracking-wider block">Vendedores</span>
+          <span className="text-lg font-mono font-bold text-[#ef5350]">{metrics.sellersPercent}%</span>
         </div>
       </div>
-      <div className="flex-grow overflow-y-auto font-mono text-[10px]">
-        <table className="w-full text-left border-collapse">
-          <thead className="sticky top-0 bg-black text-white/30 uppercase text-[8px] border-b border-white/5">
-            <tr>
-              <th className="px-4 py-2">Time</th>
-              <th className="px-4 py-2">Delta</th>
-              <th className="px-4 py-2">Imbalance</th>
-              <th className="px-4 py-2">Absorp.</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((row) => (
-              <tr key={row.id} className="border-b border-white/[0.02] hover:bg-white/[0.02]">
-                <td className="px-4 py-1.5 text-white/40">{row.time}</td>
-                <td className={cn("px-4 py-1.5 font-bold", row.delta > 0 ? "text-[#26a69a]" : "text-[#ef5350]")}>
-                  {row.delta > 0 ? '+' : ''}{row.delta}
-                </td>
-                <td className="px-4 py-1.5">
-                  {row.imbalance !== 'None' ? (
-                    <span className={cn("px-1 rounded-[2px]", row.imbalance === 'Buy' ? "bg-[#26a69a]/20 text-[#26a69a]" : "bg-[#ef5350]/20 text-[#ef5350]")}>
-                      {row.imbalance.toUpperCase()}
-                    </span>
-                  ) : '-'}
-                </td>
-                <td className="px-4 py-1.5">
-                  {row.absorption === 'High' ? <span className="text-amber-500 font-bold">HIGH</span> : <span className="text-white/20">LOW</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      {/* Escada de Profundidade (Order Book Ladder) */}
+      <div className="flex-grow overflow-y-auto px-4 py-2 font-mono text-[10px] flex flex-col justify-center">
+        <div className="space-y-[3px]">
+          {/* Asks (Vendedores) - Parte Superior */}
+          {asks.slice(0, 5).reverse().map((ask, idx) => (
+            <div key={`ask-${idx}`} className="grid grid-cols-3 items-center h-5 relative">
+              {/* Lado Esquerdo (Vazio para Asks) */}
+              <div />
+              
+              {/* Preço Central */}
+              <div className="text-center text-white/50 text-[9px] z-10">
+                {formatPrice(ask.price)}
+              </div>
+
+              {/* Lado Direito (Barras Vermelhas) */}
+              <div className="relative h-full flex items-center justify-start pl-2">
+                <div 
+                  className="absolute left-0 top-0 bottom-0 bg-[#ef5350]/15 border-l border-[#ef5350]/40 rounded-[1px]" 
+                  style={{ width: `${ask.percentage}%` }}
+                />
+                <span className="text-[8px] text-white/30 z-10">{ask.size}</span>
+              </div>
+            </div>
+          ))}
+
+          {/* Preço Atual Destacado */}
+          <div className="grid grid-cols-3 items-center h-7 border-y border-white/[0.04] bg-white/[0.01] my-1">
+            <div className="text-left pl-2 text-[8px] text-white/30 uppercase tracking-wider">Preço</div>
+            <div className="text-center text-xs font-bold text-[#ef5350] animate-pulse">
+              {formatPrice(currentPrice)}
+            </div>
+            <div className="text-right pr-2 text-[8px] text-white/30">LIVE</div>
+          </div>
+
+          {/* Bids (Compradores) - Parte Inferior */}
+          {bids.slice(0, 5).map((bid, idx) => (
+            <div key={`bid-${idx}`} className="grid grid-cols-3 items-center h-5 relative">
+              {/* Lado Esquerdo (Barras Verdes) */}
+              <div className="relative h-full flex items-center justify-end pr-2">
+                <div 
+                  className="absolute right-0 top-0 bottom-0 bg-[#26a69a]/15 border-r border-[#26a69a]/40 rounded-[1px]" 
+                  style={{ width: `${bid.percentage}%` }}
+                />
+                <span className="text-[8px] text-white/30 z-10">{bid.size}</span>
+              </div>
+
+              {/* Preço Central */}
+              <div className="text-center text-white/50 text-[9px] z-10">
+                {formatPrice(bid.price)}
+              </div>
+
+              {/* Lado Direito (Vazio para Bids) */}
+              <div />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Métricas de Rodapé */}
+      <div className="grid grid-cols-2 border-t border-white/[0.03] bg-black/40">
+        <div className="p-4 border-r border-white/[0.03]">
+          <span className="text-[8px] font-bold text-white/30 uppercase tracking-wider block">Delta</span>
+          <span className={cn(
+            "text-xs font-mono font-bold block mt-1",
+            metrics.delta >= 0 ? "text-[#26a69a]" : "text-[#ef5350]"
+          )}>
+            {metrics.delta >= 0 ? '+' : ''}{metrics.delta.toLocaleString()}
+          </span>
+        </div>
+        <div className="p-4">
+          <span className="text-[8px] font-bold text-white/30 uppercase tracking-wider block">Absorção</span>
+          <span className="text-xs font-bold text-amber-500 block mt-1 uppercase tracking-wider">
+            {metrics.absorcao}
+          </span>
+        </div>
       </div>
     </div>
   );

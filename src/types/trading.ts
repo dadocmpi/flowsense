@@ -6,15 +6,22 @@ export interface Asset {
   price: number;
   change: number;
   trend: 'up' | 'down' | 'neutral';
-  category: 'FOREX' | 'INDICES' | 'COMMODITIES';
+  category: 'FOREX' | 'CRYPTO' | 'COMMODITIES';
 }
 
-export interface OrderFlowRow {
-  id: string;
-  time: string;
+export interface OrderBookLevel {
+  price: number;
+  size: number;
+  percentage: number;
+}
+
+export interface TradingMetrics {
+  tendencia: 'ALTA FORTE' | 'ALTA' | 'BAIXA FORTE' | 'BAIXA' | 'NEUTRO';
+  forca: 'FORTE' | 'MODERADA' | 'FRACA';
+  momento: 'ALTISTA' | 'BAIXISTA' | 'NEUTRO';
+  confluencia: 'ALTA' | 'MEDIA' | 'BAIXA';
+  buyersPercent: number;
+  sellersPercent: number;
   delta: number;
-  absorption: 'High' | 'Low' | 'None';
-  imbalance: 'Buy' | 'Sell' | 'None';
-  efficiency: number;
-  displacement: boolean;
+  absorcao: 'ALTA' | 'MEDIA' | 'BAIXA';
 }
