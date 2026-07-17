@@ -2,10 +2,9 @@ import React, { useState } from 'react';
 import { DirectionalCompass } from '../components/trading/DirectionalCompass';
 import { MetricsGrid } from '../components/trading/MetricsGrid';
 import { OrderFlowFeed } from '../components/trading/OrderFlowFeed';
-import { AdvancedAnalysis } from '../components/trading/AdvancedAnalysis';
 import { AssetSelector } from '../components/trading/AssetSelector';
 import { useTradingData } from '../hooks/useTradingData';
-import { TrendingUp, ShieldAlert, RefreshCw } from 'lucide-react';
+import { TrendingUp } from 'lucide-react';
 
 const Index = () => {
   const [selectedAsset, setSelectedAsset] = useState('XAU/USD');
@@ -41,17 +40,19 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Área de Conteúdo Principal (Layout de Tela Cheia Responsivo) */}
-      <main className="flex-grow p-6 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Área de Conteúdo Principal (Layout de Duas Colunas) */}
+      <main className="flex-grow p-6 max-w-[1400px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Coluna Esquerda: Bússola + Grade de Métricas (4/12 cols) */}
-        <div className="lg:col-span-4 flex flex-col space-y-6">
+        {/* Coluna Esquerda: Bússola + Grade de Métricas (7/12 cols) */}
+        <div className="lg:col-span-7 flex flex-col space-y-6">
           {/* Bússola de Sentimento */}
-          <div className="flex-grow">
-            <DirectionalCompass 
-              score={compassScore} 
-              asset={selectedAsset} 
-            />
+          <div className="flex-grow flex items-center justify-center bg-[#0d0e12] rounded-2xl border border-white/[0.03] p-6">
+            <div className="w-full max-w-md">
+              <DirectionalCompass 
+                score={compassScore} 
+                asset={selectedAsset} 
+              />
+            </div>
           </div>
 
           {/* Grade de Métricas Rápidas */}
@@ -62,30 +63,8 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Coluna Central: Super Análises Internas (5/12 cols) */}
-        <div className="lg:col-span-5 flex flex-col space-y-6">
-          {/* Painel de Super Análises */}
-          <div className="flex-grow">
-            <AdvancedAnalysis 
-              metrics={metrics} 
-              asset={selectedAsset} 
-            />
-          </div>
-
-          {/* Banner de Alerta de Risco / Informação */}
-          <div className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl flex items-start space-x-3">
-            <ShieldAlert size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block">Aviso de Volatilidade</span>
-              <p className="text-[10px] text-white/50 leading-relaxed mt-1">
-                Análise baseada em fluxo de ordens institucionais em tempo real. Certifique-se de alinhar os sinais com seu gerenciamento de risco operacional.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Coluna Direita: Escada de Order Flow (3/12 cols) */}
-        <div className="lg:col-span-3 flex flex-col h-full min-h-[500px] lg:min-h-0">
+        {/* Coluna Direita: Escada de Order Flow (5/12 cols) */}
+        <div className="lg:col-span-5 flex flex-col h-full min-h-[500px] lg:min-h-0">
           <div className="flex-grow rounded-2xl overflow-hidden border border-white/[0.03] flex flex-col">
             <OrderFlowFeed 
               bids={bids}
