@@ -18,9 +18,9 @@ export const DirectionalCompass: React.FC<DirectionalCompassProps> = ({ score, a
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-8 bg-[#0d0e12] border-b border-white/[0.03] relative">
+    <div className="flex flex-col items-center justify-center p-4 bg-transparent relative">
       {/* Bússola Circular */}
-      <div className="relative w-56 h-56 flex items-center justify-center">
+      <div className="relative w-52 h-52 flex items-center justify-center">
         {/* Anel Externo Metálico */}
         <div className="absolute inset-0 rounded-full border border-white/[0.05] bg-gradient-to-b from-white/[0.02] to-transparent shadow-[inset_0_4px_12px_rgba(0,0,0,0.8)]" />
         
@@ -55,7 +55,7 @@ export const DirectionalCompass: React.FC<DirectionalCompassProps> = ({ score, a
           transition={{ type: 'spring', stiffness: 60, damping: 15 }}
         >
           {/* Corpo da Agulha */}
-          <div className="relative w-1.5 h-40 flex flex-col justify-between items-center">
+          <div className="relative w-1.5 h-36 flex flex-col justify-between items-center">
             {/* Ponta Norte (Laranja de Alta Performance) */}
             <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[24px] border-b-[#f59e0b] drop-shadow-[0_0_6px_rgba(245,158,11,0.6)]" />
             {/* Ponta Sul (Cinza) */}
