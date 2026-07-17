@@ -8,16 +8,7 @@ interface DirectionalCompassProps {
 
 export const DirectionalCompass: React.FC<DirectionalCompassProps> = ({ score, asset }) => {
   // Mapear score (0 a 100) para rotação da agulha (-120 a 120 graus)
-  // 0 -> -120 graus (Venda Forte)
-  // 50 -> 0 graus (Neutro)
-  // 100 -> 120 graus (Compra Forte)
   const rotation = ((score - 50) / 50) * 120;
-
-  const getAssetSymbol = () => {
-    if (asset.includes('XAU')) return 'Au';
-    if (asset.includes('OIL')) return '🛢️';
-    return '$';
-  };
 
   // Determinar texto de sentimento atual
   const getSentimentLabel = () => {
@@ -78,38 +69,39 @@ export const DirectionalCompass: React.FC<DirectionalCompassProps> = ({ score, a
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           {/* Neutro (Topo) */}
           <span className="absolute top-4 text-[9px] font-bold text-white/40 font-mono">NEUTRO</span>
+          
           {/* Compra (Direita) */}
           <span className="absolute right-5 text-[9px] font-bold text-[#26a69a]/70 font-mono tracking-wider">COMPRA</span>
+          
           {/* Venda (Esquerda) */}
           <span className="absolute left-5 text-[9px] font-bold text-[#ef5350]/70 font-mono tracking-wider">VENDA</span>
           
           {/* Venda Forte (Inferior Esquerdo) */}
-          <span className="absolute bottom-10 left-10 text-[8px] font-bold text-[#ef5350]/40 font-mono">FORTE</span>
+          <span className="absolute bottom-10 left-6 text-[8px] font-bold text-[#ef5350]/50 font-mono">VENDA FORTE</span>
+          
           {/* Compra Forte (Inferior Direito) */}
-          <span className="absolute bottom-10 right-10 text-[8px] font-bold text-[#26a69a]/40 font-mono">FORTE</span>
+          <span className="absolute bottom-10 right-6 text-[8px] font-bold text-[#26a69a]/50 font-mono">COMPRA FORTE</span>
         </div>
 
-        {/* Agulha Giratória */}
+        {/* Agulha Giratória de Alta Precisão (Apenas ponteiro de cima ativo) */}
         <motion.div 
           className="absolute w-full h-full flex items-center justify-center pointer-events-none z-10"
           animate={{ rotate: rotation }}
           transition={{ type: 'spring', stiffness: 50, damping: 12 }}
         >
-          {/* Corpo da Agulha */}
-          <div className="relative w-2 h-44 flex flex-col justify-between items-center">
+          {/* Corpo da Agulha de Ponteiro Único */}
+          <div className="relative w-2 h-44 flex flex-col justify-start items-center">
             {/* Ponta Ativa (Laranja de Alta Performance) */}
             <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-b-[28px] border-b-[#f59e0b] drop-shadow-[0_0_8px_rgba(245,158,11,0.7)]" />
-            {/* Ponta Passiva (Cinza) */}
-            <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[28px] border-t-white/10" />
+            {/* Haste da Agulha que vai até o centro */}
+            <div className="w-[2px] h-[64px] bg-gradient-to-t from-transparent to-[#f59e0b]" />
           </div>
         </motion.div>
 
-        {/* Centro Brilhante com Ícone do Ativo */}
+        {/* Centro Brilhante Minimalista (Sem letras/símbolos) */}
         <div className="absolute w-16 h-16 rounded-full bg-[#12131a] border border-white/[0.08] flex items-center justify-center shadow-[0_0_25px_rgba(0,0,0,0.9)] z-20">
           <div className="absolute inset-1 rounded-full bg-gradient-to-b from-amber-500/20 to-transparent opacity-60 animate-pulse" />
-          <span className="text-base font-bold text-amber-500 font-mono drop-shadow-[0_0_8px_rgba(245,158,11,0.4)]">
-            {getAssetSymbol()}
-          </span>
+          <div className="w-2.5 h-2.5 rounded-full bg-[#f59e0b] drop-shadow-[0_0_6px_rgba(245,158,11,0.8)]" />
         </div>
       </div>
 
