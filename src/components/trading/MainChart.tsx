@@ -8,8 +8,7 @@ import {
   IChartApi,
   ISeriesApi,
   CandlestickData,
-  Time,
-  SeriesType
+  Time
 } from 'lightweight-charts';
 import { Timeframe } from '../../types/trading';
 import { generateMockCandles } from '../../hooks/useTradingData';
@@ -56,30 +55,15 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
       height: container.clientHeight,
     });
 
-    // Na v5, usamos addCandlestickSeries, mas vamos garantir que o objeto existe
-    // Se por algum motivo a versão instalada for diferente, tentamos o método genérico
-    let candlestickSeries: ISeriesApi<"Candlestick">;
-    
     try {
-      // @ts-ignore - Fallback para diferentes versões da API
-      if (typeof chart.addCandlestickSeries === 'function') {
-        candlestickSeries = chart.addCandlestickSeries({
-          upColor: '#26a69a',
-          downColor: '#ef5350',
-          borderVisible: false,
-          wickUpColor: '#26a69a',
-          wickDownColor: '#ef5350',
-        });
-      } else {
-        // Fallback para addSeries se addCandlestickSeries não estiver disponível
-        candlestickSeries = chart.addSeries(SeriesType.Candlestick, {
-          upColor: '#26a69a',
-          downColor: '#ef5350',
-          borderVisible: false,
-          wickUpColor: '#26a69a',
-          wickDownColor: '#ef5350',
-        });
-      }
+      // Usando o método padrão e seguro addCandlestickSeries
+      const candlestickSeries = chart.addCandlestickSeries({
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderVisible: false,
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350',
+      });
 
       // Gerar e formatar dados
       const data = generateMockCandles(100) as CandlestickData<Time>[];
