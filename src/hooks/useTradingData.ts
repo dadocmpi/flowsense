@@ -19,40 +19,31 @@ export const useTradingData = (selectedAsset: string) => {
 
   // Definir preço inicial baseado no ativo
   useEffect(() => {
-    let initialPrice = 2380.90;
-    if (selectedAsset.includes('BTC')) initialPrice = 65432.10;
-    if (selectedAsset.includes('ETH')) initialPrice = 3452.10;
-    if (selectedAsset.includes('EUR')) initialPrice = 1.08542;
+    let initialPrice = 2380.90; // XAU/USD
+    if (selectedAsset.includes('OIL')) initialPrice = 78.45; // OIL/USD (Crude Oil)
     setPrice(initialPrice);
   }, [selectedAsset]);
 
   useEffect(() => {
-    const symbol = selectedAsset.replace('/', '').toLowerCase();
-    // Usar stream do BTCUSDT como base de tempo real se for forex/commodities para manter o dinamismo
-    const streamName = (symbol === 'xauusd' || symbol === 'eurusd') ? 'btcusdt@aggTrade' : `${symbol}@aggTrade`;
-    
-    ws.current = new WebSocket(`wss://stream.binance.com:9443/ws/${streamName}`);
+    // Usar stream do BTCUSDT como base de tempo real para manter o dinamismo do fluxo de ordens
+    ws.current = new WebSocket(`wss://stream.binance.com:9443/ws/btcusdt@aggTrade`);
 
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      const rawPrice = parseFloat(data.p);
       const quantity = parseFloat(data.q);
       const isBuyerMaker = data.m;
 
       setPrice(currentPrice => {
-        // Calcular variação proporcional para ativos diferentes do BTC
         let nextPrice = currentPrice;
-        const changePercent = (rawPrice - 65000) / 65000 * 0.01; // variação sutil
+        
         if (selectedAsset.includes('XAU')) {
-          nextPrice = currentPrice + (isBuyerMaker ? -0.15 : 0.15) * (quantity * 5);
-        } else if (selectedAsset.includes('EUR')) {
-          nextPrice = currentPrice + (isBuyerMaker ? -0.00002 : 0.00002);
-        } else {
-          nextPrice = rawPrice;
+          nextPrice = currentPrice + (isBuyerMaker ? -0.12 : 0.12) * (quantity * 3);
+        } else if (selectedAsset.includes('OIL')) {
+          nextPrice = currentPrice + (isBuyerMaker ? -0.03 : 0.03) * (quantity * 1.5);
         }
 
         // Gerar escada de preços ao redor do preço atual
-        const step = selectedAsset.includes('EUR') ? 0.0001 : selectedAsset.includes('XAU') ? 0.5 : 10;
+        const step = selectedAsset.includes('OIL') ? 0.05 : 0.2;
         
         const newBids: OrderBookLevel[] = [];
         const newAsks: OrderBookLevel[] = [];
@@ -61,7 +52,6 @@ export const useTradingData = (selectedAsset: string) => {
           const bidPrice = nextPrice - (i * step);
           const askPrice = nextPrice + (i * step);
           
-          // Tamanhos aleatórios mas realistas
           const bidSize = Math.floor(Math.random() * 80) + 20;
           const askSize = Math.floor(Math.random() * 80) + 20;
 
@@ -86,8 +76,6 @@ export const useTradingData = (selectedAsset: string) => {
           const deltaChange = isBuyerMaker ? -Math.floor(quantity * 15) : Math.floor(quantity * 15);
           const newDelta = Math.max(-5000, Math.min(5000, prev.delta + deltaChange));
           
-          // Calcular porcentagem de compradores/vendedores baseada no delta
-          const total = 10000;
           const buyersVal = Math.max(20, Math.min(80, Math.round(50 + (newDelta / 150))));
           const sellersVal = 100 - buyersVal;
 
@@ -119,28 +107,4 @@ export const useTradingData = (selectedAsset: string) => {
   }, [selectedAsset]);
 
   return { price, metrics, bids, asks };
-};
-
-export const generateMockCandles = (count: number) => {
-  let basePrice = 65000;
-  const data = [];
-  const now = Math.floor(Date.now() / 1000);
-  const secondsInMinute = 60;
-  
-  for (let i = 0; i < count; i++) {
-    const open = basePrice + (Math.random() - 0.5) * 50;
-    const close = open + (Math.random() - 0.5) * 50;
-    const high = Math.max(open, close) + Math.random() * 20;
-    const low = Math.min(open, close) - Math.random() * 20;
-    
-    data.push({
-      time: (now - (count - i) * secondsInMinute) as any,
-      open,
-      high,
-      low,
-      close,
-    });
-    basePrice = close;
-  }
-  return data;
 };

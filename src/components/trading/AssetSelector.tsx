@@ -5,7 +5,7 @@ import {
   DropdownMenuItem, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { ChevronDown, Coins, TrendingUp } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 
 interface AssetSelectorProps {
   selectedAsset: string;
@@ -14,9 +14,7 @@ interface AssetSelectorProps {
 
 const ASSETS = [
   { symbol: 'XAU/USD', name: 'Gold (Ouro)', category: 'COMMODITIES' },
-  { symbol: 'BTC/USDT', name: 'Bitcoin', category: 'CRYPTO' },
-  { symbol: 'ETH/USDT', name: 'Ethereum', category: 'CRYPTO' },
-  { symbol: 'EUR/USD', name: 'Euro / Dollar', category: 'FOREX' },
+  { symbol: 'OIL/USD', name: 'Crude Oil (Petróleo)', category: 'COMMODITIES' },
 ];
 
 export const AssetSelector: React.FC<AssetSelectorProps> = ({ selectedAsset, onSelect }) => {

@@ -1,6 +1,5 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Compass } from 'lucide-react';
 
 interface DirectionalCompassProps {
   score: number; // 0 a 100 (50 é neutro, >50 é bullish, <50 é bearish)
@@ -9,27 +8,17 @@ interface DirectionalCompassProps {
 
 export const DirectionalCompass: React.FC<DirectionalCompassProps> = ({ score, asset }) => {
   // Mapear score (0 a 100) para rotação da agulha (-180 a 180 graus)
-  // 50 (Neutro) -> 0 graus (Norte)
-  // 100 (Bullish Forte) -> 135 graus (Leste/Sudeste)
-  // 0 (Bearish Forte) -> -135 graus (Oeste/Sudoeste)
   const rotation = ((score - 50) / 50) * 135;
 
   // Obter ícone central ou letra estilizada baseada no ativo
   const getAssetSymbol = () => {
     if (asset.includes('XAU')) return 'Au';
-    if (asset.includes('BTC')) return '₿';
-    if (asset.includes('ETH')) return 'Ξ';
+    if (asset.includes('OIL')) return '🛢️';
     return '$';
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-6 bg-[#0d0e12] border-b border-white/[0.03]">
-      {/* Título e Ativo */}
-      <div className="text-center mb-6">
-        <h3 className="text-xs font-bold text-white/40 uppercase tracking-[0.2em]">Bússola do Trader</h3>
-        <span className="text-[10px] font-mono text-white/60 tracking-widest mt-1 block">{asset.replace('/', '')}</span>
-      </div>
-
+    <div className="flex flex-col items-center justify-center p-8 bg-[#0d0e12] border-b border-white/[0.03] relative">
       {/* Bússola Circular */}
       <div className="relative w-56 h-56 flex items-center justify-center">
         {/* Anel Externo Metálico */}
@@ -44,7 +33,7 @@ export const DirectionalCompass: React.FC<DirectionalCompassProps> = ({ score, a
           {/* Norte */}
           <span className="absolute top-3 text-[10px] font-bold text-white/80 font-mono">N</span>
           {/* Nordeste */}
-          <span className="absolute top-8 right-8 text-[8px] font-bold text-white/30 font-mono">NW</span>
+          <span className="absolute top-8 right-8 text-[8px] font-bold text-white/30 font-mono">NE</span>
           {/* Leste */}
           <span className="absolute right-3 text-[10px] font-bold text-white/40 font-mono">E</span>
           {/* Sudeste */}
@@ -67,7 +56,7 @@ export const DirectionalCompass: React.FC<DirectionalCompassProps> = ({ score, a
         >
           {/* Corpo da Agulha */}
           <div className="relative w-1.5 h-40 flex flex-col justify-between items-center">
-            {/* Ponta Norte (Vermelha/Laranja de Alta Performance) */}
+            {/* Ponta Norte (Laranja de Alta Performance) */}
             <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[24px] border-b-[#f59e0b] drop-shadow-[0_0_6px_rgba(245,158,11,0.6)]" />
             {/* Ponta Sul (Cinza) */}
             <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[24px] border-t-white/20" />
