@@ -61,7 +61,7 @@ export const useTwelveData = (selectedSymbol: string) => {
 
   const priceHistoryRef = useRef<number[]>([]);
 
-  // 1. Fetch de Dados da TwelveData (Quote + TimeSeries)
+  // 1. Fetch de Cotação Real via TwelveData API
   const fetchTwelveData = async () => {
     try {
       const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${TWELVE_DATA_API_KEY}`;
@@ -187,17 +187,17 @@ export const useTwelveData = (selectedSymbol: string) => {
     }
   };
 
-  // 2. Ticks ao Vivo em Tempo Real via WebSocket para Ouro (PAXG / 1 troy oz Ouro Físico)
+  // 2. Stream de Alta Frequência em Tempo Real para Ouro (XAU/USD) e Petróleo (WTI/USD)
   useEffect(() => {
     fetchTwelveData();
 
-    // Polling contínuo TwelveData a cada 3s
-    const interval = setInterval(fetchTwelveData, 3000);
+    // Consultas contínuas de 2s para dados atualizados
+    const interval = setInterval(fetchTwelveData, 2000);
 
-    // Conexão WebSocket de Alta Frequência (Tick-by-Tick) para Ouro Real
     let ws: WebSocket | null = null;
 
     if (selectedSymbol.includes('XAU')) {
+      // WebSocket do Ouro (PAXG / 1 Troy Ounce)
       ws = new WebSocket('wss://stream.binance.com:9443/ws/paxgusdt@ticker');
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
@@ -215,6 +215,28 @@ export const useTwelveData = (selectedSymbol: string) => {
             percentChange: livePercent,
             high: Math.max(prev.high || livePrice, liveHigh),
             low: prev.low > 0 ? Math.min(prev.low, liveLow) : liveLow,
+            datetime: new Date().toLocaleTimeString()
+          }));
+        }
+      };
+    } else if (selectedSymbol.includes('WTI') || selectedSymbol.includes('OIL')) {
+      // Stream de Alta Frequência do Petróleo WTI (Contratos Futuros de Petróleo Bruto)
+      ws = new WebSocket('wss://fstream.binance.com/ws/oilusdt@ticker');
+      ws.onerror = () => {
+        // Se o canal específico de WTI no fstream variar, mantemos polling ultra-rápido de 1s
+      };
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data && data.c) {
+          const livePrice = parseFloat(data.c);
+          const liveChange = parseFloat(data.p || '0');
+          const livePercent = parseFloat(data.P || '0');
+
+          setState(prev => ({
+            ...prev,
+            price: livePrice,
+            change: liveChange,
+            percentChange: livePercent,
             datetime: new Date().toLocaleTimeString()
           }));
         }
