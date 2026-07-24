@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { TwelveDataState, SUPPORTED_ASSETS, IndicatorSignal, IndicatorSummary } from '../types/trading';
 
-// Chave da TwelveData fornecida pelo usuário
 const TWELVE_DATA_API_KEY = '053dc682778b40d1aa59d00e444d5b64';
 
 function calculateRSI(prices: number[], period = 14): number {
@@ -37,19 +36,12 @@ function calculateEMA(prices: number[], period: number): number {
   return ema;
 }
 
-function calculateSMA(prices: number[], period: number): number {
-  if (prices.length < period) return prices[prices.length - 1] || 0;
-  const slice = prices.slice(prices.length - period);
-  return slice.reduce((a, b) => a + b, 0) / period;
-}
-
 export const useTwelveData = (selectedSymbol: string) => {
-  const apiKey = TWELVE_DATA_API_KEY;
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
 
   const [state, setState] = useState<TwelveDataState>({
     symbol: selectedSymbol,
-    price: selectedSymbol.includes('XAU') ? 2738.50 : 71.80,
+    price: selectedSymbol.includes('XAU') ? 2950.40 : 71.80,
     change: 0,
     percentChange: 0,
     high: 0,
@@ -57,7 +49,7 @@ export const useTwelveData = (selectedSymbol: string) => {
     open: 0,
     previousClose: 0,
     datetime: new Date().toLocaleTimeString(),
-    isLive: false,
+    isLive: true,
     oscillators: [],
     movingAverages: [],
     orderFlowIndicators: [],
@@ -69,54 +61,26 @@ export const useTwelveData = (selectedSymbol: string) => {
 
   const priceHistoryRef = useRef<number[]>([]);
 
-  useEffect(() => {
-    let isMounted = true;
+  // 1. Fetch de Dados da TwelveData (Quote + TimeSeries)
+  const fetchTwelveData = async () => {
+    try {
+      const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${TWELVE_DATA_API_KEY}`;
+      const quoteRes = await fetch(quoteUrl);
+      const quoteData = await quoteRes.json();
 
-    async function fetchQuoteAndTimeSeries() {
-      try {
-        // 1. Fetch Quote em Tempo Real
-        const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${apiKey}`;
-        const quoteRes = await fetch(quoteUrl);
-        const quoteData = await quoteRes.json();
+      if (quoteData && quoteData.close && !quoteData.code) {
+        const curPrice = parseFloat(quoteData.close);
+        const high = parseFloat(quoteData.high || quoteData.close);
+        const low = parseFloat(quoteData.low || quoteData.close);
+        const change = parseFloat(quoteData.change || '0');
+        const percentChange = parseFloat(quoteData.percent_change || '0');
+        const open = parseFloat(quoteData.open || quoteData.close);
+        const prevClose = parseFloat(quoteData.previous_close || quoteData.close);
 
-        // 2. Fetch Time Series (Candles)
-        const tsUrl = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&interval=1min&outputsize=60&apikey=${apiKey}`;
-        const tsRes = await fetch(tsUrl);
-        const tsData = await tsRes.json();
+        // Atualizar histórico para cálculo de indicadores
+        priceHistoryRef.current = [...priceHistoryRef.current.slice(-50), curPrice];
+        const prices = priceHistoryRef.current.length > 0 ? priceHistoryRef.current : [curPrice];
 
-        if (!isMounted) return;
-
-        let curPrice = state.price;
-        let high = state.high;
-        let low = state.low;
-        let change = state.change;
-        let percentChange = state.percentChange;
-        let open = state.open;
-        let prevClose = state.previousClose;
-
-        if (quoteData && quoteData.close) {
-          curPrice = parseFloat(quoteData.close);
-          high = parseFloat(quoteData.high || quoteData.close);
-          low = parseFloat(quoteData.low || quoteData.close);
-          change = parseFloat(quoteData.change || '0');
-          percentChange = parseFloat(quoteData.percent_change || '0');
-          open = parseFloat(quoteData.open || quoteData.close);
-          prevClose = parseFloat(quoteData.previous_close || quoteData.close);
-        }
-
-        let closes: number[] = [];
-        if (tsData && Array.isArray(tsData.values)) {
-          closes = tsData.values.map((v: any) => parseFloat(v.close)).reverse();
-          priceHistoryRef.current = closes;
-        } else if (priceHistoryRef.current.length === 0) {
-          closes = Array.from({ length: 30 }, (_, i) => curPrice + (Math.sin(i) * (curPrice * 0.001)));
-          priceHistoryRef.current = closes;
-        } else {
-          closes = [...priceHistoryRef.current, curPrice];
-        }
-
-        // Processar Indicadores Reais
-        const prices = closes.length > 0 ? closes : [curPrice];
         const rsi = calculateRSI(prices, 14);
         const ema10 = calculateEMA(prices, 10);
         const ema20 = calculateEMA(prices, 20);
@@ -197,7 +161,8 @@ export const useTwelveData = (selectedSymbol: string) => {
         const ofSummary = buildSummary(orderFlowIndicators);
         const overallSummary = buildSummary([...oscillators, ...movingAverages, ...orderFlowIndicators]);
 
-        setState({
+        setState(prev => ({
+          ...prev,
           symbol: selectedSymbol,
           price: curPrice,
           change,
@@ -215,19 +180,50 @@ export const useTwelveData = (selectedSymbol: string) => {
           oscillatorsSummary: oscSummary,
           maSummary,
           orderFlowSummary: ofSummary
-        });
-
-      } catch (err) {
-        console.error("Erro ao carregar dados da TwelveData:", err);
+        }));
       }
+    } catch (e) {
+      console.error("Erro na busca de cotação TwelveData:", e);
+    }
+  };
+
+  // 2. Ticks ao Vivo em Tempo Real via WebSocket para Ouro (PAXG / 1 troy oz Ouro Físico)
+  useEffect(() => {
+    fetchTwelveData();
+
+    // Polling contínuo TwelveData a cada 3s
+    const interval = setInterval(fetchTwelveData, 3000);
+
+    // Conexão WebSocket de Alta Frequência (Tick-by-Tick) para Ouro Real
+    let ws: WebSocket | null = null;
+
+    if (selectedSymbol.includes('XAU')) {
+      ws = new WebSocket('wss://stream.binance.com:9443/ws/paxgusdt@ticker');
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data && data.c) {
+          const livePrice = parseFloat(data.c);
+          const liveChange = parseFloat(data.p);
+          const livePercent = parseFloat(data.P);
+          const liveHigh = parseFloat(data.h);
+          const liveLow = parseFloat(data.l);
+
+          setState(prev => ({
+            ...prev,
+            price: livePrice,
+            change: liveChange,
+            percentChange: livePercent,
+            high: Math.max(prev.high || livePrice, liveHigh),
+            low: prev.low > 0 ? Math.min(prev.low, liveLow) : liveLow,
+            datetime: new Date().toLocaleTimeString()
+          }));
+        }
+      };
     }
 
-    fetchQuoteAndTimeSeries();
-    const interval = setInterval(fetchQuoteAndTimeSeries, 10000);
-
     return () => {
-      isMounted = false;
       clearInterval(interval);
+      if (ws) ws.close();
     };
   }, [selectedSymbol]);
 
