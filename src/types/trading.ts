@@ -1,16 +1,13 @@
-export interface RealSymbolInfo {
+export interface AssetConfig {
   symbol: string;
-  binanceSymbol: string;
+  twelveSymbol: string;
   name: string;
-  category: 'CRYPTO' | 'COMMODITIES';
   precision: number;
 }
 
-export const SUPPORTED_SYMBOLS: RealSymbolInfo[] = [
-  { symbol: 'BTC/USDT', binanceSymbol: 'BTCUSDT', name: 'Bitcoin', category: 'CRYPTO', precision: 2 },
-  { symbol: 'ETH/USDT', binanceSymbol: 'ETHUSDT', name: 'Ethereum', category: 'CRYPTO', precision: 2 },
-  { symbol: 'SOL/USDT', binanceSymbol: 'SOLUSDT', name: 'Solana', category: 'CRYPTO', precision: 2 },
-  { symbol: 'PAXG/USDT', binanceSymbol: 'PAXGUSDT', name: 'Ouro (PAX Gold)', category: 'COMMODITIES', precision: 2 },
+export const SUPPORTED_ASSETS: AssetConfig[] = [
+  { symbol: 'XAU/USD', twelveSymbol: 'XAU/USD', name: 'Ouro / Dólar', precision: 2 },
+  { symbol: 'WTI/USD', twelveSymbol: 'WTI/USD', name: 'Petróleo WTI / Dólar', precision: 2 },
 ];
 
 export interface IndicatorSignal {
@@ -23,42 +20,23 @@ export interface IndicatorSummary {
   buyCount: number;
   neutralCount: number;
   sellCount: number;
-  score: number; // 0 (Venda Forte) a 100 (Compra Forte)
+  score: number; // 0 a 100
   verdict: 'VENDA FORTE' | 'VENDA' | 'NEUTRO' | 'COMPRA' | 'COMPRA FORTE';
 }
 
-export interface RealOrderBookLevel {
-  price: number;
-  size: number;
-  total: number;
-  percentage: number;
-}
-
-export interface LiveTrade {
-  id: number;
-  price: number;
-  size: number;
-  time: string;
-  isBuyerMaker: boolean;
-}
-
-export interface RealTradingState {
+export interface TwelveDataState {
   symbol: string;
   price: number;
-  priceChange24h: number;
-  high24h: number;
-  low24h: number;
-  volume24h: number;
+  change: number;
+  percentChange: number;
+  high: number;
+  low: number;
+  open: number;
+  previousClose: number;
+  datetime: string;
+  isLive: boolean;
   
-  // Order Flow Real
-  bids: RealOrderBookLevel[];
-  asks: RealOrderBookLevel[];
-  recentTrades: LiveTrade[];
-  buyerVolume: number;
-  sellerVolume: number;
-  volumeDelta: number;
-  
-  // Indicadores Reais
+  // Indicadores calculados em tempo real sobre klines reais
   oscillators: IndicatorSignal[];
   movingAverages: IndicatorSignal[];
   orderFlowIndicators: IndicatorSignal[];
