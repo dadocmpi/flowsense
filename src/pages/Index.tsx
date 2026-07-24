@@ -1,77 +1,88 @@
 import React, { useState } from 'react';
-import { DirectionalCompass } from '../components/trading/DirectionalCompass';
-import { MetricsGrid } from '../components/trading/MetricsGrid';
-import { OrderFlowFeed } from '../components/trading/OrderFlowFeed';
-import { AssetSelector } from '../components/trading/AssetSelector';
-import { useTradingData } from '../hooks/useTradingData';
-import { TrendingUp } from 'lucide-react';
+import { useRealTradingData } from '../hooks/useRealTradingData';
+import { TickerTape } from '../components/trading/TickerTape';
+import { TradingViewGauge } from '../components/trading/TradingViewGauge';
+import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
+import { RealOrderBook } from '../components/trading/RealOrderBook';
+import { LiveTradeFeed } from '../components/trading/LiveTradeFeed';
+import { SUPPORTED_SYMBOLS } from '../types/trading';
+import { TrendingUp, Activity, ShieldCheck } from 'lucide-react';
 
 const Index = () => {
-  const [selectedAsset, setSelectedAsset] = useState('XAU/USD');
-  const { price, metrics, bids, asks } = useTradingData(selectedAsset);
+  const [selectedSymbol, setSelectedSymbol] = useState('BTC/USDT');
+  const tradingData = useRealTradingData(selectedSymbol);
 
-  const compassScore = metrics.buyersPercent;
+  const activeSymbolInfo = SUPPORTED_SYMBOLS.find(s => s.symbol === selectedSymbol) || SUPPORTED_SYMBOLS[0];
 
   return (
-    <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-white/20">
+    <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
       
-      {/* Cabeçalho Premium do Site */}
-      <header className="w-full border-b border-white/[0.03] bg-[#0a0b0d]/80 backdrop-blur-md px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+      {/* Top Navbar */}
+      <header className="w-full border-b border-white/[0.04] bg-[#08090c] px-6 py-3.5 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center space-x-3">
           <div className="p-2 bg-amber-500/10 rounded-xl border border-amber-500/20">
             <TrendingUp size={18} className="text-amber-500" />
           </div>
           <div>
-            <h1 className="text-sm font-black tracking-wider text-white">QUANTUM ANALYTICS</h1>
-            <p className="text-[9px] text-white/40 font-mono uppercase tracking-widest">Terminal de Fluxo Institucional</p>
+            <h1 className="text-sm font-black tracking-widest text-white">QUANTUM ANALYTICS PRO</h1>
+            <p className="text-[9px] text-white/40 font-mono uppercase tracking-widest">Análise Técnica Institucional em Tempo Real</p>
           </div>
         </div>
 
-        {/* Seletor de Ativos e Status de Conexão */}
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.04] px-3 py-1.5 rounded-lg">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#26a69a] animate-pulse" />
-            <span className="text-[10px] font-mono text-white/60 uppercase tracking-wider">WebSocket Ativo</span>
-          </div>
-          <AssetSelector 
-            selectedAsset={selectedAsset} 
-            onSelect={setSelectedAsset} 
-          />
+        <div className="flex items-center space-x-3 bg-white/[0.02] border border-white/[0.04] px-3.5 py-1.5 rounded-xl">
+          <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-pulse" />
+          <span className="text-[10px] font-mono text-white/70 uppercase tracking-wider">Feed Binance Ativo (Zero Latência)</span>
         </div>
       </header>
 
-      {/* Área de Conteúdo Principal (Layout de Duas Colunas) */}
-      <main className="flex-grow p-6 max-w-[1400px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Coluna Esquerda: Bússola + Grade de Métricas (7/12 cols) */}
-        <div className="lg:col-span-7 flex flex-col space-y-6">
-          {/* Bússola de Sentimento */}
-          <div className="flex-grow flex items-center justify-center bg-[#0d0e12] rounded-2xl border border-white/[0.03] p-6">
-            <div className="w-full max-w-md">
-              <DirectionalCompass 
-                score={compassScore} 
-                asset={selectedAsset} 
-              />
-            </div>
-          </div>
+      {/* Fita de Cotações Superiores */}
+      <TickerTape
+        selectedSymbol={selectedSymbol}
+        onSelectSymbol={setSelectedSymbol}
+        currentPrice={tradingData.price}
+        priceChange24h={tradingData.priceChange24h}
+        high24h={tradingData.high24h}
+        low24h={tradingData.low24h}
+        volume24h={tradingData.volume24h}
+      />
 
-          {/* Grade de Métricas Rápidas */}
-          <div className="rounded-2xl overflow-hidden border border-white/[0.03]">
-            <MetricsGrid 
-              metrics={metrics} 
-            />
-          </div>
+      {/* Dashboard Principal (Workstation em Tela Cheia) */}
+      <main className="flex-grow p-6 max-w-[1700px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Coluna 1: Bússola Velocímetro TradingView (4/12 cols) */}
+        <div className="lg:col-span-4 flex flex-col">
+          <TradingViewGauge
+            overallSummary={tradingData.overallSummary}
+            oscillatorsSummary={tradingData.oscillatorsSummary}
+            maSummary={tradingData.maSummary}
+            orderFlowSummary={tradingData.orderFlowSummary}
+            selectedAsset={selectedSymbol}
+          />
         </div>
 
-        {/* Coluna Direita: Escada de Order Flow (5/12 cols) */}
-        <div className="lg:col-span-5 flex flex-col h-full min-h-[500px] lg:min-h-0">
-          <div className="flex-grow rounded-2xl overflow-hidden border border-white/[0.03] flex flex-col">
-            <OrderFlowFeed 
-              bids={bids}
-              asks={asks}
-              currentPrice={price}
-              metrics={metrics}
-              asset={selectedAsset}
+        {/* Coluna 2: Tabelas Detalhadas de Indicadores e Médias (5/12 cols) */}
+        <div className="lg:col-span-5 flex flex-col">
+          <TechnicalDetailsTable
+            oscillators={tradingData.oscillators}
+            movingAverages={tradingData.movingAverages}
+            orderFlowIndicators={tradingData.orderFlowIndicators}
+          />
+        </div>
+
+        {/* Coluna 3: Livro de Ofertas e Negócios ao Vivo (3/12 cols) */}
+        <div className="lg:col-span-3 flex flex-col space-y-4">
+          <div className="flex-grow">
+            <RealOrderBook
+              bids={tradingData.bids}
+              asks={tradingData.asks}
+              currentPrice={tradingData.price}
+              precision={activeSymbolInfo.precision}
+            />
+          </div>
+          <div className="h-64">
+            <LiveTradeFeed
+              trades={tradingData.recentTrades}
+              precision={activeSymbolInfo.precision}
             />
           </div>
         </div>
