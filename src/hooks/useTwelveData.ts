@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { TwelveDataState, SUPPORTED_ASSETS, IndicatorSignal, IndicatorSummary } from '../types/trading';
 
-// Chave da TwelveData (usa chave do ambiente ou 'demo' para testes públicos)
-const TWELVE_DATA_API_KEY = (import.meta as any).env?.VITE_TWELVEDATA_API_KEY || 'demo';
+// Chave da TwelveData fornecida pelo usuário
+const TWELVE_DATA_API_KEY = '053dc682778b40d1aa59d00e444d5b64';
 
 function calculateRSI(prices: number[], period = 14): number {
   if (prices.length < period + 1) return 50;
@@ -43,8 +43,8 @@ function calculateSMA(prices: number[], period: number): number {
   return slice.reduce((a, b) => a + b, 0) / period;
 }
 
-export const useTwelveData = (selectedSymbol: string, userApiKey?: string) => {
-  const apiKey = userApiKey || TWELVE_DATA_API_KEY;
+export const useTwelveData = (selectedSymbol: string) => {
+  const apiKey = TWELVE_DATA_API_KEY;
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
 
   const [state, setState] = useState<TwelveDataState>({
@@ -74,12 +74,12 @@ export const useTwelveData = (selectedSymbol: string, userApiKey?: string) => {
 
     async function fetchQuoteAndTimeSeries() {
       try {
-        // 1. Fetch Quote em Tempo Real da TwelveData
+        // 1. Fetch Quote em Tempo Real
         const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${apiKey}`;
         const quoteRes = await fetch(quoteUrl);
         const quoteData = await quoteRes.json();
 
-        // 2. Fetch Time Series (Candles) para Análise Técnica
+        // 2. Fetch Time Series (Candles)
         const tsUrl = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&interval=1min&outputsize=60&apikey=${apiKey}`;
         const tsRes = await fetch(tsUrl);
         const tsData = await tsRes.json();
@@ -109,21 +109,19 @@ export const useTwelveData = (selectedSymbol: string, userApiKey?: string) => {
           closes = tsData.values.map((v: any) => parseFloat(v.close)).reverse();
           priceHistoryRef.current = closes;
         } else if (priceHistoryRef.current.length === 0) {
-          // Fallback de variação orgânica se limite de requisição grátis for atingido
           closes = Array.from({ length: 30 }, (_, i) => curPrice + (Math.sin(i) * (curPrice * 0.001)));
           priceHistoryRef.current = closes;
         } else {
           closes = [...priceHistoryRef.current, curPrice];
         }
 
-        // Processar Indicadores Reais sobre os dados da TwelveData
+        // Processar Indicadores Reais
         const prices = closes.length > 0 ? closes : [curPrice];
         const rsi = calculateRSI(prices, 14);
         const ema10 = calculateEMA(prices, 10);
         const ema20 = calculateEMA(prices, 20);
         const ema50 = calculateEMA(prices, 50);
         const ema200 = calculateEMA(prices, 200);
-        const sma20 = calculateSMA(prices, 20);
 
         const macdVal = calculateEMA(prices, 12) - calculateEMA(prices, 26);
 
@@ -157,7 +155,6 @@ export const useTwelveData = (selectedSymbol: string, userApiKey?: string) => {
           { name: 'EMA 200', value: ema200.toFixed(assetConfig.precision), action: curPrice > ema200 ? 'COMPRA FORTE' : 'VENDA FORTE' },
         ];
 
-        // Análise de Fluxo & Pressão
         const isBullish = curPrice >= open;
         const orderFlowIndicators: IndicatorSignal[] = [
           {
@@ -226,13 +223,13 @@ export const useTwelveData = (selectedSymbol: string, userApiKey?: string) => {
     }
 
     fetchQuoteAndTimeSeries();
-    const interval = setInterval(fetchQuoteAndTimeSeries, 10000); // Polling a cada 10s
+    const interval = setInterval(fetchQuoteAndTimeSeries, 10000);
 
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [selectedSymbol, apiKey]);
+  }, [selectedSymbol]);
 
   return state;
 };
