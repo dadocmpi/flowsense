@@ -26,44 +26,85 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
     activeTab === 'orderflow' ? orderFlowSummary :
     overallSummary;
 
-  // Ângulo de rotação da agulha (-90 deg a +90 deg)
-  const rotationAngle = -90 + (currentSummary.score / 100) * 180;
+  // Ângulo da agulha (-90deg a +90deg para topo da bússola)
+  const needleAngle = -90 + (currentSummary.score / 100) * 180;
 
   const getVerdictStyle = (verdict: string) => {
     if (verdict.includes('COMPRA FORTE')) return { 
       text: 'text-[#26a69a]', 
       bg: 'bg-[#26a69a]/15 border-[#26a69a]/40 shadow-[0_0_25px_rgba(38,166,154,0.3)]',
-      glow: 'from-[#26a69a]/25 to-transparent'
+      glow: 'from-[#26a69a]/20 to-transparent'
     };
     if (verdict.includes('COMPRA')) return { 
       text: 'text-[#4db6ac]', 
       bg: 'bg-[#26a69a]/10 border-[#26a69a]/30',
-      glow: 'from-[#4db6ac]/20 to-transparent'
+      glow: 'from-[#4db6ac]/15 to-transparent'
     };
     if (verdict.includes('VENDA FORTE')) return { 
       text: 'text-[#ef5350]', 
       bg: 'bg-[#ef5350]/15 border-[#ef5350]/40 shadow-[0_0_25px_rgba(239,83,80,0.3)]',
-      glow: 'from-[#ef5350]/25 to-transparent'
+      glow: 'from-[#ef5350]/20 to-transparent'
     };
     if (verdict.includes('VENDA')) return { 
       text: 'text-[#e57373]', 
       bg: 'bg-[#ef5350]/10 border-[#ef5350]/30',
-      glow: 'from-[#e57373]/20 to-transparent'
+      glow: 'from-[#e57373]/15 to-transparent'
     };
     return { 
       text: 'text-amber-400', 
       bg: 'bg-amber-500/10 border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.2)]',
-      glow: 'from-amber-500/20 to-transparent'
+      glow: 'from-amber-500/15 to-transparent'
     };
   };
 
   const verdictStyle = getVerdictStyle(currentSummary.verdict);
 
+  // Gerar 35 traços radiais (tracinhos) ao redor do mostrador
+  const numTicks = 35;
+  const cx = 150;
+  const cy = 135;
+  const rInner = 95;
+  const rOuterMajor = 115;
+  const rOuterMinor = 108;
+
+  const ticks = Array.from({ length: numTicks }, (_, i) => {
+    // Ângulo de -180 deg (esquerda) a 0 deg (direita)
+    const angleDeg = -180 + (i / (numTicks - 1)) * 180;
+    const angleRad = (angleDeg * Math.PI) / 180;
+
+    const isMajor = i % 7 === 0 || i === 0 || i === numTicks - 1;
+    const rOuter = isMajor ? rOuterMajor : rOuterMinor;
+
+    const x1 = cx + rInner * Math.cos(angleRad);
+    const y1 = cy + rInner * Math.sin(angleRad);
+    const x2 = cx + rOuter * Math.cos(angleRad);
+    const y2 = cy + rOuter * Math.sin(angleRad);
+
+    // Cor do traço de acordo com a posição (venda forte -> venda -> neutro -> compra -> compra forte)
+    const ratio = i / (numTicks - 1);
+    let color = '#f59e0b'; // Neutro
+    if (ratio < 0.22) color = '#ef5350';      // Venda Forte
+    else if (ratio < 0.42) color = '#e57373'; // Venda
+    else if (ratio < 0.58) color = '#f59e0b'; // Neutro
+    else if (ratio < 0.78) color = '#4db6ac'; // Compra
+    else color = '#26a69a';                   // Compra Forte
+
+    return {
+      id: i,
+      x1,
+      y1,
+      x2,
+      y2,
+      color,
+      isMajor
+    };
+  });
+
   return (
     <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.08] p-7 flex flex-col justify-between h-full shadow-[0_25px_60px_rgba(0,0,0,0.9)] relative overflow-hidden backdrop-blur-2xl select-none">
       
       {/* Brilho de Fundo Dinâmico */}
-      <div className={cn("absolute -top-20 left-1/2 -translate-x-1/2 w-80 h-80 bg-radial rounded-full blur-3xl pointer-events-none transition-all duration-700 bg-gradient-to-b", verdictStyle.glow)} />
+      <div className={cn("absolute -top-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-radial rounded-full blur-3xl pointer-events-none transition-all duration-700 bg-gradient-to-b", verdictStyle.glow)} />
 
       {/* Cabeçalho de Abas */}
       <div className="flex items-center justify-between border-b border-white/[0.06] pb-4 mb-2 z-10">
@@ -94,65 +135,52 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
         </div>
       </div>
 
-      {/* Velocímetro Limpo & Elegante */}
-      <div className="relative w-full max-w-[340px] mx-auto flex flex-col items-center justify-center my-6 z-10">
+      {/* Mostrador de Tracinhos Radiais de Precisão */}
+      <div className="relative w-full max-w-[340px] mx-auto flex flex-col items-center justify-center my-4 z-10">
         
-        {/* Arc SVG Limpo e Sem Linhas Sobrando */}
+        {/* SVG dos Tracinhos Radiais */}
         <div className="relative w-72 h-36 flex items-end justify-center">
           
-          <svg className="w-72 h-72 -mt-36" viewBox="0 0 200 200">
-            {/* Venda Forte */}
+          <svg className="w-full h-full overflow-visible" viewBox="0 0 300 150">
+            {/* Arco Interno Sutil de Guia */}
             <path
-              d="M 25 100 A 75 75 0 0 1 42.6 46.9"
+              d="M 55 135 A 95 95 0 0 1 245 135"
               fill="none"
-              stroke="#ef5350"
-              strokeWidth="18"
-              strokeLinecap="round"
+              stroke="rgba(255, 255, 255, 0.05)"
+              strokeWidth="1"
+              strokeDasharray="2 4"
             />
-            {/* Venda */}
-            <path
-              d="M 47.5 42 A 75 75 0 0 1 78.8 26.6"
-              fill="none"
-              stroke="#e57373"
-              strokeWidth="18"
-            />
-            {/* Neutro */}
-            <path
-              d="M 84.1 25.5 A 75 75 0 0 1 115.9 25.5"
-              fill="none"
-              stroke="#f59e0b"
-              strokeWidth="18"
-            />
-            {/* Compra */}
-            <path
-              d="M 121.2 26.6 A 75 75 0 0 1 152.5 42"
-              fill="none"
-              stroke="#4db6ac"
-              strokeWidth="18"
-            />
-            {/* Compra Forte */}
-            <path
-              d="M 157.4 46.9 A 75 75 0 0 1 175 100"
-              fill="none"
-              stroke="#26a69a"
-              strokeWidth="18"
-              strokeLinecap="round"
-            />
+
+            {/* Tracinhos Radiais Coloridos (Ticks) */}
+            {ticks.map(tick => (
+              <line
+                key={tick.id}
+                x1={tick.x1}
+                y1={tick.y1}
+                x2={tick.x2}
+                y2={tick.y2}
+                stroke={tick.color}
+                strokeWidth={tick.isMajor ? 3 : 1.8}
+                strokeLinecap="round"
+                opacity={tick.isMajor ? 1 : 0.75}
+                className="transition-all duration-300 hover:opacity-100"
+              />
+            ))}
           </svg>
 
-          {/* Agulha de Alta Precisão */}
+          {/* Agulha de Precisão com Brilho Neon */}
           <motion.div
-            className="absolute bottom-1 left-1/2 -ml-[3px] w-1.5 h-32 origin-bottom flex flex-col justify-start items-center z-30 pointer-events-none"
-            animate={{ rotate: rotationAngle }}
-            transition={{ type: 'spring', stiffness: 60, damping: 14 }}
+            className="absolute bottom-2 left-1/2 -ml-[3px] w-1.5 h-32 origin-bottom flex flex-col justify-start items-center z-30 pointer-events-none"
+            animate={{ rotate: needleAngle }}
+            transition={{ type: 'spring', stiffness: 55, damping: 13 }}
           >
-            {/* Ponta da Agulha */}
+            {/* Ponta da Agulha em Cristal Laranja */}
             <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[28px] border-b-amber-400 filter drop-shadow-[0_0_12px_rgba(251,191,36,1)]" />
-            {/* Corpo da Agulha */}
-            <div className="w-[3px] h-[90px] bg-gradient-to-t from-amber-500/20 via-amber-400 to-amber-300" />
+            {/* Haste da Agulha */}
+            <div className="w-[2.5px] h-[90px] bg-gradient-to-t from-amber-500/20 via-amber-400/90 to-amber-300" />
           </motion.div>
 
-          {/* Botão Central Retroiluminado */}
+          {/* Pivot / Núcleo Central Retroiluminado */}
           <div className="absolute -bottom-2 w-10 h-10 rounded-full bg-[#07080a] border-2 border-amber-400 z-40 flex items-center justify-center shadow-[0_0_20px_rgba(245,158,11,0.6)]">
             <div className="w-3.5 h-3.5 rounded-full bg-amber-400 animate-pulse" />
           </div>
