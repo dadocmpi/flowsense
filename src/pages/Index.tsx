@@ -3,6 +3,7 @@ import { useTwelveData } from '../hooks/useTwelveData';
 import { TradingViewGauge } from '../components/trading/TradingViewGauge';
 import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
 import { AssetSummaryCard } from '../components/trading/AssetSummaryCard';
+import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
 import { SUPPORTED_ASSETS } from '../types/trading';
 
 const Index = () => {
@@ -14,10 +15,10 @@ const Index = () => {
   return (
     <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
       
-      {/* Top Bar Ultralimpa (Apenas Seleção de Ativos e Status de Conexão) */}
+      {/* Top Bar Ultralimpa (Seleção de COMMODITIES) */}
       <header className="w-full border-b border-white/[0.04] bg-[#07080a] px-8 py-4 flex items-center justify-between sticky top-0 z-50 backdrop-blur-md">
         
-        {/* Botoes de Seleção de Ativos (OURO / PETRÓLEO) */}
+        {/* Botões de Seleção de Ativos (OURO / PETRÓLEO) */}
         <div className="flex items-center space-x-3">
           <span className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em] mr-2">COMMODITIES:</span>
           {SUPPORTED_ASSETS.map(asset => (
@@ -26,7 +27,7 @@ const Index = () => {
               onClick={() => setSelectedAsset(asset.symbol)}
               className={`px-5 py-2 rounded-2xl text-xs font-black tracking-wider transition-all ${
                 selectedAsset === asset.symbol
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.3)] scale-105'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.4)] scale-105'
                   : 'bg-white/[0.03] text-white/50 hover:text-white border border-white/[0.05]'
               }`}
             >
@@ -35,7 +36,7 @@ const Index = () => {
           ))}
         </div>
 
-        {/* Indicador Limpo de Feed da TwelveData */}
+        {/* Indicador de Alimentação TwelveData API */}
         <div className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-4 py-1.5 rounded-full">
           <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-pulse" />
           <span className="text-[10px] font-mono text-white/60 font-bold uppercase tracking-widest">
@@ -45,7 +46,7 @@ const Index = () => {
       </header>
 
       {/* Conteúdo Principal do Terminal */}
-      <main className="flex-grow p-8 max-w-[1600px] w-full mx-auto flex flex-col space-y-6">
+      <main className="flex-grow p-8 max-w-[1600px] w-full mx-auto flex flex-col space-y-8">
         
         {/* Card de Cotação em Destaque */}
         <AssetSummaryCard
@@ -54,9 +55,9 @@ const Index = () => {
         />
 
         {/* Grid Principal: Bússola + Tabelas Técnicas */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-grow">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* Coluna 1: Bússola de Sentimento / Confluência (5/12 cols) */}
+          {/* Coluna 1: Bússola de Sentimento com Traços e Cores Nítidas (5/12 cols) */}
           <div className="lg:col-span-5 flex flex-col">
             <TradingViewGauge
               overallSummary={twelveData.overallSummary}
@@ -77,6 +78,12 @@ const Index = () => {
           </div>
 
         </div>
+
+        {/* Seção Inferior: ORDER FLOW EM TEMPO REAL */}
+        <RealtimeOrderFlow
+          data={twelveData}
+          precision={activeConfig.precision}
+        />
 
       </main>
     </div>

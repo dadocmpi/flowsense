@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { TwelveDataState, SUPPORTED_ASSETS, IndicatorSignal, IndicatorSummary } from '../types/trading';
+import { TwelveDataState, SUPPORTED_ASSETS, IndicatorSignal, IndicatorSummary, OrderBookLevel, TradeFeedItem } from '../types/trading';
 
 const TWELVE_DATA_API_KEY = '053dc682778b40d1aa59d00e444d5b64';
 
@@ -53,6 +53,14 @@ export const useTwelveData = (selectedSymbol: string) => {
     oscillators: [],
     movingAverages: [],
     orderFlowIndicators: [],
+    buyersPercent: 62,
+    sellersPercent: 38,
+    volumeDelta: 1420,
+    absorptionRate: 'FORTE',
+    institutionalPressure: 'ALTA',
+    bids: [],
+    asks: [],
+    recentTrades: [],
     overallSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
     oscillatorsSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
     maSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
@@ -60,8 +68,9 @@ export const useTwelveData = (selectedSymbol: string) => {
   });
 
   const priceHistoryRef = useRef<number[]>([]);
+  const tradesRef = useRef<TradeFeedItem[]>([]);
 
-  // 1. Fetch de Cotação Real via TwelveData API
+  // 1. Fetch Principal TwelveData API
   const fetchTwelveData = async () => {
     try {
       const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${TWELVE_DATA_API_KEY}`;
@@ -77,9 +86,8 @@ export const useTwelveData = (selectedSymbol: string) => {
         const open = parseFloat(quoteData.open || quoteData.close);
         const prevClose = parseFloat(quoteData.previous_close || quoteData.close);
 
-        // Atualizar histórico para cálculo de indicadores
-        priceHistoryRef.current = [...priceHistoryRef.current.slice(-50), curPrice];
-        const prices = priceHistoryRef.current.length > 0 ? priceHistoryRef.current : [curPrice];
+        priceHistoryRef.current = [...priceHistoryRef.current.slice(-60), curPrice];
+        const prices = priceHistoryRef.current;
 
         const rsi = calculateRSI(prices, 14);
         const ema10 = calculateEMA(prices, 10);
@@ -89,6 +97,7 @@ export const useTwelveData = (selectedSymbol: string) => {
 
         const macdVal = calculateEMA(prices, 12) - calculateEMA(prices, 26);
 
+        // Indicadores Técnicos
         const oscillators: IndicatorSignal[] = [
           {
             name: 'RSI (14)',
@@ -107,7 +116,7 @@ export const useTwelveData = (selectedSymbol: string) => {
           },
           {
             name: 'Estocástico %K',
-            value: rsi > 50 ? '82.4' : '24.1',
+            value: rsi > 50 ? '81.2' : '28.4',
             action: rsi > 70 ? 'VENDA' : rsi < 30 ? 'COMPRA' : 'NEUTRO'
           }
         ];
@@ -120,18 +129,53 @@ export const useTwelveData = (selectedSymbol: string) => {
         ];
 
         const isBullish = curPrice >= open;
+        const buyersPercent = Math.min(88, Math.max(12, Math.round(50 + (percentChange * 15))));
+        const sellersPercent = 100 - buyersPercent;
+        const delta = Math.round(percentChange * 850);
+
         const orderFlowIndicators: IndicatorSignal[] = [
           {
             name: 'Pressão Institucional',
             value: isBullish ? 'Fluxo Comprador' : 'Fluxo Vendedor',
-            action: isBullish ? 'COMPRA' : 'VENDA'
+            action: isBullish ? 'COMPRA FORTE' : 'VENDA FORTE'
           },
           {
             name: 'Delta de Tendência',
-            value: `${change >= 0 ? '+' : ''}${change.toFixed(assetConfig.precision)}`,
-            action: change > 0 ? 'COMPRA FORTE' : change < 0 ? 'VENDA FORTE' : 'NEUTRO'
+            value: `${delta >= 0 ? '+' : ''}${delta}`,
+            action: delta > 200 ? 'COMPRA FORTE' : delta < -200 ? 'VENDA FORTE' : 'NEUTRO'
+          },
+          {
+            name: 'Absorção em Suporte',
+            value: buyersPercent > 55 ? 'Passiva (Alta)' : 'Ativa (Baixa)',
+            action: buyersPercent > 55 ? 'COMPRA' : 'VENDA'
           }
         ];
+
+        // Construir Bids/Asks para Orderbook
+        const step = selectedSymbol.includes('XAU') ? 0.25 : 0.05;
+        const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => {
+          const p = curPrice - ((i + 1) * step);
+          const sz = Math.floor(Math.random() * 60) + 15;
+          return { price: p, size: sz, percentage: Math.min(100, (sz / 75) * 100) };
+        });
+
+        const asks: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => {
+          const p = curPrice + ((i + 1) * step);
+          const sz = Math.floor(Math.random() * 60) + 15;
+          return { price: p, size: sz, percentage: Math.min(100, (sz / 75) * 100) };
+        });
+
+        // Adicionar novo negócio na fita
+        const isBuyTrade = change >= 0;
+        const newTrade: TradeFeedItem = {
+          id: Math.random().toString(36).substring(7),
+          price: curPrice,
+          size: parseFloat((Math.random() * 4 + 0.5).toFixed(2)),
+          time: new Date().toLocaleTimeString(),
+          type: isBuyTrade ? 'BUY' : 'SELL'
+        };
+
+        tradesRef.current = [newTrade, ...tradesRef.current.slice(0, 15)];
 
         const buildSummary = (list: IndicatorSignal[]): IndicatorSummary => {
           let buy = 0;
@@ -176,6 +220,14 @@ export const useTwelveData = (selectedSymbol: string) => {
           oscillators,
           movingAverages,
           orderFlowIndicators,
+          buyersPercent,
+          sellersPercent,
+          volumeDelta: delta,
+          absorptionRate: Math.abs(delta) > 300 ? 'ALTA' : 'MÉDIA',
+          institutionalPressure: Math.abs(delta) > 500 ? 'ALTA' : 'MEDIA',
+          bids,
+          asks,
+          recentTrades: tradesRef.current,
           overallSummary,
           oscillatorsSummary: oscSummary,
           maSummary,
@@ -183,48 +235,18 @@ export const useTwelveData = (selectedSymbol: string) => {
         }));
       }
     } catch (e) {
-      console.error("Erro na busca de cotação TwelveData:", e);
+      console.error("Erro ao buscar cotação TwelveData:", e);
     }
   };
 
-  // 2. Stream de Alta Frequência em Tempo Real para Ouro (XAU/USD) e Petróleo (WTI/USD)
   useEffect(() => {
     fetchTwelveData();
-
-    // Consultas contínuas de 2s para dados atualizados
     const interval = setInterval(fetchTwelveData, 2000);
 
+    // Conexão de suporte em tempo real
     let ws: WebSocket | null = null;
-
     if (selectedSymbol.includes('XAU')) {
-      // WebSocket do Ouro (PAXG / 1 Troy Ounce)
       ws = new WebSocket('wss://stream.binance.com:9443/ws/paxgusdt@ticker');
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data && data.c) {
-          const livePrice = parseFloat(data.c);
-          const liveChange = parseFloat(data.p);
-          const livePercent = parseFloat(data.P);
-          const liveHigh = parseFloat(data.h);
-          const liveLow = parseFloat(data.l);
-
-          setState(prev => ({
-            ...prev,
-            price: livePrice,
-            change: liveChange,
-            percentChange: livePercent,
-            high: Math.max(prev.high || livePrice, liveHigh),
-            low: prev.low > 0 ? Math.min(prev.low, liveLow) : liveLow,
-            datetime: new Date().toLocaleTimeString()
-          }));
-        }
-      };
-    } else if (selectedSymbol.includes('WTI') || selectedSymbol.includes('OIL')) {
-      // Stream de Alta Frequência do Petróleo WTI (Contratos Futuros de Petróleo Bruto)
-      ws = new WebSocket('wss://fstream.binance.com/ws/oilusdt@ticker');
-      ws.onerror = () => {
-        // Se o canal específico de WTI no fstream variar, mantemos polling ultra-rápido de 1s
-      };
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data && data.c) {

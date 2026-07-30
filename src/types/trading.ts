@@ -24,6 +24,20 @@ export interface IndicatorSummary {
   verdict: 'VENDA FORTE' | 'VENDA' | 'NEUTRO' | 'COMPRA' | 'COMPRA FORTE';
 }
 
+export interface OrderBookLevel {
+  price: number;
+  size: number;
+  percentage: number;
+}
+
+export interface TradeFeedItem {
+  id: string;
+  price: number;
+  size: number;
+  time: string;
+  type: 'BUY' | 'SELL';
+}
+
 export interface TwelveDataState {
   symbol: string;
   price: number;
@@ -36,10 +50,20 @@ export interface TwelveDataState {
   datetime: string;
   isLive: boolean;
   
-  // Indicadores calculados em tempo real sobre klines reais
+  // Indicadores calculados
   oscillators: IndicatorSignal[];
   movingAverages: IndicatorSignal[];
   orderFlowIndicators: IndicatorSignal[];
+  
+  // Order Flow em tempo real
+  buyersPercent: number;
+  sellersPercent: number;
+  volumeDelta: number;
+  absorptionRate: string;
+  institutionalPressure: 'ALTA' | 'MEDIA' | 'BAIXA';
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  recentTrades: TradeFeedItem[];
   
   // Resumos da Bússola
   overallSummary: IndicatorSummary;
