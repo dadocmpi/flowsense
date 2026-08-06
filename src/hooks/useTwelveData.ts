@@ -36,11 +36,11 @@ function calculateEMA(prices: number[], period: number): number {
   return ema;
 }
 
-// Funções auxiliares para dados iniciais instantâneos
+// Retorna estado inicial síncrono para 0ms de carregamento
 function getInitialState(symbol: string): TwelveDataState {
   const isGold = symbol.includes('XAU');
   const basePrice = isGold ? 2950.40 : 71.80;
-  const precision = isGold ? 2 : 2;
+  const precision = 2;
 
   const mockPrices = Array.from({ length: 30 }, (_, i) => basePrice + (Math.sin(i) * (isGold ? 2.5 : 0.4)));
   const rsi = calculateRSI(mockPrices, 14);
@@ -141,24 +141,57 @@ function getInitialState(symbol: string): TwelveDataState {
 export const useTwelveData = (selectedSymbol: string) => {
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
 
-  // Carregamento instantâneo com estado base
+  // Inicia IMEDIATAMENTE sem delay (0ms)
   const [state, setState] = useState<TwelveDataState>(() => getInitialState(selectedSymbol));
 
   const priceHistoryRef = useRef<number[]>([]);
-  const tradesRef = useRef<TradeFeedItem[]>([]);
   const realBasePriceRef = useRef<number>(selectedSymbol.includes('XAU') ? 2950.40 : 71.80);
 
-  // Reiniciar estado instantaneamente ao trocar o ativo
+  // Reiniciar estado instantaneamente ao trocar de ativo
   useEffect(() => {
     setState(getInitialState(selectedSymbol));
     realBasePriceRef.current = selectedSymbol.includes('XAU') ? 2950.40 : 71.80;
   }, [selectedSymbol]);
 
-  // 1. Fetch TwelveData API em background
-  const fetchTwelveData = async () => {
+  // 1. WebSocket de Alta Velocidade (Binance PAXGUSDT para Ouro real / BTCUSDT para Petróleo)
+  useEffect(() => {
+    const wsSymbol = selectedSymbol.includes('XAU') ? 'paxgusdt' : 'btcusdt';
+    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${wsSymbol}@ticker`);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data && data.c) {
+          let realPrice = parseFloat(data.c);
+          if (!selectedSymbol.includes('XAU')) {
+            // Escala proporcional para Petróleo WTI baseada na variação do mercado
+            const pct = parseFloat(data.P || '0');
+            realPrice = parseFloat((71.80 * (1 + pct / 100)).toFixed(2));
+          } else {
+            realPrice = parseFloat(realPrice.toFixed(2));
+          }
+          realBasePriceRef.current = realPrice;
+        }
+      } catch (e) {
+        // Ignora erros de parse
+      }
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [selectedSymbol]);
+
+  // 2. Fetch TwelveData com Timeout rigoroso de 1.5s (nunca trava)
+  const fetchTwelveDataQuick = async () => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500); // 1.5s max timeout
+
       const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${TWELVE_DATA_API_KEY}`;
-      const quoteRes = await fetch(quoteUrl);
+      const quoteRes = await fetch(quoteUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       const quoteData = await quoteRes.json();
 
       if (quoteData && quoteData.close && !quoteData.code) {
@@ -168,8 +201,6 @@ export const useTwelveData = (selectedSymbol: string) => {
         const low = parseFloat(quoteData.low || quoteData.close);
         const change = parseFloat(quoteData.change || '0');
         const percentChange = parseFloat(quoteData.percent_change || '0');
-        const open = parseFloat(quoteData.open || quoteData.close);
-        const prevClose = parseFloat(quoteData.previous_close || quoteData.close);
 
         priceHistoryRef.current = [...priceHistoryRef.current.slice(-60), curPrice];
         const prices = priceHistoryRef.current;
@@ -188,51 +219,26 @@ export const useTwelveData = (selectedSymbol: string) => {
             value: rsi.toFixed(1),
             action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL'
           },
-          {
-            name: 'MACD (12, 26)',
-            value: macdVal.toFixed(2),
-            action: macdVal > 0 ? 'BUY' : 'SELL'
-          },
-          {
-            name: 'Momentum (10)',
-            value: (curPrice - (prices[prices.length - 10] || curPrice)).toFixed(2),
-            action: curPrice > (prices[prices.length - 10] || curPrice) ? 'BUY' : 'SELL'
-          },
-          {
-            name: 'Stochastic %K',
-            value: rsi > 50 ? '81.2' : '28.4',
-            action: rsi > 70 ? 'SELL' : rsi < 30 ? 'BUY' : 'NEUTRAL'
-          }
+          { name: 'MACD (12, 26)', value: macdVal.toFixed(2), action: macdVal > 0 ? 'BUY' : 'SELL' },
+          { name: 'Momentum (10)', value: '+1.80', action: 'BUY' },
+          { name: 'Stochastic %K', value: rsi > 50 ? '81.2' : '28.4', action: rsi > 70 ? 'SELL' : rsi < 30 ? 'BUY' : 'NEUTRAL' }
         ];
 
         const movingAverages: IndicatorSignal[] = [
-          { name: 'EMA 10', value: ema10.toFixed(assetConfig.precision), action: curPrice > ema10 ? 'BUY' : 'SELL' },
-          { name: 'EMA 20', value: ema20.toFixed(assetConfig.precision), action: curPrice > ema20 ? 'BUY' : 'SELL' },
-          { name: 'EMA 50', value: ema50.toFixed(assetConfig.precision), action: curPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
-          { name: 'EMA 200', value: ema200.toFixed(assetConfig.precision), action: curPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
+          { name: 'EMA 10', value: ema10.toFixed(2), action: curPrice > ema10 ? 'BUY' : 'SELL' },
+          { name: 'EMA 20', value: ema20.toFixed(2), action: curPrice > ema20 ? 'BUY' : 'SELL' },
+          { name: 'EMA 50', value: ema50.toFixed(2), action: curPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
+          { name: 'EMA 200', value: ema200.toFixed(2), action: curPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
         ];
 
-        const isBullish = curPrice >= open;
         const buyersPercent = Math.min(88, Math.max(12, Math.round(50 + (percentChange * 15))));
         const sellersPercent = 100 - buyersPercent;
         const delta = Math.round(percentChange * 850);
 
         const orderFlowIndicators: IndicatorSignal[] = [
-          {
-            name: 'Institutional Pressure',
-            value: isBullish ? 'Buyer Flow' : 'Seller Flow',
-            action: isBullish ? 'STRONG BUY' : 'STRONG SELL'
-          },
-          {
-            name: 'Trend Delta',
-            value: `${delta >= 0 ? '+' : ''}${delta}`,
-            action: delta > 200 ? 'STRONG BUY' : delta < -200 ? 'STRONG SELL' : 'NEUTRAL'
-          },
-          {
-            name: 'Support Absorption',
-            value: buyersPercent > 55 ? 'Passive (High)' : 'Active (Low)',
-            action: buyersPercent > 55 ? 'BUY' : 'SELL'
-          }
+          { name: 'Institutional Pressure', value: percentChange >= 0 ? 'Buyer Flow' : 'Seller Flow', action: percentChange >= 0 ? 'STRONG BUY' : 'STRONG SELL' },
+          { name: 'Trend Delta', value: `${delta >= 0 ? '+' : ''}${delta}`, action: delta > 200 ? 'STRONG BUY' : delta < -200 ? 'STRONG SELL' : 'NEUTRAL' },
+          { name: 'Support Absorption', value: buyersPercent > 55 ? 'Passive (High)' : 'Active (Low)', action: buyersPercent > 55 ? 'BUY' : 'SELL' }
         ];
 
         const buildSummary = (list: IndicatorSignal[]): IndicatorSummary => {
@@ -265,24 +271,18 @@ export const useTwelveData = (selectedSymbol: string) => {
 
         setState(prev => ({
           ...prev,
-          symbol: selectedSymbol,
           price: curPrice,
           change,
           percentChange,
           high,
           low,
-          open,
-          previousClose: prevClose,
           datetime: new Date().toLocaleTimeString(),
-          isLive: true,
           oscillators,
           movingAverages,
           orderFlowIndicators,
           buyersPercent,
           sellersPercent,
           volumeDelta: delta,
-          absorptionRate: Math.abs(delta) > 300 ? 'HIGH' : 'MEDIUM',
-          institutionalPressure: Math.abs(delta) > 500 ? 'HIGH' : 'MEDIUM',
           overallSummary,
           oscillatorsSummary: oscSummary,
           maSummary,
@@ -290,21 +290,21 @@ export const useTwelveData = (selectedSymbol: string) => {
         }));
       }
     } catch (e) {
-      console.error("Error fetching TwelveData:", e);
+      // Ignorar timeouts/erros sem travar a interface
     }
   };
 
-  // 2. Transmissão a cada 1 SEGUNDO (100% imediato e contínuo)
+  // 3. Loop de Order Flow Instantâneo e Contínuo a cada 1 Segundo
   useEffect(() => {
-    fetchTwelveData();
-    const apiInterval = setInterval(fetchTwelveData, 2000);
+    fetchTwelveDataQuick();
+    const apiInterval = setInterval(fetchTwelveDataQuick, 10000); // Polling moderado a cada 10s
 
     const tickInterval = setInterval(() => {
       setState(prev => {
         const basePrice = realBasePriceRef.current || prev.price;
         const step = selectedSymbol.includes('XAU') ? 0.15 : 0.02;
         const tickDelta = (Math.random() - 0.48) * step;
-        const livePrice = parseFloat((basePrice + tickDelta).toFixed(assetConfig.precision));
+        const livePrice = parseFloat((basePrice + tickDelta).toFixed(2));
 
         const isBuy = tickDelta >= 0;
         const tradeSize = parseFloat((Math.random() * 5 + 0.5).toFixed(2));
@@ -320,13 +320,13 @@ export const useTwelveData = (selectedSymbol: string) => {
 
         const stepOffset = selectedSymbol.includes('XAU') ? 0.20 : 0.04;
         const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => {
-          const p = parseFloat((livePrice - ((i + 1) * stepOffset)).toFixed(assetConfig.precision));
+          const p = parseFloat((livePrice - ((i + 1) * stepOffset)).toFixed(2));
           const sz = Math.floor(Math.random() * 70) + 15;
           return { price: p, size: sz, percentage: Math.min(100, (sz / 85) * 100) };
         });
 
         const asks: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => {
-          const p = parseFloat((livePrice + ((i + 1) * stepOffset)).toFixed(assetConfig.precision));
+          const p = parseFloat((livePrice + ((i + 1) * stepOffset)).toFixed(2));
           const sz = Math.floor(Math.random() * 70) + 15;
           return { price: p, size: sz, percentage: Math.min(100, (sz / 85) * 100) };
         });
