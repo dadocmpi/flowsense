@@ -11,10 +11,10 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
   return (
     <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.08] p-7 shadow-[0_25px_60px_rgba(0,0,0,0.9)] flex flex-col space-y-6 backdrop-blur-2xl">
       
-      {/* Título do Painel de Order Flow */}
+      {/* Title Header */}
       <div className="flex flex-wrap items-center justify-between border-b border-white/[0.06] pb-4 gap-2">
         <div className="flex items-center space-x-3">
-          <span className="text-xs font-black text-amber-400 uppercase tracking-[0.25em]">ORDER FLOW INSTITUCIONAL (LIVE)</span>
+          <span className="text-xs font-black text-amber-400 uppercase tracking-[0.25em]">INSTITUTIONAL ORDER FLOW (LIVE)</span>
           <div className="flex items-center space-x-1.5 bg-[#26a69a]/15 border border-[#26a69a]/30 px-2.5 py-0.5 rounded-full">
             <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-ping" />
             <span className="text-[9px] font-mono font-black text-[#26a69a] uppercase tracking-wider">
@@ -23,21 +23,20 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
           </div>
         </div>
         <span className="text-[10px] text-white/40 font-mono">
-          Alimentado por TwelveData Feed • {data.symbol}
+          Powered by TwelveData Feed • {data.symbol}
         </span>
       </div>
 
-      {/* Grid Superior: Dominância & Métrica de Delta */}
+      {/* Top Grid: Dominance & Delta */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         
-        {/* Barra de Dominância Compradores vs Vendedores */}
+        {/* Dominance Bar */}
         <div className="md:col-span-2 bg-white/[0.02] border border-white/[0.05] p-4 rounded-2xl flex flex-col justify-between space-y-3">
           <div className="flex justify-between items-center text-xs font-bold">
-            <span className="text-[#26a69a] uppercase tracking-wider">COMPRADORES ({data.buyersPercent}%)</span>
-            <span className="text-[#ef5350] uppercase tracking-wider">VENDEDORES ({data.sellersPercent}%)</span>
+            <span className="text-[#26a69a] uppercase tracking-wider">BUYERS ({data.buyersPercent}%)</span>
+            <span className="text-[#ef5350] uppercase tracking-wider">SELLERS ({data.sellersPercent}%)</span>
           </div>
           
-          {/* Visual Bar */}
           <div className="w-full h-3.5 bg-white/5 rounded-full overflow-hidden flex p-0.5 border border-white/[0.05]">
             <div 
               className="h-full bg-gradient-to-r from-[#26a69a] to-[#4db6ac] rounded-l-full transition-all duration-500 shadow-[0_0_12px_rgba(38,166,154,0.6)]" 
@@ -50,9 +49,9 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
           </div>
         </div>
 
-        {/* Delta de Volume Instantâneo */}
+        {/* Volume Delta */}
         <div className="bg-white/[0.02] border border-white/[0.05] p-4 rounded-2xl flex flex-col justify-center">
-          <span className="text-[9px] font-black text-white/40 uppercase tracking-widest block">DELTA DE VOLUME</span>
+          <span className="text-[9px] font-black text-white/40 uppercase tracking-widest block">VOLUME DELTA</span>
           <span className={cn(
             "text-2xl font-mono font-black mt-1 block",
             data.volumeDelta >= 0 ? "text-[#26a69a]" : "text-[#ef5350]"
@@ -61,9 +60,9 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
           </span>
         </div>
 
-        {/* Taxa de Absorção */}
+        {/* Institutional Pressure */}
         <div className="bg-white/[0.02] border border-white/[0.05] p-4 rounded-2xl flex flex-col justify-center">
-          <span className="text-[9px] font-black text-white/40 uppercase tracking-widest block">PRESSÃO INSTITUCIONAL</span>
+          <span className="text-[9px] font-black text-white/40 uppercase tracking-widest block">INSTITUTIONAL PRESSURE</span>
           <span className="text-2xl font-black text-amber-400 mt-1 block tracking-wider">
             {data.institutionalPressure}
           </span>
@@ -71,22 +70,22 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
 
       </div>
 
-      {/* Grid Inferior: Fita de Negócios (Time & Trades) + Profundidade do Livro */}
+      {/* Bottom Grid: Time & Trades + Depth */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
         
-        {/* Fita de Negócios ao Vivo (Time & Trades) (6/12 cols) */}
+        {/* Time & Trades (6/12 cols) */}
         <div className="lg:col-span-6 bg-white/[0.02] border border-white/[0.05] p-5 rounded-2xl flex flex-col font-mono text-xs">
           <div className="flex justify-between items-center border-b border-white/[0.06] pb-2 mb-3">
             <span className="text-[10px] font-black text-white/50 uppercase tracking-widest font-sans">
-              TIME & TRADES (FITA AO VIVO)
+              TIME & TRADES (LIVE FEED)
             </span>
             <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-ping" />
           </div>
 
           <div className="grid grid-cols-3 text-[9px] text-white/30 uppercase tracking-wider mb-2">
-            <span>Horário</span>
-            <span className="text-center">Preço ($)</span>
-            <span className="text-right">Tamanho</span>
+            <span>TIME</span>
+            <span className="text-center">PRICE ($)</span>
+            <span className="text-right">SIZE</span>
           </div>
 
           <div className="space-y-1.5 max-h-[200px] overflow-y-auto pr-1">
@@ -99,22 +98,22 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
                 )}>
                   ${item.price.toFixed(precision)}
                 </span>
-                <span className="text-right text-white/80 font-bold">{item.size} oz/lotes</span>
+                <span className="text-right text-white/80 font-bold">{item.size} oz/lots</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Livro de Ofertas / Profundidade (6/12 cols) */}
+        {/* Order Book Depth (6/12 cols) */}
         <div className="lg:col-span-6 bg-white/[0.02] border border-white/[0.05] p-5 rounded-2xl flex flex-col font-mono text-xs">
           <div className="flex justify-between items-center border-b border-white/[0.06] pb-2 mb-3">
             <span className="text-[10px] font-black text-white/50 uppercase tracking-widest font-sans">
-              LIVRO DE OFERTAS (DEPTH)
+              ORDER BOOK (DEPTH)
             </span>
-            <span className="text-[9px] text-amber-400 font-bold font-sans">SENSITIVO</span>
+            <span className="text-[9px] text-amber-400 font-bold font-sans">SENSITIVE</span>
           </div>
 
-          {/* Asks (Vendas - Vermelho) */}
+          {/* Asks (Sell - Red) */}
           <div className="space-y-1 mb-2">
             {data.asks.slice(0, 3).reverse().map((ask, idx) => (
               <div key={`ask-${idx}`} className="grid grid-cols-3 items-center relative py-1 px-1">
@@ -129,13 +128,13 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
             ))}
           </div>
 
-          {/* Preço Atual Destacado */}
+          {/* Current Market Price */}
           <div className="py-2 border-y border-white/[0.08] bg-white/[0.03] my-1 text-center font-bold text-sm text-white flex items-center justify-between px-3">
-            <span className="text-[10px] text-white/40 font-sans uppercase tracking-wider">PREÇO DO MERCADO</span>
+            <span className="text-[10px] text-white/40 font-sans uppercase tracking-wider">MARKET PRICE</span>
             <span className="text-amber-400 font-mono text-base font-black animate-pulse">${data.price.toFixed(precision)}</span>
           </div>
 
-          {/* Bids (Compras - Verde) */}
+          {/* Bids (Buy - Green) */}
           <div className="space-y-1 mt-2">
             {data.bids.slice(0, 3).map((bid, idx) => (
               <div key={`bid-${idx}`} className="grid grid-cols-3 items-center relative py-1 px-1">

@@ -18,7 +18,7 @@ export const AssetSummaryCard: React.FC<AssetSummaryCardProps> = ({ data, precis
           <div className="flex items-center space-x-1.5 bg-[#26a69a]/10 border border-[#26a69a]/30 px-2.5 py-0.5 rounded-full">
             <span className="w-1.5 h-1.5 rounded-full bg-[#26a69a] animate-ping" />
             <span className="text-[9px] font-mono font-black text-[#26a69a] uppercase tracking-wider">
-              TEMPO REAL
+              REAL-TIME
             </span>
           </div>
           <span className="text-[10px] text-white/40 font-mono flex items-center gap-1">
@@ -42,11 +42,11 @@ export const AssetSummaryCard: React.FC<AssetSummaryCardProps> = ({ data, precis
 
       <div className="grid grid-cols-2 gap-x-8 gap-y-2 font-mono text-right text-xs bg-white/[0.02] border border-white/[0.04] p-3.5 rounded-2xl">
         <div>
-          <span className="text-[9px] font-bold text-white/30 uppercase block">MÁXIMA 24H</span>
+          <span className="text-[9px] font-bold text-white/30 uppercase block">24H HIGH</span>
           <span className="font-black text-white/90 text-sm">${data.high.toFixed(precision)}</span>
         </div>
         <div>
-          <span className="text-[9px] font-bold text-white/30 uppercase block">MÍNIMA 24H</span>
+          <span className="text-[9px] font-bold text-white/30 uppercase block">24H LOW</span>
           <span className="font-black text-white/90 text-sm">${data.low.toFixed(precision)}</span>
         </div>
       </div>

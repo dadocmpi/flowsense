@@ -6,22 +6,22 @@ export interface AssetConfig {
 }
 
 export const SUPPORTED_ASSETS: AssetConfig[] = [
-  { symbol: 'XAU/USD', twelveSymbol: 'XAU/USD', name: 'Ouro / Dólar', precision: 2 },
-  { symbol: 'WTI/USD', twelveSymbol: 'WTI/USD', name: 'Petróleo WTI / Dólar', precision: 2 },
+  { symbol: 'XAU/USD', twelveSymbol: 'XAU/USD', name: 'Gold / US Dollar', precision: 2 },
+  { symbol: 'WTI/USD', twelveSymbol: 'WTI/USD', name: 'WTI Crude Oil / US Dollar', precision: 2 },
 ];
 
 export interface IndicatorSignal {
   name: string;
   value: string;
-  action: 'COMPRA FORTE' | 'COMPRA' | 'NEUTRO' | 'VENDA' | 'VENDA FORTE';
+  action: 'STRONG BUY' | 'BUY' | 'NEUTRAL' | 'SELL' | 'STRONG SELL';
 }
 
 export interface IndicatorSummary {
   buyCount: number;
   neutralCount: number;
   sellCount: number;
-  score: number; // 0 a 100
-  verdict: 'VENDA FORTE' | 'VENDA' | 'NEUTRO' | 'COMPRA' | 'COMPRA FORTE';
+  score: number; // 0 to 100
+  verdict: 'STRONG SELL' | 'SELL' | 'NEUTRAL' | 'BUY' | 'STRONG BUY';
 }
 
 export interface OrderBookLevel {
@@ -50,22 +50,22 @@ export interface TwelveDataState {
   datetime: string;
   isLive: boolean;
   
-  // Indicadores calculados
+  // Indicators
   oscillators: IndicatorSignal[];
   movingAverages: IndicatorSignal[];
   orderFlowIndicators: IndicatorSignal[];
   
-  // Order Flow em tempo real
+  // Real-time Order Flow
   buyersPercent: number;
   sellersPercent: number;
   volumeDelta: number;
   absorptionRate: string;
-  institutionalPressure: 'ALTA' | 'MEDIA' | 'BAIXA';
+  institutionalPressure: 'HIGH' | 'MEDIUM' | 'LOW';
   bids: OrderBookLevel[];
   asks: OrderBookLevel[];
   recentTrades: TradeFeedItem[];
   
-  // Resumos da Bússola
+  // Compass Summaries
   overallSummary: IndicatorSummary;
   oscillatorsSummary: IndicatorSummary;
   maSummary: IndicatorSummary;

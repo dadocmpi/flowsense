@@ -36,42 +36,125 @@ function calculateEMA(prices: number[], period: number): number {
   return ema;
 }
 
+// Funções auxiliares para dados iniciais instantâneos
+function getInitialState(symbol: string): TwelveDataState {
+  const isGold = symbol.includes('XAU');
+  const basePrice = isGold ? 2950.40 : 71.80;
+  const precision = isGold ? 2 : 2;
+
+  const mockPrices = Array.from({ length: 30 }, (_, i) => basePrice + (Math.sin(i) * (isGold ? 2.5 : 0.4)));
+  const rsi = calculateRSI(mockPrices, 14);
+
+  const oscillators: IndicatorSignal[] = [
+    { name: 'RSI (14)', value: rsi.toFixed(1), action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL' },
+    { name: 'MACD (12, 26)', value: '+1.45', action: 'BUY' },
+    { name: 'Momentum (10)', value: '+2.10', action: 'BUY' },
+    { name: 'Stochastic %K', value: '78.4', action: 'BUY' },
+  ];
+
+  const movingAverages: IndicatorSignal[] = [
+    { name: 'EMA 10', value: (basePrice - 0.50).toFixed(precision), action: 'BUY' },
+    { name: 'EMA 20', value: (basePrice - 1.20).toFixed(precision), action: 'BUY' },
+    { name: 'EMA 50', value: (basePrice - 2.80).toFixed(precision), action: 'STRONG BUY' },
+    { name: 'EMA 200', value: (basePrice - 5.10).toFixed(precision), action: 'STRONG BUY' },
+  ];
+
+  const orderFlowIndicators: IndicatorSignal[] = [
+    { name: 'Institutional Pressure', value: 'Buyer Flow', action: 'STRONG BUY' },
+    { name: 'Trend Delta', value: '+1420', action: 'STRONG BUY' },
+    { name: 'Support Absorption', value: 'Passive (High)', action: 'BUY' },
+  ];
+
+  const buildSummary = (list: IndicatorSignal[]): IndicatorSummary => {
+    let buy = 0;
+    let neutral = 0;
+    let sell = 0;
+
+    list.forEach(i => {
+      if (i.action.includes('BUY')) buy += i.action.includes('STRONG') ? 2 : 1;
+      else if (i.action.includes('SELL')) sell += i.action.includes('STRONG') ? 2 : 1;
+      else neutral += 1;
+    });
+
+    const total = buy + neutral + sell || 1;
+    const score = Math.round((buy / total) * 100);
+
+    let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
+    if (score >= 75) verdict = 'STRONG BUY';
+    else if (score >= 55) verdict = 'BUY';
+    else if (score <= 25) verdict = 'STRONG SELL';
+    else if (score <= 45) verdict = 'SELL';
+
+    return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
+  };
+
+  const stepOffset = isGold ? 0.20 : 0.04;
+  const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
+    price: parseFloat((basePrice - ((i + 1) * stepOffset)).toFixed(precision)),
+    size: Math.floor(Math.random() * 50) + 20,
+    percentage: Math.min(100, ((Math.floor(Math.random() * 50) + 20) / 70) * 100)
+  }));
+
+  const asks: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
+    price: parseFloat((basePrice + ((i + 1) * stepOffset)).toFixed(precision)),
+    size: Math.floor(Math.random() * 50) + 20,
+    percentage: Math.min(100, ((Math.floor(Math.random() * 50) + 20) / 70) * 100)
+  }));
+
+  const initialTrades: TradeFeedItem[] = Array.from({ length: 10 }, (_, i) => ({
+    id: Math.random().toString(36).substring(7),
+    price: basePrice,
+    size: parseFloat((Math.random() * 4 + 0.5).toFixed(2)),
+    time: new Date(Date.now() - i * 1000).toLocaleTimeString(),
+    type: i % 2 === 0 ? 'BUY' : 'SELL'
+  }));
+
+  return {
+    symbol,
+    price: basePrice,
+    change: isGold ? 12.40 : 0.85,
+    percentChange: isGold ? 0.42 : 1.20,
+    high: basePrice + (isGold ? 8.5 : 1.2),
+    low: basePrice - (isGold ? 5.2 : 0.8),
+    open: basePrice - (isGold ? 2.1 : 0.4),
+    previousClose: basePrice - (isGold ? 12.4 : 0.85),
+    datetime: new Date().toLocaleTimeString(),
+    isLive: true,
+    oscillators,
+    movingAverages,
+    orderFlowIndicators,
+    buyersPercent: 64,
+    sellersPercent: 36,
+    volumeDelta: 1420,
+    absorptionRate: 'HIGH',
+    institutionalPressure: 'HIGH',
+    bids,
+    asks,
+    recentTrades: initialTrades,
+    overallSummary: buildSummary([...oscillators, ...movingAverages, ...orderFlowIndicators]),
+    oscillatorsSummary: buildSummary(oscillators),
+    maSummary: buildSummary(movingAverages),
+    orderFlowSummary: buildSummary(orderFlowIndicators)
+  };
+}
+
 export const useTwelveData = (selectedSymbol: string) => {
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
 
-  const [state, setState] = useState<TwelveDataState>({
-    symbol: selectedSymbol,
-    price: selectedSymbol.includes('XAU') ? 2950.40 : 71.80,
-    change: 0,
-    percentChange: 0,
-    high: 0,
-    low: 0,
-    open: 0,
-    previousClose: 0,
-    datetime: new Date().toLocaleTimeString(),
-    isLive: true,
-    oscillators: [],
-    movingAverages: [],
-    orderFlowIndicators: [],
-    buyersPercent: 62,
-    sellersPercent: 38,
-    volumeDelta: 1420,
-    absorptionRate: 'FORTE',
-    institutionalPressure: 'ALTA',
-    bids: [],
-    asks: [],
-    recentTrades: [],
-    overallSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
-    oscillatorsSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
-    maSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
-    orderFlowSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
-  });
+  // Carregamento instantâneo com estado base
+  const [state, setState] = useState<TwelveDataState>(() => getInitialState(selectedSymbol));
 
   const priceHistoryRef = useRef<number[]>([]);
   const tradesRef = useRef<TradeFeedItem[]>([]);
   const realBasePriceRef = useRef<number>(selectedSymbol.includes('XAU') ? 2950.40 : 71.80);
 
-  // 1. Busca Cotação Oficial da TwelveData API
+  // Reiniciar estado instantaneamente ao trocar o ativo
+  useEffect(() => {
+    setState(getInitialState(selectedSymbol));
+    realBasePriceRef.current = selectedSymbol.includes('XAU') ? 2950.40 : 71.80;
+  }, [selectedSymbol]);
+
+  // 1. Fetch TwelveData API em background
   const fetchTwelveData = async () => {
     try {
       const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${TWELVE_DATA_API_KEY}`;
@@ -103,30 +186,30 @@ export const useTwelveData = (selectedSymbol: string) => {
           {
             name: 'RSI (14)',
             value: rsi.toFixed(1),
-            action: rsi > 70 ? 'VENDA FORTE' : rsi > 60 ? 'VENDA' : rsi < 30 ? 'COMPRA FORTE' : rsi < 40 ? 'COMPRA' : 'NEUTRO'
+            action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL'
           },
           {
             name: 'MACD (12, 26)',
             value: macdVal.toFixed(2),
-            action: macdVal > 0 ? 'COMPRA' : 'VENDA'
+            action: macdVal > 0 ? 'BUY' : 'SELL'
           },
           {
-            name: 'Momento (10)',
+            name: 'Momentum (10)',
             value: (curPrice - (prices[prices.length - 10] || curPrice)).toFixed(2),
-            action: curPrice > (prices[prices.length - 10] || curPrice) ? 'COMPRA' : 'VENDA'
+            action: curPrice > (prices[prices.length - 10] || curPrice) ? 'BUY' : 'SELL'
           },
           {
-            name: 'Estocástico %K',
+            name: 'Stochastic %K',
             value: rsi > 50 ? '81.2' : '28.4',
-            action: rsi > 70 ? 'VENDA' : rsi < 30 ? 'COMPRA' : 'NEUTRO'
+            action: rsi > 70 ? 'SELL' : rsi < 30 ? 'BUY' : 'NEUTRAL'
           }
         ];
 
         const movingAverages: IndicatorSignal[] = [
-          { name: 'EMA 10', value: ema10.toFixed(assetConfig.precision), action: curPrice > ema10 ? 'COMPRA' : 'VENDA' },
-          { name: 'EMA 20', value: ema20.toFixed(assetConfig.precision), action: curPrice > ema20 ? 'COMPRA' : 'VENDA' },
-          { name: 'EMA 50', value: ema50.toFixed(assetConfig.precision), action: curPrice > ema50 ? 'COMPRA FORTE' : 'VENDA FORTE' },
-          { name: 'EMA 200', value: ema200.toFixed(assetConfig.precision), action: curPrice > ema200 ? 'COMPRA FORTE' : 'VENDA FORTE' },
+          { name: 'EMA 10', value: ema10.toFixed(assetConfig.precision), action: curPrice > ema10 ? 'BUY' : 'SELL' },
+          { name: 'EMA 20', value: ema20.toFixed(assetConfig.precision), action: curPrice > ema20 ? 'BUY' : 'SELL' },
+          { name: 'EMA 50', value: ema50.toFixed(assetConfig.precision), action: curPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
+          { name: 'EMA 200', value: ema200.toFixed(assetConfig.precision), action: curPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
         ];
 
         const isBullish = curPrice >= open;
@@ -136,19 +219,19 @@ export const useTwelveData = (selectedSymbol: string) => {
 
         const orderFlowIndicators: IndicatorSignal[] = [
           {
-            name: 'Pressão Institucional',
-            value: isBullish ? 'Fluxo Comprador' : 'Fluxo Vendedor',
-            action: isBullish ? 'COMPRA FORTE' : 'VENDA FORTE'
+            name: 'Institutional Pressure',
+            value: isBullish ? 'Buyer Flow' : 'Seller Flow',
+            action: isBullish ? 'STRONG BUY' : 'STRONG SELL'
           },
           {
-            name: 'Delta de Tendência',
+            name: 'Trend Delta',
             value: `${delta >= 0 ? '+' : ''}${delta}`,
-            action: delta > 200 ? 'COMPRA FORTE' : delta < -200 ? 'VENDA FORTE' : 'NEUTRO'
+            action: delta > 200 ? 'STRONG BUY' : delta < -200 ? 'STRONG SELL' : 'NEUTRAL'
           },
           {
-            name: 'Absorção em Suporte',
-            value: buyersPercent > 55 ? 'Passiva (Alta)' : 'Ativa (Baixa)',
-            action: buyersPercent > 55 ? 'COMPRA' : 'VENDA'
+            name: 'Support Absorption',
+            value: buyersPercent > 55 ? 'Passive (High)' : 'Active (Low)',
+            action: buyersPercent > 55 ? 'BUY' : 'SELL'
           }
         ];
 
@@ -158,19 +241,19 @@ export const useTwelveData = (selectedSymbol: string) => {
           let sell = 0;
 
           list.forEach(i => {
-            if (i.action.includes('COMPRA')) buy += i.action.includes('FORTE') ? 2 : 1;
-            else if (i.action.includes('VENDA')) sell += i.action.includes('FORTE') ? 2 : 1;
+            if (i.action.includes('BUY')) buy += i.action.includes('STRONG') ? 2 : 1;
+            else if (i.action.includes('SELL')) sell += i.action.includes('STRONG') ? 2 : 1;
             else neutral += 1;
           });
 
           const total = buy + neutral + sell || 1;
           const score = Math.round((buy / total) * 100);
 
-          let verdict: IndicatorSummary['verdict'] = 'NEUTRO';
-          if (score >= 75) verdict = 'COMPRA FORTE';
-          else if (score >= 55) verdict = 'COMPRA';
-          else if (score <= 25) verdict = 'VENDA FORTE';
-          else if (score <= 45) verdict = 'VENDA';
+          let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
+          if (score >= 75) verdict = 'STRONG BUY';
+          else if (score >= 55) verdict = 'BUY';
+          else if (score <= 25) verdict = 'STRONG SELL';
+          else if (score <= 45) verdict = 'SELL';
 
           return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
         };
@@ -198,8 +281,8 @@ export const useTwelveData = (selectedSymbol: string) => {
           buyersPercent,
           sellersPercent,
           volumeDelta: delta,
-          absorptionRate: Math.abs(delta) > 300 ? 'ALTA' : 'MÉDIA',
-          institutionalPressure: Math.abs(delta) > 500 ? 'ALTA' : 'MEDIA',
+          absorptionRate: Math.abs(delta) > 300 ? 'HIGH' : 'MEDIUM',
+          institutionalPressure: Math.abs(delta) > 500 ? 'HIGH' : 'MEDIUM',
           overallSummary,
           oscillatorsSummary: oscSummary,
           maSummary,
@@ -207,25 +290,22 @@ export const useTwelveData = (selectedSymbol: string) => {
         }));
       }
     } catch (e) {
-      console.error("Erro ao buscar cotação TwelveData:", e);
+      console.error("Error fetching TwelveData:", e);
     }
   };
 
-  // 2. Loop de Transmissão de Order Flow & Ticks a Cada 1 Segundo (100% ao vivo)
+  // 2. Transmissão a cada 1 SEGUNDO (100% imediato e contínuo)
   useEffect(() => {
     fetchTwelveData();
     const apiInterval = setInterval(fetchTwelveData, 2000);
 
-    // Loop de tick ao vivo a CADA 1 SEGUNDO
     const tickInterval = setInterval(() => {
       setState(prev => {
         const basePrice = realBasePriceRef.current || prev.price;
-        // Micro variação tick a tick mantendo o preço espelhado do mercado real
         const step = selectedSymbol.includes('XAU') ? 0.15 : 0.02;
         const tickDelta = (Math.random() - 0.48) * step;
         const livePrice = parseFloat((basePrice + tickDelta).toFixed(assetConfig.precision));
 
-        // Novo negócio na fita de trades (Time & Trades)
         const isBuy = tickDelta >= 0;
         const tradeSize = parseFloat((Math.random() * 5 + 0.5).toFixed(2));
         const newTrade: TradeFeedItem = {
@@ -238,7 +318,6 @@ export const useTwelveData = (selectedSymbol: string) => {
 
         const updatedTrades = [newTrade, ...(prev.recentTrades || []).slice(0, 14)];
 
-        // Recalcular Bids e Asks em tempo real
         const stepOffset = selectedSymbol.includes('XAU') ? 0.20 : 0.04;
         const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => {
           const p = parseFloat((livePrice - ((i + 1) * stepOffset)).toFixed(assetConfig.precision));

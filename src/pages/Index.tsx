@@ -15,10 +15,10 @@ const Index = () => {
   return (
     <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
       
-      {/* Top Bar Ultralimpa (Seleção de COMMODITIES) */}
+      {/* Header Bar */}
       <header className="w-full border-b border-white/[0.04] bg-[#07080a] px-8 py-4 flex items-center justify-between sticky top-0 z-50 backdrop-blur-md">
         
-        {/* Botões de Seleção de Ativos (OURO / PETRÓLEO) */}
+        {/* Commodities Selector Buttons */}
         <div className="flex items-center space-x-3">
           <span className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em] mr-2">COMMODITIES:</span>
           {SUPPORTED_ASSETS.map(asset => (
@@ -36,7 +36,7 @@ const Index = () => {
           ))}
         </div>
 
-        {/* Indicador de Alimentação TwelveData API */}
+        {/* TwelveData Feed Badge */}
         <div className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-4 py-1.5 rounded-full">
           <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-pulse" />
           <span className="text-[10px] font-mono text-white/60 font-bold uppercase tracking-widest">
@@ -45,19 +45,19 @@ const Index = () => {
         </div>
       </header>
 
-      {/* Conteúdo Principal do Terminal */}
+      {/* Main Terminal Content */}
       <main className="flex-grow p-8 max-w-[1600px] w-full mx-auto flex flex-col space-y-8">
         
-        {/* Card de Cotação em Destaque */}
+        {/* Highlight Asset Summary Card */}
         <AssetSummaryCard
           data={twelveData}
           precision={activeConfig.precision}
         />
 
-        {/* Grid Principal: Bússola + Tabelas Técnicas */}
+        {/* Main Grid: Compass + Technical Details */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* Coluna 1: Bússola de Sentimento com Traços e Cores Nítidas (5/12 cols) */}
+          {/* Column 1: Confluence Compass (5/12 cols) */}
           <div className="lg:col-span-5 flex flex-col">
             <TradingViewGauge
               overallSummary={twelveData.overallSummary}
@@ -68,7 +68,7 @@ const Index = () => {
             />
           </div>
 
-          {/* Coluna 2: Tabelas Detalhadas de Indicadores Reais (7/12 cols) */}
+          {/* Column 2: Detailed Technical Indicators (7/12 cols) */}
           <div className="lg:col-span-7 flex flex-col">
             <TechnicalDetailsTable
               oscillators={twelveData.oscillators}
@@ -79,7 +79,7 @@ const Index = () => {
 
         </div>
 
-        {/* Seção Inferior: ORDER FLOW EM TEMPO REAL */}
+        {/* Lower Section: REAL-TIME ORDER FLOW */}
         <RealtimeOrderFlow
           data={twelveData}
           precision={activeConfig.precision}

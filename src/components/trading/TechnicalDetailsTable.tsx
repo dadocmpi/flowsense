@@ -16,11 +16,11 @@ export const TechnicalDetailsTable: React.FC<TechnicalDetailsTableProps> = ({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-5 h-full">
       
-      {/* Bloco 1: Osciladores & Pressão */}
+      {/* Block 1: Oscillators & Flow */}
       <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.06] p-6 flex flex-col justify-between shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
         <div className="flex items-center justify-between border-b border-white/[0.06] pb-3 mb-4">
           <h3 className="text-[10px] font-black text-white/50 uppercase tracking-[0.2em]">
-            Osciladores & Fluxo Reais
+            Real Oscillators & Flow
           </h3>
           <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
         </div>
@@ -32,8 +32,8 @@ export const TechnicalDetailsTable: React.FC<TechnicalDetailsTableProps> = ({
                 <span className="font-mono text-white/90 font-bold text-[11px]">{item.value}</span>
                 <span className={cn(
                   "text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider min-w-[75px] text-center",
-                  item.action.includes('COMPRA') ? "bg-[#26a69a]/15 text-[#26a69a] border border-[#26a69a]/30" :
-                  item.action.includes('VENDA') ? "bg-[#ef5350]/15 text-[#ef5350] border border-[#ef5350]/30" : "bg-white/5 text-white/40 border border-white/5"
+                  item.action.includes('BUY') ? "bg-[#26a69a]/15 text-[#26a69a] border border-[#26a69a]/30" :
+                  item.action.includes('SELL') ? "bg-[#ef5350]/15 text-[#ef5350] border border-[#ef5350]/30" : "bg-white/5 text-white/40 border border-white/5"
                 )}>
                   {item.action}
                 </span>
@@ -43,11 +43,11 @@ export const TechnicalDetailsTable: React.FC<TechnicalDetailsTableProps> = ({
         </div>
       </div>
 
-      {/* Bloco 2: Médias Móveis */}
+      {/* Block 2: Moving Averages */}
       <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.06] p-6 flex flex-col justify-between shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
         <div className="flex items-center justify-between border-b border-white/[0.06] pb-3 mb-4">
           <h3 className="text-[10px] font-black text-white/50 uppercase tracking-[0.2em]">
-            Médias Móveis Institucionais
+            Institutional Moving Averages
           </h3>
           <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
         </div>
@@ -59,8 +59,8 @@ export const TechnicalDetailsTable: React.FC<TechnicalDetailsTableProps> = ({
                 <span className="font-mono text-white/90 font-bold text-[11px]">{item.value}</span>
                 <span className={cn(
                   "text-[9px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider min-w-[75px] text-center",
-                  item.action.includes('COMPRA') ? "bg-[#26a69a]/15 text-[#26a69a] border border-[#26a69a]/30" :
-                  item.action.includes('VENDA') ? "bg-[#ef5350]/15 text-[#ef5350] border border-[#ef5350]/30" : "bg-white/5 text-white/40 border border-white/5"
+                  item.action.includes('BUY') ? "bg-[#26a69a]/15 text-[#26a69a] border border-[#26a69a]/30" :
+                  item.action.includes('SELL') ? "bg-[#ef5350]/15 text-[#ef5350] border border-[#ef5350]/30" : "bg-white/5 text-white/40 border border-white/5"
                 )}>
                   {item.action}
                 </span>
