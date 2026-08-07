@@ -15,16 +15,10 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
       <div className="flex flex-wrap items-center justify-between border-b border-white/[0.06] pb-4 gap-2">
         <div className="flex items-center space-x-3">
           <span className="text-xs font-black text-amber-400 uppercase tracking-[0.25em]">INSTITUTIONAL ORDER FLOW (LIVE)</span>
-          <div className="flex items-center space-x-1.5 bg-[#26a69a]/15 border border-[#26a69a]/30 px-2.5 py-0.5 rounded-full">
+          <div className="flex items-center space-x-1.5 bg-[#26a69a]/15 border border-[#26a69a]/30 p-1.5 rounded-full">
             <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-ping" />
-            <span className="text-[9px] font-mono font-black text-[#26a69a] uppercase tracking-wider">
-              TICK BY TICK
-            </span>
           </div>
         </div>
-        <span className="text-[10px] text-white/40 font-mono">
-          Powered by TwelveData Feed • {data.symbol}
-        </span>
       </div>
 
       {/* Top Grid: Dominance & Delta */}

@@ -36,12 +36,9 @@ const Index = () => {
           ))}
         </div>
 
-        {/* TwelveData Feed Badge */}
-        <div className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-4 py-1.5 rounded-full">
+        {/* Minimalist Live Status Dot */}
+        <div className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full">
           <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-pulse" />
-          <span className="text-[10px] font-mono text-white/60 font-bold uppercase tracking-widest">
-            TwelveData Real Feed
-          </span>
         </div>
       </header>
 
