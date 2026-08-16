@@ -14,10 +14,16 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
       {/* Title Header */}
       <div className="flex flex-wrap items-center justify-between border-b border-white/[0.06] pb-4 gap-2">
         <div className="flex items-center space-x-3">
-          <span className="text-xs font-black text-amber-400 uppercase tracking-[0.25em]">INSTITUTIONAL ORDER FLOW (LIVE)</span>
-          <div className="flex items-center space-x-1.5 bg-[#26a69a]/15 border border-[#26a69a]/30 p-1.5 rounded-full">
-            <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-ping" />
-          </div>
+          <span className="text-xs font-black text-amber-400 uppercase tracking-[0.25em]">INSTITUTIONAL ORDER FLOW</span>
+          {data.isMarketOpen ? (
+            <div className="flex items-center space-x-1.5 bg-[#26a69a]/15 border border-[#26a69a]/30 p-1.5 rounded-full">
+              <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-ping" />
+            </div>
+          ) : (
+            <span className="text-[9px] font-bold text-amber-400/80 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md">
+              MARKET CLOSED (SETTLED)
+            </span>
+          )}
         </div>
       </div>
 
@@ -71,13 +77,13 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
         <div className="lg:col-span-6 bg-white/[0.02] border border-white/[0.05] p-5 rounded-2xl flex flex-col font-mono text-xs">
           <div className="flex justify-between items-center border-b border-white/[0.06] pb-2 mb-3">
             <span className="text-[10px] font-black text-white/50 uppercase tracking-widest font-sans">
-              TIME & TRADES (LIVE FEED)
+              SETTLED TRADES
             </span>
-            <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-ping" />
+            {data.isMarketOpen && <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-ping" />}
           </div>
 
           <div className="grid grid-cols-3 text-[9px] text-white/30 uppercase tracking-wider mb-2">
-            <span>TIME</span>
+            <span>STATUS / TIME</span>
             <span className="text-center">PRICE ($)</span>
             <span className="text-right">SIZE</span>
           </div>
@@ -92,7 +98,7 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
                 )}>
                   ${item.price.toFixed(precision)}
                 </span>
-                <span className="text-right text-white/80 font-bold">{item.size} oz/lots</span>
+                <span className="text-right text-white/80 font-bold">{item.size} oz</span>
               </div>
             ))}
           </div>
@@ -104,7 +110,7 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
             <span className="text-[10px] font-black text-white/50 uppercase tracking-widest font-sans">
               ORDER BOOK (DEPTH)
             </span>
-            <span className="text-[9px] text-amber-400 font-bold font-sans">SENSITIVE</span>
+            <span className="text-[9px] text-amber-400 font-bold font-sans">SETTLED</span>
           </div>
 
           {/* Asks (Sell - Red) */}
@@ -124,8 +130,8 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
 
           {/* Current Market Price */}
           <div className="py-2 border-y border-white/[0.08] bg-white/[0.03] my-1 text-center font-bold text-sm text-white flex items-center justify-between px-3">
-            <span className="text-[10px] text-white/40 font-sans uppercase tracking-wider">MARKET PRICE</span>
-            <span className="text-amber-400 font-mono text-base font-black animate-pulse">${data.price.toFixed(precision)}</span>
+            <span className="text-[10px] text-white/40 font-sans uppercase tracking-wider">SETTLED PRICE</span>
+            <span className="text-amber-400 font-mono text-base font-black">${data.price.toFixed(precision)}</span>
           </div>
 
           {/* Bids (Buy - Green) */}

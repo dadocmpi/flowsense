@@ -3,6 +3,22 @@ import { TwelveDataState, SUPPORTED_ASSETS, IndicatorSignal, IndicatorSummary, O
 
 const TWELVE_DATA_API_KEY = '053dc682778b40d1aa59d00e444d5b64';
 
+// Verifica se o mercado de XAU/USD (Spot Gold) está aberto
+export function checkIsMarketOpen(): boolean {
+  const now = new Date();
+  const day = now.getUTCDay(); // 0 = Domingo, 6 = Sábado
+  const hour = now.getUTCHours();
+  
+  // Sábado: Fechado o dia inteiro
+  if (day === 6) return false;
+  // Sexta-feira: Fecha após 22:00 UTC (17:00 NY / 19:00 BRT)
+  if (day === 5 && hour >= 22) return false;
+  // Domingo: Fechado até a reabertura às 22:00 UTC (17:00 NY / 19:00 BRT)
+  if (day === 0 && hour < 22) return false;
+  
+  return true;
+}
+
 function calculateRSI(prices: number[], period = 14): number {
   if (prices.length < period + 1) return 50;
   let gains = 0;
@@ -36,13 +52,12 @@ function calculateEMA(prices: number[], period: number): number {
   return ema;
 }
 
-// Retorna estado inicial síncrono para 0ms de carregamento
 function getInitialState(symbol: string): TwelveDataState {
-  const isGold = symbol.includes('XAU');
-  const basePrice = isGold ? 2950.40 : 71.80;
+  const basePrice = 2950.40;
   const precision = 2;
+  const marketOpen = checkIsMarketOpen();
 
-  const mockPrices = Array.from({ length: 30 }, (_, i) => basePrice + (Math.sin(i) * (isGold ? 2.5 : 0.4)));
+  const mockPrices = Array.from({ length: 30 }, (_, i) => basePrice + (Math.sin(i) * 2.5));
   const rsi = calculateRSI(mockPrices, 14);
 
   const oscillators: IndicatorSignal[] = [
@@ -88,38 +103,39 @@ function getInitialState(symbol: string): TwelveDataState {
     return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
   };
 
-  const stepOffset = isGold ? 0.20 : 0.04;
+  const stepOffset = 0.20;
   const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
     price: parseFloat((basePrice - ((i + 1) * stepOffset)).toFixed(precision)),
-    size: Math.floor(Math.random() * 50) + 20,
-    percentage: Math.min(100, ((Math.floor(Math.random() * 50) + 20) / 70) * 100)
+    size: 45,
+    percentage: 65
   }));
 
   const asks: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
     price: parseFloat((basePrice + ((i + 1) * stepOffset)).toFixed(precision)),
-    size: Math.floor(Math.random() * 50) + 20,
-    percentage: Math.min(100, ((Math.floor(Math.random() * 50) + 20) / 70) * 100)
+    size: 42,
+    percentage: 60
   }));
 
-  const initialTrades: TradeFeedItem[] = Array.from({ length: 10 }, (_, i) => ({
-    id: Math.random().toString(36).substring(7),
+  const initialTrades: TradeFeedItem[] = Array.from({ length: 8 }, (_, i) => ({
+    id: `close-${i}`,
     price: basePrice,
-    size: parseFloat((Math.random() * 4 + 0.5).toFixed(2)),
-    time: new Date(Date.now() - i * 1000).toLocaleTimeString(),
+    size: 2.5,
+    time: 'Last Close',
     type: i % 2 === 0 ? 'BUY' : 'SELL'
   }));
 
   return {
     symbol,
     price: basePrice,
-    change: isGold ? 12.40 : 0.85,
-    percentChange: isGold ? 0.42 : 1.20,
-    high: basePrice + (isGold ? 8.5 : 1.2),
-    low: basePrice - (isGold ? 5.2 : 0.8),
-    open: basePrice - (isGold ? 2.1 : 0.4),
-    previousClose: basePrice - (isGold ? 12.4 : 0.85),
-    datetime: new Date().toLocaleTimeString(),
-    isLive: true,
+    change: 12.40,
+    percentChange: 0.42,
+    high: basePrice + 8.5,
+    low: basePrice - 5.2,
+    open: basePrice - 2.1,
+    previousClose: basePrice - 12.4,
+    datetime: 'Friday Close',
+    isLive: marketOpen,
+    isMarketOpen: marketOpen,
     oscillators,
     movingAverages,
     orderFlowIndicators,
@@ -140,53 +156,15 @@ function getInitialState(symbol: string): TwelveDataState {
 
 export const useTwelveData = (selectedSymbol: string) => {
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
-
-  // Inicia IMEDIATAMENTE sem delay (0ms)
   const [state, setState] = useState<TwelveDataState>(() => getInitialState(selectedSymbol));
-
   const priceHistoryRef = useRef<number[]>([]);
-  const realBasePriceRef = useRef<number>(selectedSymbol.includes('XAU') ? 2950.40 : 71.80);
+  const realBasePriceRef = useRef<number>(2950.40);
 
-  // Reiniciar estado instantaneamente ao trocar de ativo
-  useEffect(() => {
-    setState(getInitialState(selectedSymbol));
-    realBasePriceRef.current = selectedSymbol.includes('XAU') ? 2950.40 : 71.80;
-  }, [selectedSymbol]);
-
-  // 1. WebSocket de Alta Velocidade (Binance PAXGUSDT para Ouro real / BTCUSDT para Petróleo)
-  useEffect(() => {
-    const wsSymbol = selectedSymbol.includes('XAU') ? 'paxgusdt' : 'btcusdt';
-    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${wsSymbol}@ticker`);
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data && data.c) {
-          let realPrice = parseFloat(data.c);
-          if (!selectedSymbol.includes('XAU')) {
-            // Escala proporcional para Petróleo WTI baseada na variação do mercado
-            const pct = parseFloat(data.P || '0');
-            realPrice = parseFloat((71.80 * (1 + pct / 100)).toFixed(2));
-          } else {
-            realPrice = parseFloat(realPrice.toFixed(2));
-          }
-          realBasePriceRef.current = realPrice;
-        }
-      } catch (e) {
-        // Ignora erros de parse
-      }
-    };
-
-    return () => {
-      ws.close();
-    };
-  }, [selectedSymbol]);
-
-  // 2. Fetch TwelveData com Timeout rigoroso de 1.5s (nunca trava)
+  // 1. Fetch oficial TwelveData (sempre busca o preço real de fechamento / mercado)
   const fetchTwelveDataQuick = async () => {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500); // 1.5s max timeout
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
 
       const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${TWELVE_DATA_API_KEY}`;
       const quoteRes = await fetch(quoteUrl, { signal: controller.signal });
@@ -201,6 +179,7 @@ export const useTwelveData = (selectedSymbol: string) => {
         const low = parseFloat(quoteData.low || quoteData.close);
         const change = parseFloat(quoteData.change || '0');
         const percentChange = parseFloat(quoteData.percent_change || '0');
+        const marketOpen = checkIsMarketOpen();
 
         priceHistoryRef.current = [...priceHistoryRef.current.slice(-60), curPrice];
         const prices = priceHistoryRef.current;
@@ -210,7 +189,6 @@ export const useTwelveData = (selectedSymbol: string) => {
         const ema20 = calculateEMA(prices, 20);
         const ema50 = calculateEMA(prices, 50);
         const ema200 = calculateEMA(prices, 200);
-
         const macdVal = calculateEMA(prices, 12) - calculateEMA(prices, 26);
 
         const oscillators: IndicatorSignal[] = [
@@ -269,6 +247,19 @@ export const useTwelveData = (selectedSymbol: string) => {
         const ofSummary = buildSummary(orderFlowIndicators);
         const overallSummary = buildSummary([...oscillators, ...movingAverages, ...orderFlowIndicators]);
 
+        const stepOffset = 0.20;
+        const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
+          price: parseFloat((curPrice - ((i + 1) * stepOffset)).toFixed(2)),
+          size: Math.floor(Math.random() * 50) + 20,
+          percentage: Math.min(100, ((Math.floor(Math.random() * 50) + 20) / 70) * 100)
+        }));
+
+        const asks: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
+          price: parseFloat((curPrice + ((i + 1) * stepOffset)).toFixed(2)),
+          size: Math.floor(Math.random() * 50) + 20,
+          percentage: Math.min(100, ((Math.floor(Math.random() * 50) + 20) / 70) * 100)
+        }));
+
         setState(prev => ({
           ...prev,
           price: curPrice,
@@ -276,13 +267,17 @@ export const useTwelveData = (selectedSymbol: string) => {
           percentChange,
           high,
           low,
-          datetime: new Date().toLocaleTimeString(),
+          datetime: marketOpen ? new Date().toLocaleTimeString() : 'Friday Close',
+          isMarketOpen: marketOpen,
+          isLive: marketOpen,
           oscillators,
           movingAverages,
           orderFlowIndicators,
           buyersPercent,
           sellersPercent,
           volumeDelta: delta,
+          bids,
+          asks,
           overallSummary,
           oscillatorsSummary: oscSummary,
           maSummary,
@@ -290,63 +285,39 @@ export const useTwelveData = (selectedSymbol: string) => {
         }));
       }
     } catch (e) {
-      // Ignorar timeouts/erros sem travar a interface
+      // Ignora falhas de conexão em segundo plano
     }
   };
 
-  // 3. Loop de Order Flow Instantâneo e Contínuo a cada 1 Segundo
+  // 2. Loop de atualização: SOMENTE se o mercado estiver ABERTO
   useEffect(() => {
     fetchTwelveDataQuick();
-    const apiInterval = setInterval(fetchTwelveDataQuick, 10000); // Polling moderado a cada 10s
 
-    const tickInterval = setInterval(() => {
-      setState(prev => {
-        const basePrice = realBasePriceRef.current || prev.price;
-        const step = selectedSymbol.includes('XAU') ? 0.15 : 0.02;
-        const tickDelta = (Math.random() - 0.48) * step;
-        const livePrice = parseFloat((basePrice + tickDelta).toFixed(2));
+    const marketOpen = checkIsMarketOpen();
 
-        const isBuy = tickDelta >= 0;
-        const tradeSize = parseFloat((Math.random() * 5 + 0.5).toFixed(2));
-        const newTrade: TradeFeedItem = {
-          id: Math.random().toString(36).substring(7),
-          price: livePrice,
-          size: tradeSize,
-          time: new Date().toLocaleTimeString(),
-          type: isBuy ? 'BUY' : 'SELL'
-        };
+    // Se o mercado estiver FECHADO (Fim de semana), NÃO executa WebSocket nem gerador de ticks
+    if (!marketOpen) {
+      return;
+    }
 
-        const updatedTrades = [newTrade, ...(prev.recentTrades || []).slice(0, 14)];
+    // Mercado aberto: Atualizações a cada 15 segundos da API
+    const apiInterval = setInterval(fetchTwelveDataQuick, 15000);
 
-        const stepOffset = selectedSymbol.includes('XAU') ? 0.20 : 0.04;
-        const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => {
-          const p = parseFloat((livePrice - ((i + 1) * stepOffset)).toFixed(2));
-          const sz = Math.floor(Math.random() * 70) + 15;
-          return { price: p, size: sz, percentage: Math.min(100, (sz / 85) * 100) };
-        });
-
-        const asks: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => {
-          const p = parseFloat((livePrice + ((i + 1) * stepOffset)).toFixed(2));
-          const sz = Math.floor(Math.random() * 70) + 15;
-          return { price: p, size: sz, percentage: Math.min(100, (sz / 85) * 100) };
-        });
-
-        return {
-          ...prev,
-          price: livePrice,
-          high: Math.max(prev.high || livePrice, livePrice),
-          low: prev.low > 0 ? Math.min(prev.low, livePrice) : livePrice,
-          datetime: new Date().toLocaleTimeString(),
-          bids,
-          asks,
-          recentTrades: updatedTrades
-        };
-      });
-    }, 1000);
+    // WebSocket ativo somente durante a semana
+    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/paxgusdt@ticker`);
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data && data.c) {
+          const livePrice = parseFloat(parseFloat(data.c).toFixed(2));
+          realBasePriceRef.current = livePrice;
+        }
+      } catch (e) {}
+    };
 
     return () => {
       clearInterval(apiInterval);
-      clearInterval(tickInterval);
+      ws.close();
     };
   }, [selectedSymbol]);
 

@@ -7,7 +7,6 @@ export interface AssetConfig {
 
 export const SUPPORTED_ASSETS: AssetConfig[] = [
   { symbol: 'XAU/USD', twelveSymbol: 'XAU/USD', name: 'Gold / US Dollar', precision: 2 },
-  { symbol: 'WTI/USD', twelveSymbol: 'WTI/USD', name: 'WTI Crude Oil / US Dollar', precision: 2 },
 ];
 
 export interface IndicatorSignal {
@@ -49,13 +48,14 @@ export interface TwelveDataState {
   previousClose: number;
   datetime: string;
   isLive: boolean;
+  isMarketOpen: boolean;
   
   // Indicators
   oscillators: IndicatorSignal[];
   movingAverages: IndicatorSignal[];
   orderFlowIndicators: IndicatorSignal[];
   
-  // Real-time Order Flow
+  // Order Flow
   buyersPercent: number;
   sellersPercent: number;
   volumeDelta: number;

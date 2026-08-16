@@ -1,6 +1,6 @@
 import React from 'react';
 import { TwelveDataState } from '../../types/trading';
-import { TrendingUp, TrendingDown, Clock } from 'lucide-react';
+import { TrendingUp, TrendingDown, Clock, ShieldAlert } from 'lucide-react';
 
 interface AssetSummaryCardProps {
   data: TwelveDataState;
@@ -15,12 +15,22 @@ export const AssetSummaryCard: React.FC<AssetSummaryCardProps> = ({ data, precis
       <div>
         <div className="flex items-center space-x-3">
           <span className="text-xs font-black text-amber-400 uppercase tracking-widest">{data.symbol}</span>
-          <div className="flex items-center space-x-1.5 bg-[#26a69a]/10 border border-[#26a69a]/30 p-1.5 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#26a69a] animate-ping" />
-          </div>
+          
+          {data.isMarketOpen ? (
+            <div className="flex items-center space-x-1.5 bg-[#26a69a]/10 border border-[#26a69a]/30 px-2 py-0.5 rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#26a69a] animate-ping" />
+              <span className="text-[9px] font-bold text-[#26a69a]">OPEN</span>
+            </div>
+          ) : (
+            <div className="flex items-center space-x-1.5 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+              <span className="text-[9px] font-bold text-amber-400">WEEKEND CLOSE</span>
+            </div>
+          )}
+
           <span className="text-[10px] text-white/40 font-mono flex items-center gap-1">
             <Clock size={10} className="text-white/30" />
-            Tick: {data.datetime}
+            {data.datetime}
           </span>
         </div>
 

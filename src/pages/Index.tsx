@@ -7,10 +7,10 @@ import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
 import { SUPPORTED_ASSETS } from '../types/trading';
 
 const Index = () => {
-  const [selectedAsset, setSelectedAsset] = useState('XAU/USD');
+  const [selectedAsset] = useState('XAU/USD');
   const twelveData = useTwelveData(selectedAsset);
 
-  const activeConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedAsset) || SUPPORTED_ASSETS[0];
+  const activeConfig = SUPPORTED_ASSETS[0];
 
   return (
     <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
@@ -18,27 +18,20 @@ const Index = () => {
       {/* Header Bar */}
       <header className="w-full border-b border-white/[0.04] bg-[#07080a] px-8 py-4 flex items-center justify-between sticky top-0 z-50 backdrop-blur-md">
         
-        {/* Commodities Selector Buttons */}
+        {/* Single Asset Badge */}
         <div className="flex items-center space-x-3">
-          <span className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em] mr-2">COMMODITIES:</span>
-          {SUPPORTED_ASSETS.map(asset => (
-            <button
-              key={asset.symbol}
-              onClick={() => setSelectedAsset(asset.symbol)}
-              className={`px-5 py-2 rounded-2xl text-xs font-black tracking-wider transition-all ${
-                selectedAsset === asset.symbol
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.4)] scale-105'
-                  : 'bg-white/[0.03] text-white/50 hover:text-white border border-white/[0.05]'
-              }`}
-            >
-              {asset.name}
-            </button>
-          ))}
+          <span className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em]">COMMODITY:</span>
+          <div className="px-5 py-2 rounded-2xl text-xs font-black tracking-wider bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.4)]">
+            Gold / US Dollar (XAU/USD)
+          </div>
         </div>
 
-        {/* Minimalist Live Status Dot */}
+        {/* Market Status Dot */}
         <div className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full">
-          <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-pulse" />
+          <span className={`w-2 h-2 rounded-full ${twelveData.isMarketOpen ? 'bg-[#26a69a] animate-pulse' : 'bg-amber-400'}`} />
+          <span className="text-[10px] font-bold text-white/60">
+            {twelveData.isMarketOpen ? 'MARKET OPEN' : 'WEEKEND CLOSED'}
+          </span>
         </div>
       </header>
 
