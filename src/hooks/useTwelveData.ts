@@ -1,24 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { TwelveDataState, SUPPORTED_ASSETS, IndicatorSignal, IndicatorSummary, OrderBookLevel, TradeFeedItem } from '../types/trading';
 
-const TWELVE_DATA_API_KEY = '053dc682778b40d1aa59d00e444d5b64';
-
-// Verifica se o mercado de XAU/USD (Spot Gold) está aberto
-export function checkIsMarketOpen(): boolean {
-  const now = new Date();
-  const day = now.getUTCDay(); // 0 = Domingo, 6 = Sábado
-  const hour = now.getUTCHours();
-  
-  // Sábado: Fechado o dia inteiro
-  if (day === 6) return false;
-  // Sexta-feira: Fecha após 22:00 UTC (17:00 NY / 19:00 BRT)
-  if (day === 5 && hour >= 22) return false;
-  // Domingo: Fechado até a reabertura às 22:00 UTC (17:00 NY / 19:00 BRT)
-  if (day === 0 && hour < 22) return false;
-  
-  return true;
-}
-
 function calculateRSI(prices: number[], period = 14): number {
   if (prices.length < period + 1) return 50;
   let gains = 0;
@@ -52,274 +34,320 @@ function calculateEMA(prices: number[], period: number): number {
   return ema;
 }
 
-function getInitialState(symbol: string): TwelveDataState {
-  const basePrice = 2950.40;
-  const precision = 2;
-  const marketOpen = checkIsMarketOpen();
-
-  const mockPrices = Array.from({ length: 30 }, (_, i) => basePrice + (Math.sin(i) * 2.5));
-  const rsi = calculateRSI(mockPrices, 14);
-
-  const oscillators: IndicatorSignal[] = [
-    { name: 'RSI (14)', value: rsi.toFixed(1), action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL' },
-    { name: 'MACD (12, 26)', value: '+1.45', action: 'BUY' },
-    { name: 'Momentum (10)', value: '+2.10', action: 'BUY' },
-    { name: 'Stochastic %K', value: '78.4', action: 'BUY' },
-  ];
-
-  const movingAverages: IndicatorSignal[] = [
-    { name: 'EMA 10', value: (basePrice - 0.50).toFixed(precision), action: 'BUY' },
-    { name: 'EMA 20', value: (basePrice - 1.20).toFixed(precision), action: 'BUY' },
-    { name: 'EMA 50', value: (basePrice - 2.80).toFixed(precision), action: 'STRONG BUY' },
-    { name: 'EMA 200', value: (basePrice - 5.10).toFixed(precision), action: 'STRONG BUY' },
-  ];
-
-  const orderFlowIndicators: IndicatorSignal[] = [
-    { name: 'Institutional Pressure', value: 'Buyer Flow', action: 'STRONG BUY' },
-    { name: 'Trend Delta', value: '+1420', action: 'STRONG BUY' },
-    { name: 'Support Absorption', value: 'Passive (High)', action: 'BUY' },
-  ];
-
-  const buildSummary = (list: IndicatorSignal[]): IndicatorSummary => {
-    let buy = 0;
-    let neutral = 0;
-    let sell = 0;
-
-    list.forEach(i => {
-      if (i.action.includes('BUY')) buy += i.action.includes('STRONG') ? 2 : 1;
-      else if (i.action.includes('SELL')) sell += i.action.includes('STRONG') ? 2 : 1;
-      else neutral += 1;
-    });
-
-    const total = buy + neutral + sell || 1;
-    const score = Math.round((buy / total) * 100);
-
-    let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
-    if (score >= 75) verdict = 'STRONG BUY';
-    else if (score >= 55) verdict = 'BUY';
-    else if (score <= 25) verdict = 'STRONG SELL';
-    else if (score <= 45) verdict = 'SELL';
-
-    return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
-  };
-
-  const stepOffset = 0.20;
-  const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
-    price: parseFloat((basePrice - ((i + 1) * stepOffset)).toFixed(precision)),
-    size: 45,
-    percentage: 65
-  }));
-
-  const asks: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
-    price: parseFloat((basePrice + ((i + 1) * stepOffset)).toFixed(precision)),
-    size: 42,
-    percentage: 60
-  }));
-
-  const initialTrades: TradeFeedItem[] = Array.from({ length: 8 }, (_, i) => ({
-    id: `close-${i}`,
-    price: basePrice,
-    size: 2.5,
-    time: 'Last Close',
-    type: i % 2 === 0 ? 'BUY' : 'SELL'
-  }));
-
-  return {
-    symbol,
-    price: basePrice,
-    change: 12.40,
-    percentChange: 0.42,
-    high: basePrice + 8.5,
-    low: basePrice - 5.2,
-    open: basePrice - 2.1,
-    previousClose: basePrice - 12.4,
-    datetime: 'Friday Close',
-    isLive: marketOpen,
-    isMarketOpen: marketOpen,
-    oscillators,
-    movingAverages,
-    orderFlowIndicators,
-    buyersPercent: 64,
-    sellersPercent: 36,
-    volumeDelta: 1420,
-    absorptionRate: 'HIGH',
-    institutionalPressure: 'HIGH',
-    bids,
-    asks,
-    recentTrades: initialTrades,
-    overallSummary: buildSummary([...oscillators, ...movingAverages, ...orderFlowIndicators]),
-    oscillatorsSummary: buildSummary(oscillators),
-    maSummary: buildSummary(movingAverages),
-    orderFlowSummary: buildSummary(orderFlowIndicators)
-  };
+function calculateSMA(prices: number[], period: number): number {
+  if (prices.length < period) return prices[prices.length - 1] || 0;
+  const slice = prices.slice(prices.length - period);
+  return slice.reduce((a, b) => a + b, 0) / period;
 }
 
 export const useTwelveData = (selectedSymbol: string) => {
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
-  const [state, setState] = useState<TwelveDataState>(() => getInitialState(selectedSymbol));
+
+  const [state, setState] = useState<TwelveDataState>({
+    symbol: 'XAU/USD',
+    price: 2954.20,
+    change: 14.30,
+    percentChange: 0.49,
+    high: 2962.80,
+    low: 2941.50,
+    open: 2939.90,
+    previousClose: 2939.90,
+    datetime: new Date().toLocaleTimeString(),
+    isLive: true,
+    isMarketOpen: true,
+    oscillators: [],
+    movingAverages: [],
+    orderFlowIndicators: [],
+    buyersPercent: 62,
+    sellersPercent: 38,
+    volumeDelta: 850,
+    absorptionRate: 'ALTA',
+    institutionalPressure: 'HIGH',
+    bids: [],
+    asks: [],
+    recentTrades: [],
+    overallSummary: { buyCount: 6, neutralCount: 2, sellCount: 1, score: 72, verdict: 'BUY' },
+    oscillatorsSummary: { buyCount: 3, neutralCount: 1, sellCount: 0, score: 75, verdict: 'STRONG BUY' },
+    maSummary: { buyCount: 4, neutralCount: 0, sellCount: 0, score: 100, verdict: 'STRONG BUY' },
+    orderFlowSummary: { buyCount: 2, neutralCount: 1, sellCount: 0, score: 80, verdict: 'STRONG BUY' },
+  });
+
   const priceHistoryRef = useRef<number[]>([]);
-  const realBasePriceRef = useRef<number>(2950.40);
+  const buyerVolumeRef = useRef<number>(120);
+  const sellerVolumeRef = useRef<number>(80);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  // 1. Fetch oficial TwelveData (sempre busca o preço real de fechamento / mercado)
-  const fetchTwelveDataQuick = async () => {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-      const quoteUrl = `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(assetConfig.twelveSymbol)}&apikey=${TWELVE_DATA_API_KEY}`;
-      const quoteRes = await fetch(quoteUrl, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      const quoteData = await quoteRes.json();
-
-      if (quoteData && quoteData.close && !quoteData.code) {
-        const curPrice = parseFloat(quoteData.close);
-        realBasePriceRef.current = curPrice;
-        const high = parseFloat(quoteData.high || quoteData.close);
-        const low = parseFloat(quoteData.low || quoteData.close);
-        const change = parseFloat(quoteData.change || '0');
-        const percentChange = parseFloat(quoteData.percent_change || '0');
-        const marketOpen = checkIsMarketOpen();
-
-        priceHistoryRef.current = [...priceHistoryRef.current.slice(-60), curPrice];
-        const prices = priceHistoryRef.current;
-
-        const rsi = calculateRSI(prices, 14);
-        const ema10 = calculateEMA(prices, 10);
-        const ema20 = calculateEMA(prices, 20);
-        const ema50 = calculateEMA(prices, 50);
-        const ema200 = calculateEMA(prices, 200);
-        const macdVal = calculateEMA(prices, 12) - calculateEMA(prices, 26);
-
-        const oscillators: IndicatorSignal[] = [
-          {
-            name: 'RSI (14)',
-            value: rsi.toFixed(1),
-            action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL'
-          },
-          { name: 'MACD (12, 26)', value: macdVal.toFixed(2), action: macdVal > 0 ? 'BUY' : 'SELL' },
-          { name: 'Momentum (10)', value: '+1.80', action: 'BUY' },
-          { name: 'Stochastic %K', value: rsi > 50 ? '81.2' : '28.4', action: rsi > 70 ? 'SELL' : rsi < 30 ? 'BUY' : 'NEUTRAL' }
-        ];
-
-        const movingAverages: IndicatorSignal[] = [
-          { name: 'EMA 10', value: ema10.toFixed(2), action: curPrice > ema10 ? 'BUY' : 'SELL' },
-          { name: 'EMA 20', value: ema20.toFixed(2), action: curPrice > ema20 ? 'BUY' : 'SELL' },
-          { name: 'EMA 50', value: ema50.toFixed(2), action: curPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
-          { name: 'EMA 200', value: ema200.toFixed(2), action: curPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
-        ];
-
-        const buyersPercent = Math.min(88, Math.max(12, Math.round(50 + (percentChange * 15))));
-        const sellersPercent = 100 - buyersPercent;
-        const delta = Math.round(percentChange * 850);
-
-        const orderFlowIndicators: IndicatorSignal[] = [
-          { name: 'Institutional Pressure', value: percentChange >= 0 ? 'Buyer Flow' : 'Seller Flow', action: percentChange >= 0 ? 'STRONG BUY' : 'STRONG SELL' },
-          { name: 'Trend Delta', value: `${delta >= 0 ? '+' : ''}${delta}`, action: delta > 200 ? 'STRONG BUY' : delta < -200 ? 'STRONG SELL' : 'NEUTRAL' },
-          { name: 'Support Absorption', value: buyersPercent > 55 ? 'Passive (High)' : 'Active (Low)', action: buyersPercent > 55 ? 'BUY' : 'SELL' }
-        ];
-
-        const buildSummary = (list: IndicatorSignal[]): IndicatorSummary => {
-          let buy = 0;
-          let neutral = 0;
-          let sell = 0;
-
-          list.forEach(i => {
-            if (i.action.includes('BUY')) buy += i.action.includes('STRONG') ? 2 : 1;
-            else if (i.action.includes('SELL')) sell += i.action.includes('STRONG') ? 2 : 1;
-            else neutral += 1;
-          });
-
-          const total = buy + neutral + sell || 1;
-          const score = Math.round((buy / total) * 100);
-
-          let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
-          if (score >= 75) verdict = 'STRONG BUY';
-          else if (score >= 55) verdict = 'BUY';
-          else if (score <= 25) verdict = 'STRONG SELL';
-          else if (score <= 45) verdict = 'SELL';
-
-          return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
-        };
-
-        const oscSummary = buildSummary(oscillators);
-        const maSummary = buildSummary(movingAverages);
-        const ofSummary = buildSummary(orderFlowIndicators);
-        const overallSummary = buildSummary([...oscillators, ...movingAverages, ...orderFlowIndicators]);
-
-        const stepOffset = 0.20;
-        const bids: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
-          price: parseFloat((curPrice - ((i + 1) * stepOffset)).toFixed(2)),
-          size: Math.floor(Math.random() * 50) + 20,
-          percentage: Math.min(100, ((Math.floor(Math.random() * 50) + 20) / 70) * 100)
-        }));
-
-        const asks: OrderBookLevel[] = Array.from({ length: 6 }, (_, i) => ({
-          price: parseFloat((curPrice + ((i + 1) * stepOffset)).toFixed(2)),
-          size: Math.floor(Math.random() * 50) + 20,
-          percentage: Math.min(100, ((Math.floor(Math.random() * 50) + 20) / 70) * 100)
-        }));
-
-        setState(prev => ({
-          ...prev,
-          price: curPrice,
-          change,
-          percentChange,
-          high,
-          low,
-          datetime: marketOpen ? new Date().toLocaleTimeString() : 'Friday Close',
-          isMarketOpen: marketOpen,
-          isLive: marketOpen,
-          oscillators,
-          movingAverages,
-          orderFlowIndicators,
-          buyersPercent,
-          sellersPercent,
-          volumeDelta: delta,
-          bids,
-          asks,
-          overallSummary,
-          oscillatorsSummary: oscSummary,
-          maSummary,
-          orderFlowSummary: ofSummary
-        }));
-      }
-    } catch (e) {
-      // Ignora falhas de conexão em segundo plano
-    }
-  };
-
-  // 2. Loop de atualização: SOMENTE se o mercado estiver ABERTO
+  // 1. Carregar Histórico Real Inicial de Candles 1m de Ouro
   useEffect(() => {
-    fetchTwelveDataQuick();
+    let isMounted = true;
 
-    const marketOpen = checkIsMarketOpen();
-
-    // Se o mercado estiver FECHADO (Fim de semana), NÃO executa WebSocket nem gerador de ticks
-    if (!marketOpen) {
-      return;
+    async function loadInitialCandles() {
+      try {
+        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=100');
+        const data = await res.json();
+        if (Array.isArray(data) && isMounted) {
+          const closes = data.map((k: any) => parseFloat(k[4]));
+          priceHistoryRef.current = closes;
+          if (closes.length > 0) {
+            updateCalculations(closes[closes.length - 1]);
+          }
+        }
+      } catch (err) {
+        console.warn("Usando candles de fallback");
+        const fallback = Array.from({ length: 60 }, (_, i) => 2950 + Math.sin(i / 4) * 5 + i * 0.1);
+        priceHistoryRef.current = fallback;
+        updateCalculations(fallback[fallback.length - 1]);
+      }
     }
 
-    // Mercado aberto: Atualizações a cada 15 segundos da API
-    const apiInterval = setInterval(fetchTwelveDataQuick, 15000);
-
-    // WebSocket ativo somente durante a semana
-    const ws = new WebSocket(`wss://stream.binance.com:9443/ws/paxgusdt@ticker`);
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data && data.c) {
-          const livePrice = parseFloat(parseFloat(data.c).toFixed(2));
-          realBasePriceRef.current = livePrice;
-        }
-      } catch (e) {}
-    };
+    loadInitialCandles();
 
     return () => {
-      clearInterval(apiInterval);
-      ws.close();
+      isMounted = false;
     };
-  }, [selectedSymbol]);
+  }, []);
+
+  // 2. Função de recálculo técnico completo e atualização do painel
+  const updateCalculations = (currentPrice: number) => {
+    const prices = [...priceHistoryRef.current.slice(-100), currentPrice];
+    priceHistoryRef.current = prices;
+
+    // Osciladores
+    const rsi = calculateRSI(prices, 14);
+    const ema12 = calculateEMA(prices, 12);
+    const ema26 = calculateEMA(prices, 26);
+    const macdVal = ema12 - ema26;
+    const sma20 = calculateSMA(prices, 20);
+    const stdDev = Math.sqrt(prices.slice(-20).reduce((acc, p) => acc + Math.pow(p - sma20, 2), 0) / 20) || 1.2;
+    const bbUpper = sma20 + stdDev * 2;
+    const bbLower = sma20 - stdDev * 2;
+    const momentum = currentPrice - (prices[prices.length - 10] || currentPrice);
+
+    const oscillators: IndicatorSignal[] = [
+      {
+        name: 'RSI (14)',
+        value: rsi.toFixed(1),
+        action: rsi > 70 ? 'STRONG SELL' : rsi > 58 ? 'BUY' : rsi < 30 ? 'STRONG BUY' : rsi < 42 ? 'SELL' : 'NEUTRAL'
+      },
+      {
+        name: 'MACD (12, 26)',
+        value: `${macdVal >= 0 ? '+' : ''}${macdVal.toFixed(2)}`,
+        action: macdVal > 0.5 ? 'STRONG BUY' : macdVal > 0 ? 'BUY' : macdVal < -0.5 ? 'STRONG SELL' : 'SELL'
+      },
+      {
+        name: 'Bollinger Bands',
+        value: currentPrice > bbUpper ? 'Upper Bound' : currentPrice < bbLower ? 'Lower Bound' : 'Equilibrium',
+        action: currentPrice > bbUpper ? 'SELL' : currentPrice < bbLower ? 'BUY' : 'NEUTRAL'
+      },
+      {
+        name: 'Momentum (10)',
+        value: `${momentum >= 0 ? '+' : ''}${momentum.toFixed(2)}`,
+        action: momentum > 1.5 ? 'STRONG BUY' : momentum > 0 ? 'BUY' : momentum < -1.5 ? 'STRONG SELL' : 'SELL'
+      }
+    ];
+
+    // Médias Móveis
+    const ema10 = calculateEMA(prices, 10);
+    const ema20 = calculateEMA(prices, 20);
+    const ema50 = calculateEMA(prices, 50);
+    const ema200 = calculateEMA(prices, 200);
+
+    const movingAverages: IndicatorSignal[] = [
+      { name: 'EMA 10', value: ema10.toFixed(2), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
+      { name: 'EMA 20', value: ema20.toFixed(2), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
+      { name: 'EMA 50', value: ema50.toFixed(2), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
+      { name: 'EMA 200', value: ema200.toFixed(2), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
+    ];
+
+    // Order Flow
+    const totalVol = buyerVolumeRef.current + sellerVolumeRef.current || 1;
+    const buyerRatio = Math.round((buyerVolumeRef.current / totalVol) * 100);
+    const sellerRatio = 100 - buyerRatio;
+    const delta = Math.round(buyerVolumeRef.current - sellerVolumeRef.current);
+
+    const orderFlowIndicators: IndicatorSignal[] = [
+      {
+        name: 'Order Flow Dominance',
+        value: `${buyerRatio}% Buyers`,
+        action: buyerRatio > 65 ? 'STRONG BUY' : buyerRatio > 52 ? 'BUY' : buyerRatio < 35 ? 'STRONG SELL' : buyerRatio < 48 ? 'SELL' : 'NEUTRAL'
+      },
+      {
+        name: 'Volume Delta',
+        value: `${delta >= 0 ? '+' : ''}${delta}`,
+        action: delta > 50 ? 'STRONG BUY' : delta > 0 ? 'BUY' : delta < -50 ? 'STRONG SELL' : 'SELL'
+      },
+      {
+        name: 'Institutional Pressure',
+        value: Math.abs(delta) > 80 ? 'Heavy Flow' : 'Normal Flow',
+        action: delta > 80 ? 'STRONG BUY' : delta < -80 ? 'STRONG SELL' : 'NEUTRAL'
+      }
+    ];
+
+    // Construtor do Score da Bússola
+    const buildSummary = (list: IndicatorSignal[]): IndicatorSummary => {
+      let buy = 0;
+      let neutral = 0;
+      let sell = 0;
+
+      list.forEach(i => {
+        if (i.action.includes('STRONG BUY')) buy += 2;
+        else if (i.action === 'BUY') buy += 1;
+        else if (i.action.includes('STRONG SELL')) sell += 2;
+        else if (i.action === 'SELL') sell += 1;
+        else neutral += 1;
+      });
+
+      const totalWeight = buy + neutral + sell || 1;
+      const score = Math.max(5, Math.min(95, Math.round((buy / totalWeight) * 100)));
+
+      let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
+      if (score >= 75) verdict = 'STRONG BUY';
+      else if (score >= 55) verdict = 'BUY';
+      else if (score <= 25) verdict = 'STRONG SELL';
+      else if (score <= 45) verdict = 'SELL';
+
+      return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
+    };
+
+    const oscSummary = buildSummary(oscillators);
+    const maSummary = buildSummary(movingAverages);
+    const ofSummary = buildSummary(orderFlowIndicators);
+    const overallSummary = buildSummary([...oscillators, ...movingAverages, ...orderFlowIndicators]);
+
+    setState(prev => ({
+      ...prev,
+      price: currentPrice,
+      datetime: new Date().toLocaleTimeString(),
+      oscillators,
+      movingAverages,
+      orderFlowIndicators,
+      buyersPercent: buyerRatio,
+      sellersPercent: sellerRatio,
+      volumeDelta: delta,
+      absorptionRate: Math.abs(delta) > 50 ? 'HIGH' : 'NORMAL',
+      institutionalPressure: Math.abs(delta) > 60 ? 'HIGH' : 'MEDIUM',
+      overallSummary,
+      oscillatorsSummary: oscSummary,
+      maSummary,
+      orderFlowSummary: ofSummary
+    }));
+  };
+
+  // 3. Conectar Stream WebSocket em Tempo Real (PAXG/USDT = Ouro Físico 1oz)
+  useEffect(() => {
+    let reconnectTimeout: any;
+
+    const connectWebSocket = () => {
+      const streamUrl = `wss://stream.binance.com:9443/ws/paxgusdt@ticker/paxgusdt@depth10@100ms/paxgusdt@aggTrade`;
+      const ws = new WebSocket(streamUrl);
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+
+          // 1. Ticker Event
+          if (msg.e === '24hrTicker') {
+            const curPrice = parseFloat(msg.c);
+            const change = parseFloat(msg.p);
+            const percentChange = parseFloat(msg.P);
+            const high = parseFloat(msg.h);
+            const low = parseFloat(msg.l);
+            const open = parseFloat(msg.o);
+
+            setState(prev => ({
+              ...prev,
+              price: curPrice,
+              change,
+              percentChange,
+              high,
+              low,
+              open,
+              isLive: true,
+              isMarketOpen: true,
+            }));
+
+            updateCalculations(curPrice);
+          }
+
+          // 2. Order Book Depth Event
+          if (msg.bids && msg.asks) {
+            let maxTotal = 0;
+            const newBids: OrderBookLevel[] = msg.bids.slice(0, 6).map((b: string[]) => {
+              const p = parseFloat(b[0]);
+              const s = parseFloat(b[1]);
+              const tot = p * s;
+              if (tot > maxTotal) maxTotal = tot;
+              return { price: p, size: s, percentage: 0 };
+            });
+
+            const newAsks: OrderBookLevel[] = msg.asks.slice(0, 6).map((a: string[]) => {
+              const p = parseFloat(a[0]);
+              const s = parseFloat(a[1]);
+              const tot = p * s;
+              if (tot > maxTotal) maxTotal = tot;
+              return { price: p, size: s, percentage: 0 };
+            });
+
+            const finalBids = newBids.map(b => ({ ...b, percentage: Math.min(100, Math.round(((b.price * b.size) / (maxTotal || 1)) * 100)) }));
+            const finalAsks = newAsks.map(a => ({ ...a, percentage: Math.min(100, Math.round(((a.price * a.size) / (maxTotal || 1)) * 100)) }));
+
+            setState(prev => ({
+              ...prev,
+              bids: finalBids,
+              asks: finalAsks
+            }));
+          }
+
+          // 3. Executed Trades Event
+          if (msg.e === 'aggTrade') {
+            const p = parseFloat(msg.p);
+            const q = parseFloat(msg.q);
+            const isMaker = msg.m; // true = SELL, false = BUY
+
+            if (isMaker) {
+              sellerVolumeRef.current += q * 10;
+            } else {
+              buyerVolumeRef.current += q * 10;
+            }
+
+            const d = new Date(msg.T);
+            const timeStr = d.toTimeString().split(' ')[0] + '.' + Math.floor(d.getMilliseconds() / 100);
+
+            const tradeItem: TradeFeedItem = {
+              id: `${msg.a}`,
+              price: p,
+              size: parseFloat(q.toFixed(3)),
+              time: timeStr,
+              type: isMaker ? 'SELL' : 'BUY'
+            };
+
+            setState(prev => ({
+              ...prev,
+              recentTrades: [tradeItem, ...prev.recentTrades.slice(0, 15)]
+            }));
+          }
+        } catch (e) {
+          // Erro de parse
+        }
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+
+      ws.onclose = () => {
+        reconnectTimeout = setTimeout(connectWebSocket, 3000);
+      };
+    };
+
+    connectWebSocket();
+
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (wsRef.current) wsRef.current.close();
+    };
+  }, []);
 
   return state;
 };
