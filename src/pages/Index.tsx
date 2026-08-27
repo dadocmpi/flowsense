@@ -115,6 +115,21 @@ const Index = () => {
     localStorage.setItem(`tradingConfig_${selectedAsset}`, JSON.stringify(config));
   }, [selectedAsset, config]);
 
+  // Helper: check if current time is within configured trading window
+  const isWithinTimeWindow = () => {
+    if (!config.startTime || !config.endTime) return false;
+    try {
+      const now = new Date();
+      const [startH, startM] = config.startTime.split(':').map(Number);
+      const [endH, endM] = config.endTime.split(':').map(Number);
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), startH, startM);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), endH, endM);
+      return now >= start && now <= end;
+    } catch (e) {
+      return false;
+    }
+  };
+
   // Calculate confidence percentage:
   // Zone presence gives 40 base (if in zone, else 0)
   // Technical score (0-100) contributes up to 30 points (score * 0.3)
@@ -144,6 +159,15 @@ const Index = () => {
 
   let confidence = zoneBase + technicalContribution + directionBonus;
   confidence = Math.max(0, Math.min(100, confidence)); // clamp 0-100
+
+  // Determine if we should show a trading signal
+  const showSignal =
+    twelveData.isMarketOpen && // market is open (data live)
+    isWithinTimeWindow() && // current time within configured window
+    config.minPrice > 0 && config.maxPrice > 0 && config.minPrice < config.maxPrice && // zone is set
+    twelveData.price >= config.minPrice && twelveData.price <= config.maxPrice && // price in zone
+    ((configIsBuy && isBuyVerdict) || (configIsSell && isSellVerdict)) && // verdict matches direction
+    confidence >= 60; // confidence threshold
 
   const handleSave = () => {
     setDialogOpen(false);
@@ -307,6 +331,17 @@ const Index = () => {
           </DialogContent>
         </Dialog>
       </header>
+
+      {/* Trading Signal Banner (if conditions met) */}
+      {showSignal && (
+        <div className="px-4 py-3 mb-4 text-center font-bold rounded-lg text-white">
+          {config.direction === 'BUY' ? (
+            <span className="bg-[#26a69a]/20 text-[#26a69a]">SINAL DE COMPRA - ENTRADA RECOMENDADA</span>
+          ) : (
+            <span className="bg-[#ef5350]/20 text-[#ef5350]">SINAL DE VENDA - ENTRADA RECOMENDADA</span>
+          )}
+        </div>
+      )}
 
       {/* Main Terminal Content */}
       <main className="flex-grow p-8 max-w-[1600px] w-full mx-auto flex flex-col space-y-8">
