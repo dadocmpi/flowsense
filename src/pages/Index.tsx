@@ -115,36 +115,35 @@ const Index = () => {
     localStorage.setItem(`tradingConfig_${selectedAsset}`, JSON.stringify(config));
   }, [selectedAsset, config]);
 
-  // Calculate confidence percentage based on technicals, zone, and direction
-  // Zone is the master validator with high weight
-  const baseScore = twelveData.overallSummary.score;
-  let zoneBonus = 0;
-  let directionBonus = 0;
-
-  // Only apply zone bonus if zone is set (min and max are positive and min < max)
+  // Calculate confidence percentage:
+  // Zone presence gives 40 base (if in zone, else 0)
+  // Technical score (0-100) contributes up to 30 points (score * 0.3)
+  // Direction match contributes up to 10 points if verdict matches configured direction
+  let zoneBase = 0;
   if (config.minPrice > 0 && config.maxPrice > 0 && config.minPrice < config.maxPrice) {
     if (twelveData.price >= config.minPrice && twelveData.price <= config.maxPrice) {
-      zoneBonus = 30; // High bonus for being in zone (master validator)
-    } else {
-      zoneBonus = -30; // High penalty for being out of zone
+      zoneBase = 40; // being in zone gives 40 points
     }
+    // else zoneBase stays 0 (out of zone)
   }
 
-  // Direction bonus: if the verdict matches the configured direction
+  // Technical contribution: map overallSummary.score (0-100) to 0-30
+  const technicalContribution = Math.round((twelveData.overallSummary.score / 100) * 30);
+
+  // Direction bonus: up to 10 points if verdict matches configured direction
   const verdict = twelveData.overallSummary.verdict;
   const isBuyVerdict = verdict.includes('BUY');
   const isSellVerdict = verdict.includes('SELL');
   const configIsBuy = config.direction === 'BUY';
   const configIsSell = config.direction === 'SELL';
-
+  let directionBonus = 0;
   if ((configIsBuy && isBuyVerdict) || (configIsSell && isSellVerdict)) {
-    directionBonus = 10; // Reduced direction bonus since zone is master
-  } else {
-    directionBonus = -10;
+    directionBonus = 10; // direction matches
   }
+  // else directionBonus stays 0
 
-  let confidence = baseScore + zoneBonus + directionBonus;
-  confidence = Math.max(0, Math.min(100, Math.round(confidence)));
+  let confidence = zoneBase + technicalContribution + directionBonus;
+  confidence = Math.max(0, Math.min(100, confidence)); // clamp 0-100
 
   const handleSave = () => {
     setDialogOpen(false);
@@ -177,7 +176,7 @@ const Index = () => {
           ))}
         </div>
 
-        {/* Market Status Button (also opens config dialog) - reverted to original without percentage */}
+        {/* Market Status Button (also opens config dialog) - shows TRADING ZONE or CLOSED */}
         <Dialog>
           <DialogTrigger asChild>
             <button className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full hover:bg-white/[0.03] transition-colors">
@@ -349,11 +348,11 @@ const Index = () => {
                   <span className="font-mono text-white/90 font-bold text-[11px]">{confidence}%</span>
                   <span className={cn(
                     "text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-wider min-w-[40px] text-center",
-                    confidence >= 70 ? "bg-[#26a69a]/15 text-[#26a69a] border border-[#26a69a]/30" :
+                    confidence >= 80 ? "bg-[#26a69a]/15 text-[#26a69a] border border-[#26a69a]/30" :
                     confidence >= 40 ? "bg-amber-500/15 text-amber-400 border border-amber-500/30" :
                     "bg-[#ef5350]/15 text-[#ef5350] border border-[#ef5350]/30"
                   )}>
-                    {confidence >= 70 ? 'STRONG' : confidence >= 40 ? 'MEDIUM' : 'WEAK'}
+                    {confidence >= 80 ? 'STRONG' : confidence >= 40 ? 'MEDIUM' : 'WEAK'}
                   </span>
                 </div>
               </div>
