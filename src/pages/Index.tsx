@@ -31,6 +31,7 @@ import {
 import {
   Separator,
 } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 
 const Index = () => {
   const [selectedAsset, setSelectedAsset] = useState('MGC1!'); // Start with GOLD
@@ -143,7 +144,10 @@ const Index = () => {
         <Dialog>
           <DialogTrigger asChild>
             <button className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full hover:bg-white/[0.03] transition-colors">
-              <span className={`w-2 h-2 rounded-full ${twelveData.isMarketOpen ? 'bg-[#26a69a] animate-pulse' : 'bg-amber-400'}`} />
+              <span className={cn(
+                "w-2 h-2 rounded-full",
+                twelveData.isMarketOpen ? 'bg-[#26a69a] animate-pulse' : 'bg-amber-400'
+              )} />
               <span className="text-[10px] font-bold text-white/60">
                 {twelveData.isMarketOpen ? 'TRADING ZONE' : 'CLOSED'}
               </span>
@@ -229,7 +233,7 @@ const Index = () => {
                     />
                   </div>
                 </div>
-              }
+              </div>
 
               {/* Stop Loss & Take Profit */}
               <div className="space-y-2">
@@ -312,10 +316,5 @@ const Index = () => {
     </div>
   );
 };
-
-// Helper function for class names (copy from utils)
-function cn(...inputs: string[]) {
-  return inputs.filter(Boolean).join(' ');
-}
 
 export default Index;
