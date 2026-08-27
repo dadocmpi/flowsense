@@ -115,6 +115,36 @@ const Index = () => {
     localStorage.setItem(`tradingConfig_${selectedAsset}`, JSON.stringify(config));
   }, [selectedAsset, config]);
 
+  // Calculate confidence percentage based on technicals, zone, and direction
+  const baseScore = twelveData.overallSummary.score;
+  let zoneBonus = 0;
+  let directionBonus = 0;
+
+  // Only apply zone bonus if zone is set (min and max are positive and min < max)
+  if (config.minPrice > 0 && config.maxPrice > 0 && config.minPrice < config.maxPrice) {
+    if (twelveData.price >= config.minPrice && twelveData.price <= config.maxPrice) {
+      zoneBonus = 20; // bonus for being in zone
+    } else {
+      zoneBonus = -20; // penalty for being out of zone
+    }
+  }
+
+  // Direction bonus: if the verdict matches the configured direction
+  const verdict = twelveData.overallSummary.verdict;
+  const isBuyVerdict = verdict.includes('BUY');
+  const isSellVerdict = verdict.includes('SELL');
+  const configIsBuy = config.direction === 'BUY';
+  const configIsSell = config.direction === 'SELL';
+
+  if ((configIsBuy && isBuyVerdict) || (configIsSell && isSellVerdict)) {
+    directionBonus = 15;
+  } else {
+    directionBonus = -15;
+  }
+
+  let confidence = baseScore + zoneBonus + directionBonus;
+  confidence = Math.max(0, Math.min(100, Math.round(confidence)));
+
   const handleSave = () => {
     setDialogOpen(false);
     // Already saved via useEffect
@@ -146,7 +176,7 @@ const Index = () => {
           ))}
         </div>
 
-        {/* Market Status Button (also opens config dialog) */}
+        {/* Market Status Button (also opens config dialog) - now shows confidence percentage */}
         <Dialog>
           <DialogTrigger asChild>
             <button className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full hover:bg-white/[0.03] transition-colors">
@@ -154,8 +184,15 @@ const Index = () => {
                 "w-2 h-2 rounded-full",
                 twelveData.isMarketOpen ? 'bg-[#26a69a] animate-pulse' : 'bg-amber-400'
               )} />
-              <span className="text-[10px] font-bold text-white/60">
-                {twelveData.isMarketOpen ? 'TRADING ZONE' : 'CLOSED'}
+              <span className={cn(
+                "text-[10px] font-bold",
+                twelveData.isMarketOpen ? 
+                  (confidence >= 70 ? 'text-[#26a69a]' : 
+                   confidence >= 40 ? 'text-amber-400' : 
+                   'text-[#ef5350]') : 
+                  'text-white/60'
+              )}>
+                {twelveData.isMarketOpen ? `${confidence}%` : 'CLOSED'}
               </span>
             </button>
           </DialogTrigger>
