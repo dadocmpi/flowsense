@@ -45,6 +45,14 @@ export const SUPPORTED_ASSETS: AssetConfig[] = [
     contractSize: '10 troy oz',
     tickSize: 0.10
   },
+  {
+    symbol: 'ES1!',
+    name: 'E-mini S&P 500 Futures (Continuous)',
+    exchange: 'CME',
+    precision: 2,
+    contractSize: '50 USD',
+    tickSize: 0.25
+  },
 ];
 
 export interface IndicatorSignal {

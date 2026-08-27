@@ -27,12 +27,12 @@ const Index = () => {
         </div>
 
         {/* Market Status Dot */}
-        <div className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full">
+        <button className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full">
           <span className={`w-2 h-2 rounded-full ${twelveData.isMarketOpen ? 'bg-[#26a69a] animate-pulse' : 'bg-amber-400'}`} />
           <span className="text-[10px] font-bold text-white/60">
-            {twelveData.isMarketOpen ? 'MARKET OPEN' : 'WEEKEND CLOSED'}
+            {twelveData.isMarketOpen ? 'TRADING ZONE' : 'CLOSED'}
           </span>
-        </div>
+        </button>
       </header>
 
       {/* Main Terminal Content */}
