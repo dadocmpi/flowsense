@@ -33,7 +33,7 @@ import {
 } from '@/components/ui/separator';
 
 const Index = () => {
-  const [selectedAsset, setSelectedAsset] = useState('XAU/USD');
+  const [selectedAsset, setSelectedAsset] = useState('MGC1!'); // Start with GOLD
   const twelveData = useTwelveData(selectedAsset);
 
   // Find config for selected asset
@@ -229,7 +229,7 @@ const Index = () => {
                     />
                   </div>
                 </div>
-              </div>
+              }
 
               {/* Stop Loss & Take Profit */}
               <div className="space-y-2">
@@ -254,7 +254,7 @@ const Index = () => {
                     />
                   </div>
                 </div>
-              </div>
+              }
             </div>
             <DialogFooter className="flex justify-end pt-4">
               <Button variant="outline" onClick={() => setDialogOpen(false)} className="text-white/60 hover:text-white">
