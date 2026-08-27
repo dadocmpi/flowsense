@@ -176,7 +176,7 @@ const Index = () => {
           ))}
         </div>
 
-        {/* Market Status Button (also opens config dialog) - now shows confidence percentage */}
+        {/* Market Status Button (also opens config dialog) - reverted to original without percentage */}
         <Dialog>
           <DialogTrigger asChild>
             <button className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full hover:bg-white/[0.03] transition-colors">
@@ -184,15 +184,8 @@ const Index = () => {
                 "w-2 h-2 rounded-full",
                 twelveData.isMarketOpen ? 'bg-[#26a69a] animate-pulse' : 'bg-amber-400'
               )} />
-              <span className={cn(
-                "text-[10px] font-bold",
-                twelveData.isMarketOpen ? 
-                  (confidence >= 70 ? 'text-[#26a69a]' : 
-                   confidence >= 40 ? 'text-amber-400' : 
-                   'text-[#ef5350]') : 
-                  'text-white/60'
-              )}>
-                {twelveData.isMarketOpen ? `${confidence}%` : 'CLOSED'}
+              <span className="text-[10px] font-bold text-white/60">
+                {twelveData.isMarketOpen ? 'TRADING ZONE' : 'CLOSED'}
               </span>
             </button>
           </DialogTrigger>
@@ -324,7 +317,7 @@ const Index = () => {
           precision={activeConfig.precision}
         />
 
-        {/* Main Grid: Compass + Technical Details */}
+        {/* Main Grid: Compass + Technical Details + Confidence Badge */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
           {/* Column 1: Confluence Compass (5/12 cols) */}
@@ -338,13 +331,21 @@ const Index = () => {
             />
           </div>
 
-          {/* Column 2: Detailed Technical Indicators (7/12 cols) */}
-          <div className="lg:col-span-7 flex flex-col">
-            <TechnicalDetailsTable
-              oscillators={twelveData.oscillators}
-              movingAverages={twelveData.movingAverages}
-              orderFlowIndicators={twelveData.orderFlowIndicators}
-            />
+          {/* Column 2: Technical Details and Confidence Badge (7/12 cols) */}
+          <div className="lg:col-span-7 flex flex-row items-start gap-6">
+            <div className="flex-1">
+              <TechnicalDetailsTable
+                oscillators={twelveData.oscillators}
+                movingAverages={twelveData.movingAverages}
+                orderFlowIndicators={twelveData.orderFlowIndicators}
+              />
+            </div>
+            <div className="flex-shrink-0">
+              <div className="bg-amber-500/20 border border-amber-500/30 rounded-2xl px-4 py-3 text-center">
+                <span className="text-amber-400 font-bold text-3xl block">{confidence}%</span>
+                <span className="text-amber-400/70 text-xs block uppercase tracking-wider">CONFIDENCE</span>
+              </div>
+            </div>
           </div>
 
         </div>
