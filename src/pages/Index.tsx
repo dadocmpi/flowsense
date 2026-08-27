@@ -39,6 +39,12 @@ const Index = () => {
   // Find config for selected asset
   const activeConfig = SUPPORTED_ASSETS.find(asset => asset.symbol === selectedAsset) || SUPPORTED_ASSETS[0];
 
+  // Display name mapping for cleaner UI
+  const displayNameMap: Record<string, string> = {
+    'MGC1!': 'GOLD',
+    'ES1!': 'SP500'
+  };
+
   // Config state per asset
   const [config, setConfig] = useState({
     direction: 'BUY' as 'BUY' | 'SELL',
@@ -63,7 +69,7 @@ const Index = () => {
       }
     } else {
       // Set defaults based on asset
-      if (selectedAsset === 'XAU/USD') {
+      if (selectedAsset === 'MGC1!') {
         setConfig({
           direction: 'BUY',
           startTime: '09:00',
@@ -126,7 +132,9 @@ const Index = () => {
                   : "bg-white/[0.02] text-white/60 hover:text-white border border-white/[0.04] hover:bg-white/[0.03]"
               )}
             >
-              <span className="text-[9px] font-black text-white/30 uppercase tracking-[0.2em]">{asset.name.split(' ')[0]}</span>
+              <span className="text-[9px] font-black text-white/30 uppercase tracking-[0.2em]">
+                {displayNameMap[asset.symbol] || asset.symbol}
+              </span>
             </button>
           ))}
         </div>
@@ -145,7 +153,7 @@ const Index = () => {
             <DialogHeader className="mb-4">
               <DialogTitle className="text-xl font-black text-white">Trading Zone Configuration</DialogTitle>
               <DialogDescription className="mt-2 text-white/60 text-sm">
-                Set your trading parameters for {activeConfig.name}
+                Set your trading parameters for {displayNameMap[selectedAsset] || selectedAsset}
               </DialogDescription>
             </DialogHeader>
             <Separator className="my-4" />
