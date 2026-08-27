@@ -1,5 +1,32 @@
 export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 
+export interface UserZoneConfig {
+  enabled: boolean;
+  direction: 'BUY' | 'SELL';
+  zoneName: string;
+  minPrice: number;
+  maxPrice: number;
+  stopLoss: number;
+  takeProfit: number;
+  startTime: string; // "09:00"
+  endTime: string;   // "11:30"
+  notes?: string;
+}
+
+export interface SniperDecision {
+  status: 'ENTER_NOW' | 'ZONE_ARMED' | 'WAITING_FLOW' | 'OUT_OF_ZONE' | 'OUT_OF_TIME' | 'DISABLED';
+  action: 'BUY' | 'SELL' | 'HOLD';
+  urgency: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'STANDBY';
+  headline: string;
+  subtext: string;
+  confluencesMet: string[];
+  missingFactors: string[];
+  zoneProgress: number; // 0 to 100% position inside zone
+  isInsideZone: boolean;
+  isInsideTimeWindow: boolean;
+  flowConfirmed: boolean;
+}
+
 export interface AssetConfig {
   symbol: string;
   name: string;
@@ -33,16 +60,12 @@ export interface IndicatorSummary {
   sellCount: number;
   score: number; // 0 to 100
   verdict: 'STRONG SELL' | 'SELL' | 'NEUTRAL' | 'BUY' | 'STRONG BUY';
-  divergenceDetected?: boolean;
-  divergenceMessage?: string;
 }
 
 export interface OrderBookLevel {
   price: number;
   size: number;
-  totalUsd: number;
   cumulativeSize: number;
-  cumulativeUsd: number;
   percentage: number;
 }
 
@@ -55,19 +78,8 @@ export interface TradeFeedItem {
   aggressor: 'BUY_AGGR' | 'SELL_AGGR';
 }
 
-export interface SparklinePoint {
-  time: string;
-  delta: number;
-  pressure: number; // 0: low, 1: med, 2: high, 3: extreme
-  buyersPercent: number;
-  price: number;
-}
-
-export type InstitutionalPressureLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
-
 export interface TwelveDataState {
   symbol: string;
-  timeframe: Timeframe;
   price: number;
   change: number;
   percentChange: number;
@@ -88,14 +100,12 @@ export interface TwelveDataState {
   buyersPercent: number;
   sellersPercent: number;
   volumeDelta: number;
-  absorptionRate: string;
-  institutionalPressure: InstitutionalPressureLevel;
+  institutionalPressure: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
   bids: OrderBookLevel[];
   asks: OrderBookLevel[];
   recentTrades: TradeFeedItem[];
-  sparklineData: SparklinePoint[];
   
-  // Compass Summaries & Divergence
+  // Summaries
   overallSummary: IndicatorSummary;
   oscillatorsSummary: IndicatorSummary;
   maSummary: IndicatorSummary;
