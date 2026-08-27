@@ -116,6 +116,7 @@ const Index = () => {
   }, [selectedAsset, config]);
 
   // Calculate confidence percentage based on technicals, zone, and direction
+  // Zone is the master validator with high weight
   const baseScore = twelveData.overallSummary.score;
   let zoneBonus = 0;
   let directionBonus = 0;
@@ -123,9 +124,9 @@ const Index = () => {
   // Only apply zone bonus if zone is set (min and max are positive and min < max)
   if (config.minPrice > 0 && config.maxPrice > 0 && config.minPrice < config.maxPrice) {
     if (twelveData.price >= config.minPrice && twelveData.price <= config.maxPrice) {
-      zoneBonus = 20; // bonus for being in zone
+      zoneBonus = 30; // High bonus for being in zone (master validator)
     } else {
-      zoneBonus = -20; // penalty for being out of zone
+      zoneBonus = -30; // High penalty for being out of zone
     }
   }
 
@@ -137,9 +138,9 @@ const Index = () => {
   const configIsSell = config.direction === 'SELL';
 
   if ((configIsBuy && isBuyVerdict) || (configIsSell && isSellVerdict)) {
-    directionBonus = 15;
+    directionBonus = 10; // Reduced direction bonus since zone is master
   } else {
-    directionBonus = -15;
+    directionBonus = -10;
   }
 
   let confidence = baseScore + zoneBonus + directionBonus;
@@ -317,7 +318,7 @@ const Index = () => {
           precision={activeConfig.precision}
         />
 
-        {/* Main Grid: Compass + Technical Details + Confidence Badge */}
+        {/* Main Grid: Compass + Technical Details + Confidence */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
           {/* Column 1: Confluence Compass (5/12 cols) */}
@@ -331,8 +332,8 @@ const Index = () => {
             />
           </div>
 
-          {/* Column 2: Technical Details and Confidence Badge (7/12 cols) */}
-          <div className="lg:col-span-7 flex flex-row items-start gap-6">
+          {/* Column 2: Technical Details and Confidence (7/12 cols) */}
+          <div className="lg:col-span-7 flex flex-col">
             <div className="flex-1">
               <TechnicalDetailsTable
                 oscillators={twelveData.oscillators}
@@ -340,10 +341,21 @@ const Index = () => {
                 orderFlowIndicators={twelveData.orderFlowIndicators}
               />
             </div>
-            <div className="flex-shrink-0">
-              <div className="bg-amber-500/20 border border-amber-500/30 rounded-2xl px-4 py-3 text-center">
-                <span className="text-amber-400 font-bold text-3xl block">{confidence}%</span>
-                <span className="text-amber-400/70 text-xs block uppercase tracking-wider">CONFIDENCE</span>
+            {/* Confidence row - compact, styled to match table */}
+            <div className="mt-3 pt-3 border-t border-white/[0.06]">
+              <div className="flex items-center justify-between text-xs py-1.5">
+                <span className="text-white/70 font-semibold">CONFIDENCE</span>
+                <div className="flex items-center space-x-2">
+                  <span className="font-mono text-white/90 font-bold text-[11px]">{confidence}%</span>
+                  <span className={cn(
+                    "text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-wider min-w-[40px] text-center",
+                    confidence >= 70 ? "bg-[#26a69a]/15 text-[#26a69a] border border-[#26a69a]/30" :
+                    confidence >= 40 ? "bg-amber-500/15 text-amber-400 border border-amber-500/30" :
+                    "bg-[#ef5350]/15 text-[#ef5350] border border-[#ef5350]/30"
+                  )}>
+                    {confidence >= 70 ? 'STRONG' : confidence >= 40 ? 'MEDIUM' : 'WEAK'}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
