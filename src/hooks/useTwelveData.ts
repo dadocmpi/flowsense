@@ -41,16 +41,26 @@ function calculateEMA(prices: number[], period: number): number {
   return ema;
 }
 
-export const useTwelveData = (selectedSymbol = 'MGC1!') => {
+export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
+  // Get asset config
+  const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
+  
+  // Map our symbol to Binance symbol for WebSocket
+  const binanceSymbolMap: Record<string, string> = {
+    'MGC1!': 'PAXGUSDT', // Gold token
+    'ES1!': 'SPYUSDT'    // S&P 500 ETF as proxy
+  };
+  const binanceSymbol = binanceSymbolMap[selectedSymbol] || 'PAXGUSDT';
+
   const [state, setState] = useState<TwelveDataState>({
-    symbol: 'MGC1!',
-    price: 2954.80,
-    change: 14.20,
-    percentChange: 0.48,
-    high: 2965.20,
-    low: 2940.10,
-    open: 2940.60,
-    previousClose: 2940.60,
+    symbol: selectedSymbol,
+    price: assetConfig.symbol === 'MGC1!' ? 2954.80 : 450.00, // approximate default
+    change: 0,
+    percentChange: 0,
+    high: assetConfig.symbol === 'MGC1!' ? 2965.20 : 455.00,
+    low: assetConfig.symbol === 'MGC1!' ? 2940.10 : 445.00,
+    open: assetConfig.symbol === 'MGC1!' ? 2940.60 : 448.00,
+    previousClose: assetConfig.symbol === 'MGC1!' ? 2940.60 : 448.00,
     datetime: new Date().toLocaleTimeString(),
     isLive: true,
     isMarketOpen: true,
@@ -71,17 +81,18 @@ export const useTwelveData = (selectedSymbol = 'MGC1!') => {
   });
 
   const priceHistoryRef = useRef<number[]>([]);
-  const buyerVolRef = useRef<number>(240);
-  const sellerVolRef = useRef<number>(110);
+  const buyerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 240 : 150);
+  const sellerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 110 : 80);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Load initial candles for MGC1!
+  // Load initial candles based on selected asset
   useEffect(() => {
     let isMounted = true;
 
     async function loadInitialCandles() {
       try {
-        const res = await fetch('https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=1m&limit=100');
+        // Use the binance symbol for klines
+        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1m&limit=100`);
         const data = await res.json();
         if (Array.isArray(data) && isMounted) {
           const closes = data.map((k: any) => parseFloat(k[4]));
@@ -91,7 +102,9 @@ export const useTwelveData = (selectedSymbol = 'MGC1!') => {
           }
         }
       } catch (err) {
-        const fallback = Array.from({ length: 60 }, (_, i) => 2950 + Math.sin(i / 4) * 4 + i * 0.1);
+        // Fallback to mock data based on asset
+        const basePrice = assetConfig.symbol === 'MGC1!' ? 2950 : 450;
+        const fallback = Array.from({ length: 60 }, (_, i) => basePrice + Math.sin(i / 4) * (assetConfig.symbol === 'MGC1!' ? 4 : 2) + i * 0.1);
         priceHistoryRef.current = fallback;
         updateCalculations(fallback[fallback.length - 1]);
       }
@@ -102,7 +115,7 @@ export const useTwelveData = (selectedSymbol = 'MGC1!') => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [selectedSymbol, binanceSymbol]); // Re-run when selectedAsset or binanceSymbol changes
 
   const updateCalculations = useCallback((currentPrice: number) => {
     const prices = [...priceHistoryRef.current.slice(-100), currentPrice];
@@ -140,10 +153,10 @@ export const useTwelveData = (selectedSymbol = 'MGC1!') => {
     const ema200 = calculateEMA(prices, 200);
 
     const movingAverages: IndicatorSignal[] = [
-      { name: 'EMA 10 (Fast)', value: ema10.toFixed(2), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
-      { name: 'EMA 20 (Intermediate)', value: ema20.toFixed(2), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
-      { name: 'EMA 50 (Trend Line)', value: ema50.toFixed(2), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
-      { name: 'EMA 200 (Institutional Base)', value: ema200.toFixed(2), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
+      { name: 'EMA 10 (Fast)', value: ema10.toFixed(assetConfig.precision), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
+      { name: 'EMA 20 (Intermediate)', value: ema20.toFixed(assetConfig.precision), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
+      { name: 'EMA 50 (Trend Line)', value: ema50.toFixed(assetConfig.precision), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
+      { name: 'EMA 200 (Institutional Base)', value: ema200.toFixed(assetConfig.precision), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
     ];
 
     // Order Flow
@@ -220,14 +233,18 @@ export const useTwelveData = (selectedSymbol = 'MGC1!') => {
       maSummary,
       orderFlowSummary: ofSummary
     }));
-  }, []);
+  }, [assetConfig.precision]); // Re-create callback if precision changes (unlikely)
 
-  // WebSocket Live Stream for MGC1! proxy
+  // WebSocket Live Stream for selected asset
   useEffect(() => {
     let reconnectTimeout: any;
 
+    // Reset volume counters when symbol changes
+    buyerVolRef.current = assetConfig.symbol === 'MGC1!' ? 240 : 150;
+    sellerVolRef.current = assetConfig.symbol === 'MGC1!' ? 110 : 80;
+
     const connectWebSocket = () => {
-      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/paxgusdt@ticker/paxgusdt@depth10@100ms/paxgusdt@aggTrade`);
+      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${binanceSymbol.toLowerCase()}@ticker/${binanceSymbol.toLowerCase()}@depth10@100ms/${binanceSymbol.toLowerCase()}@aggTrade`);
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
@@ -296,9 +313,9 @@ export const useTwelveData = (selectedSymbol = 'MGC1!') => {
             const isMaker = msg.m; // true = Taker Sell (Maker Buy), false = Taker Buy (Maker Sell)
 
             if (isMaker) {
-              sellerVolRef.current += q * 12;
+              sellerVolRef.current += q * (assetConfig.symbol === 'MGC1!' ? 12 : 8); // adjust multiplier
             } else {
-              buyerVolRef.current += q * 12;
+              buyerVolRef.current += q * (assetConfig.symbol === 'MGC1!' ? 12 : 8);
             }
 
             const d = new Date(msg.T);
@@ -307,7 +324,7 @@ export const useTwelveData = (selectedSymbol = 'MGC1!') => {
             const tradeItem: TradeFeedItem = {
               id: `${msg.a}`,
               price: p,
-              size: parseFloat(q.toFixed(2)),
+              size: parseFloat(q.toFixed(assetConfig.symbol === 'MGC1!' ? 2 : 4)), // adjust precision for size
               time: timeStr,
               type: isMaker ? 'SELL' : 'BUY',
               aggressor: isMaker ? 'SELL_AGGR' : 'BUY_AGGR'
@@ -335,7 +352,7 @@ export const useTwelveData = (selectedSymbol = 'MGC1!') => {
       clearTimeout(reconnectTimeout);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [updateCalculations]);
+  }, [selectedSymbol, binanceSymbol, updateCalculations]); // Re-run when selectedAsset changes
 
   return state;
 };
