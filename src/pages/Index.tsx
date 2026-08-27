@@ -258,7 +258,7 @@ const Index = () => {
                     />
                   </div>
                 </div>
-              }
+              </div>
             </div>
             <DialogFooter className="flex justify-end pt-4">
               <Button variant="outline" onClick={() => setDialogOpen(false)} className="text-white/60 hover:text-white">
