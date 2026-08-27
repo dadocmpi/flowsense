@@ -37,6 +37,12 @@ const Index = () => {
   const [selectedAsset, setSelectedAsset] = useState('MGC1!'); // Start with GOLD
   const twelveData = useTwelveData(selectedAsset);
 
+  // Debug logs
+  useEffect(() => {
+    console.log('selectedAsset changed:', selectedAsset);
+    console.log('twelveData symbol:', twelveData?.symbol);
+  }, [selectedAsset, twelveData?.symbol]);
+
   // Find config for selected asset
   const activeConfig = SUPPORTED_ASSETS.find(asset => asset.symbol === selectedAsset) || SUPPORTED_ASSETS[0];
 
