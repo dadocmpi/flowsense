@@ -27,7 +27,6 @@ import {
 import {
   RadioGroup,
   RadioGroupItem,
-  RadioGroupIndicator,
 } from '@/components/ui/radio-group';
 import {
   Separator,
@@ -160,12 +159,16 @@ const Index = () => {
                   className="flex items-center space-x-4"
                 >
                   <RadioGroupItem value="BUY">
-                    <RadioGroupIndicator className="bg-[#26a69a]" />
-                    <span className="text-white/90 text-[9px] font-medium">BUY (Long)</span>
+                    <span className="flex items-center space-x-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#26a69a]" />
+                      <span className="text-white/90 text-[9px] font-medium">BUY (Long)</span>
+                    </span>
                   </RadioGroupItem>
                   <RadioGroupItem value="SELL">
-                    <RadioGroupIndicator className="bg-[#ef5350]" />
-                    <span className="text-white/90 text-[9px] font-medium">SELL (Short)</span>
+                    <span className="flex items-center space-x-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#ef5350]" />
+                      <span className="text-white/90 text-[9px] font-medium">SELL (Short)</span>
+                    </span>
                   </RadioGroupItem>
                 </RadioGroup>
               </div>
