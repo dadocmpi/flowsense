@@ -221,7 +221,7 @@ const Index = () => {
                 <Label className="text-white/70 font-medium text-[9px] uppercase tracking-wider">Direction</Label>
                 <RadioGroup
                   value={config.direction}
-                  onValueChange={setConfig as any}
+                  onValueChange={(value) => setConfig(prev => ({ ...prev, direction: value }))}
                   className="flex items-center space-x-4"
                 >
                   <RadioGroupItem value="BUY">
@@ -248,7 +248,7 @@ const Index = () => {
                     <Input
                       type="time"
                       value={config.startTime}
-                      onChange={e => setConfig(prev => ({ ...prev, startTime: e.target.value }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, startTime: e.target.value }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   </div>
@@ -257,7 +257,7 @@ const Index = () => {
                     <Input
                       type="time"
                       value={config.endTime}
-                      onChange={e => setConfig(prev => ({ ...prev, endTime: e.target.value }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, endTime: e.target.value }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   }
@@ -273,7 +273,7 @@ const Index = () => {
                     <Input
                       type="number"
                       value={config.minPrice}
-                      onChange={e => setConfig(prev => ({ ...prev, minPrice: parseFloat(e.target.value) || 0 }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, minPrice: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   </div>
@@ -282,7 +282,7 @@ const Index = () => {
                     <Input
                       type="number"
                       value={config.maxPrice}
-                      onChange={e => setConfig(prev => ({ ...prev, maxPrice: parseFloat(e.target.value) || 0 }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, maxPrice: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   }
@@ -298,7 +298,7 @@ const Index = () => {
                     <Input
                       type="number"
                       value={config.stopLoss}
-                      onChange={e => setConfig(prev => ({ ...prev, stopLoss: parseFloat(e.target.value) || 0 }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, stopLoss: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   </div>
@@ -307,7 +307,7 @@ const Index = () => {
                     <Input
                       type="number"
                       value={config.takeProfit}
-                      onChange={e => setConfig(prev => ({ ...prev, takeProfit: parseFloat(e.target.value) || 0 }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, takeProfit: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   }
@@ -622,7 +622,7 @@ const Index = () => {
                 <Label className="text-white/70 font-medium text-[9px] uppercase tracking-wider">Direction</Label>
                 <RadioGroup
                   value={config.direction}
-                  onValueChange={setConfig as any}
+                  onValueChange={(value) => setConfig(prev => ({ ...prev, direction: value }))}
                   className="flex items-center space-x-4"
                 >
                   <RadioGroupItem value="BUY">
@@ -649,7 +649,7 @@ const Index = () => {
                     <Input
                       type="time"
                       value={config.startTime}
-                      onChange={e => setConfig(prev => ({ ...prev, startTime: e.target.value }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, startTime: e.target.value }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   </div>
@@ -658,7 +658,7 @@ const Index = () => {
                     <Input
                       type="time"
                       value={config.endTime}
-                      onChange={e => setConfig(prev => ({ ...prev, endTime: e.target.value }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, endTime: e.target.value }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   }
@@ -674,7 +674,7 @@ const Index = () => {
                     <Input
                       type="number"
                       value={config.minPrice}
-                      onChange={e => setConfig(prev => ({ ...prev, minPrice: parseFloat(e.target.value) || 0 }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, minPrice: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   </div>
@@ -683,7 +683,7 @@ const Index = () => {
                     <Input
                       type="number"
                       value={config.maxPrice}
-                      onChange={e => setConfig(prev => ({ ...prev, maxPrice: parseFloat(e.target.value) || 0 }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, maxPrice: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   }
@@ -699,7 +699,7 @@ const Index = () => {
                     <Input
                       type="number"
                       value={config.stopLoss}
-                      onChange={e => setConfig(prev => ({ ...prev, stopLoss: parseFloat(e.target.value) || 0 }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, stopLoss: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   </div>
@@ -708,7 +708,7 @@ const Index = () => {
                     <Input
                       type="number"
                       value={config.takeProfit}
-                      onChange={e => setConfig(prev => ({ ...prev, takeProfit: parseFloat(e.target.value) || 0 }))}
+                      onChange={(e) => setConfig(prev => ({ ...prev, takeProfit: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white"
                     />
                   }
