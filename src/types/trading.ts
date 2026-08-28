@@ -1,3 +1,7 @@
+// ============================================
+// TRADING TYPES - ORIGINAL + EXPANDED
+// ============================================
+
 export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 
 export interface UserZoneConfig {
@@ -34,6 +38,7 @@ export interface AssetConfig {
   precision: number;
   contractSize: string;
   tickSize: number;
+  binanceSymbol?: string; // For real data mapping
 }
 
 export const SUPPORTED_ASSETS: AssetConfig[] = [
@@ -43,7 +48,8 @@ export const SUPPORTED_ASSETS: AssetConfig[] = [
     exchange: 'COMEX / CME', 
     precision: 2,
     contractSize: '10 troy oz',
-    tickSize: 0.10
+    tickSize: 0.10,
+    binanceSymbol: 'PAXGUSDT', // Proxy for gold
   },
   {
     symbol: 'ES1!',
@@ -51,8 +57,24 @@ export const SUPPORTED_ASSETS: AssetConfig[] = [
     exchange: 'CME',
     precision: 2,
     contractSize: '50 USD',
-    tickSize: 0.25
+    tickSize: 0.25,
+    binanceSymbol: 'BTCUSDT', // Proxy for SP500 (not ideal but available)
   },
+];
+
+// Additional supported symbols for real data
+export interface SupportedSymbolConfig {
+  symbol: string;
+  displayName: string;
+  binanceSymbol: string;
+  precision: number;
+  category: 'CRYPTO' | 'FOREX' | 'COMMODITIES' | 'INDEX';
+}
+
+export const SUPPORTED_SYMBOLS: SupportedSymbolConfig[] = [
+  { symbol: 'XAU/USD', displayName: 'Gold', binanceSymbol: 'PAXGUSDT', precision: 2, category: 'COMMODITIES' },
+  { symbol: 'BTC/USDT', displayName: 'Bitcoin', binanceSymbol: 'BTCUSDT', precision: 2, category: 'CRYPTO' },
+  { symbol: 'ETH/USDT', displayName: 'Ethereum', binanceSymbol: 'ETHUSDT', precision: 2, category: 'CRYPTO' },
 ];
 
 export interface IndicatorSignal {
@@ -77,6 +99,14 @@ export interface OrderBookLevel {
   percentage: number;
 }
 
+// Real order book level with total value
+export interface RealOrderBookLevel {
+  price: number;
+  size: number;
+  total: number; // price * size
+  percentage: number;
+}
+
 export interface TradeFeedItem {
   id: string;
   price: number;
@@ -84,6 +114,15 @@ export interface TradeFeedItem {
   time: string;
   type: 'BUY' | 'SELL';
   aggressor: 'BUY_AGGR' | 'SELL_AGGR';
+}
+
+// Legacy type for live trades (keeping for compatibility)
+export interface LiveTrade {
+  id: string | number;
+  price: number;
+  size: number;
+  time: string;
+  isBuyerMaker: boolean;
 }
 
 export interface TwelveDataState {
@@ -114,6 +153,29 @@ export interface TwelveDataState {
   recentTrades: TradeFeedItem[];
   
   // Summaries
+  overallSummary: IndicatorSummary;
+  oscillatorsSummary: IndicatorSummary;
+  maSummary: IndicatorSummary;
+  orderFlowSummary: IndicatorSummary;
+}
+
+// Additional state for real trading data
+export interface RealTradingState {
+  symbol: string;
+  price: number;
+  priceChange24h: number;
+  high24h: number;
+  low24h: number;
+  volume24h: number;
+  bids: RealOrderBookLevel[];
+  asks: RealOrderBookLevel[];
+  recentTrades: LiveTrade[];
+  buyerVolume: number;
+  sellerVolume: number;
+  volumeDelta: number;
+  oscillators: IndicatorSignal[];
+  movingAverages: IndicatorSignal[];
+  orderFlowIndicators: IndicatorSignal[];
   overallSummary: IndicatorSummary;
   oscillatorsSummary: IndicatorSummary;
   maSummary: IndicatorSummary;
