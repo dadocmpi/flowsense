@@ -3,13 +3,13 @@ import { useBinanceFeed } from '../hooks/useBinanceFeed';
 import { useCandleHistory } from '../hooks/useCandleHistory';
 import { useMarketContext } from '../hooks/useMarketContext';
 import { ContextEngineView } from '../components/trading/ContextEngineView';
+import { TradingViewGauge } from '../components/trading/TradingViewGauge';
 import { AssetSummaryCard } from '../components/trading/AssetSummaryCard';
 import { RealOrderBook } from '../components/trading/RealOrderBook';
 import { LiveTradeFeed } from '../components/trading/LiveTradeFeed';
 import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
-import { TwelveDataState, TradeFeedItem, SUPPORTED_ASSETS, IndicatorSignal, IndicatorSummary } from '../types/trading';
+import { TwelveDataState, TradeFeedItem, SUPPORTED_ASSETS, IndicatorSignal } from '../types/trading';
 import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
-import { TradingViewGauge } from '../components/trading/TradingViewGauge';
 import {
   Dialog,
   DialogTrigger,
@@ -54,8 +54,41 @@ const Index = () => {
 
   // Adapter: map feed to TwelveDataState for legacy components (RealtimeOrderFlow, TradingViewGauge)
   const twelveDataLike = useMemo<TwelveDataState | null>(() => {
-    if (!feed.ticker || !context) return null;
+    if (!feed.ticker) return null;
     const t = feed.ticker;
+
+    // Build indicator signals from context engine factors
+    const buildSignals = (categories: string[], polarity: string) =>
+      context
+        ? context.positiveFactors.concat(context.negativeFactors).concat(context.neutralFactors)
+            .filter(f => categories.includes(f.category) && f.polarity === polarity)
+            .map(f => ({
+              name: f.label,
+              value: f.description || '',
+              action: (f.polarity === 'POSITIVE' ? 'BUY' : f.polarity === 'NEGATIVE' ? 'SELL' : 'NEUTRAL') as any,
+            }))
+        : [];
+
+    const oscillators = buildSignals(['RSI', 'MACD', 'MOMENTUM'], 'POSITIVE')
+      .concat(buildSignals(['RSI', 'MACD', 'MOMENTUM'], 'NEGATIVE'))
+      .concat(buildSignals(['RSI', 'MACD', 'MOMENTUM'], 'NEUTRAL')) as IndicatorSignal[];
+
+    const movingAverages = buildSignals(['STRUCTURAL_EMA'], 'POSITIVE')
+      .concat(buildSignals(['STRUCTURAL_EMA'], 'NEGATIVE'))
+      .concat(buildSignals(['STRUCTURAL_EMA'], 'NEUTRAL')) as IndicatorSignal[];
+
+    const orderFlowIndicators = buildSignals(['ORDER_FLOW', 'ORDER_BOOK', 'VOLUME'], 'POSITIVE')
+      .concat(buildSignals(['ORDER_FLOW', 'ORDER_BOOK', 'VOLUME'], 'NEGATIVE'))
+      .concat(buildSignals(['ORDER_FLOW', 'ORDER_BOOK', 'VOLUME'], 'NEUTRAL')) as IndicatorSignal[];
+
+    const ctxScore = context?.contextScore ?? 0;
+    const verdict =
+      context?.directionalBias === 'BULLISH'
+        ? ctxScore > 30 ? 'STRONG BUY' : 'BUY'
+        : context?.directionalBias === 'BEARISH'
+        ? ctxScore < -30 ? 'STRONG SELL' : 'SELL'
+        : 'NEUTRAL';
+
     return {
       symbol: selectedAsset,
       price: t.price,
@@ -68,30 +101,32 @@ const Index = () => {
       datetime: new Date(t.timestamp).toLocaleTimeString(),
       isLive: feed.isConnected,
       isMarketOpen: feed.isConnected,
-      oscillators: context.positiveFactors.concat(context.negativeFactors).concat(context.neutralFactors).filter(f =>
-        ['RSI', 'MACD', 'MOMENTUM'].includes(f.category)
-      ).map(f => ({
-        name: f.label,
-        value: f.description || '',
-        action: f.polarity === 'POSITIVE' ? 'BUY' : f.polarity === 'NEGATIVE' ? 'SELL' : 'NEUTRAL',
-      })) as IndicatorSignal[],
-      movingAverages: [
-        { name: 'EMA Stack', value: context.factors ? '' : '', action: context.directionalBias === 'BULLISH' ? 'BUY' : context.directionalBias === 'BEARISH' ? 'SELL' : 'NEUTRAL' },
-        { name: 'EMA 200 Bias', value: '', action: context.factors && context.negativeFactors.some(f => f.id === 'ema-stack' && f.polarity === 'NEGATIVE') ? 'SELL' : 'BUY' },
-      ] as IndicatorSignal[],
-      orderFlowIndicators: context.positiveFactors.concat(context.negativeFactors).filter(f =>
-        ['ORDER_FLOW', 'ORDER_BOOK', 'VOLUME'].includes(f.category)
-      ).map(f => ({
-        name: f.label,
-        value: f.description || '',
-        action: f.polarity === 'POSITIVE' ? 'BUY' : f.polarity === 'NEGATIVE' ? 'SELL' : 'NEUTRAL',
-      })) as IndicatorSignal[],
+      oscillators,
+      movingAverages,
+      orderFlowIndicators,
       buyersPercent: Math.round(feed.buyerDominance * 100),
       sellersPercent: Math.round((1 - feed.buyerDominance) * 100),
       volumeDelta: feed.volumeDelta,
-      institutionalPressure: Math.abs(feed.volumeDelta) > 50 ? 'EXTREME' : Math.abs(feed.volumeDelta) > 20 ? 'HIGH' : Math.abs(feed.volumeDelta) > 5 ? 'MEDIUM' : 'LOW',
-      bids: feed.bids.map(b => ({ price: b.price, size: b.size, cumulativeSize: b.size, percentage: b.percentage })),
-      asks: feed.asks.map(a => ({ price: a.price, size: a.size, cumulativeSize: a.size, percentage: a.percentage })),
+      institutionalPressure:
+        Math.abs(feed.volumeDelta) > 50
+          ? 'EXTREME'
+          : Math.abs(feed.volumeDelta) > 20
+          ? 'HIGH'
+          : Math.abs(feed.volumeDelta) > 5
+          ? 'MEDIUM'
+          : 'LOW',
+      bids: feed.bids.map(b => ({
+        price: b.price,
+        size: b.size,
+        cumulativeSize: b.size,
+        percentage: b.percentage,
+      })),
+      asks: feed.asks.map(a => ({
+        price: a.price,
+        size: a.size,
+        cumulativeSize: a.size,
+        percentage: a.percentage,
+      })),
       recentTrades: feed.recentTrades.map(t => ({
         id: t.id,
         price: t.price,
@@ -101,12 +136,15 @@ const Index = () => {
         aggressor: t.isBuyerMaker ? 'SELL_AGGR' : 'BUY_AGGR',
       })) as TradeFeedItem[],
       overallSummary: {
-        buyCount: context.positiveFactors.reduce((s, f) => s + Math.abs(f.weight), 0),
-        neutralCount: context.neutralFactors.length,
-        sellCount: context.negativeFactors.reduce((s, f) => s + Math.abs(f.weight), 0),
-        score: Math.abs(context.contextScore),
-        verdict: context.directionalBias === 'BULLISH' ? (context.contextScore > 30 ? 'STRONG BUY' : 'BUY') :
-                 context.directionalBias === 'BEARISH' ? (context.contextScore < -30 ? 'STRONG SELL' : 'SELL') : 'NEUTRAL',
+        buyCount: context
+          ? context.positiveFactors.reduce((s, f) => s + Math.abs(f.weight), 0)
+          : 0,
+        neutralCount: context?.neutralFactors.length ?? 0,
+        sellCount: context
+          ? context.negativeFactors.reduce((s, f) => s + Math.abs(f.weight), 0)
+          : 0,
+        score: Math.abs(ctxScore),
+        verdict,
       },
       oscillatorsSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
       maSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
@@ -144,6 +182,7 @@ const Index = () => {
 
   return (
     <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
+      {/* Header */}
       <header className="w-full border-b border-white/[0.04] bg-[#07080a] px-8 py-4 flex items-center justify-between sticky top-0 z-50 backdrop-blur-md">
         <div className="flex items-center space-x-4">
           {SUPPORTED_ASSETS.map(asset => (
@@ -193,7 +232,7 @@ const Index = () => {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label className="text-white/70 font-medium text-[9px] uppercase tracking-wider">Direction</Label>
-                  <RadioGroup value={config.direction} onValueChange={(v: any) => setConfig(prev => ({ ...prev, direction: v }))} className="flex items-center space-x-4">
+                  <RadioGroup value={config.direction} onValueChange={(v: any) => setConfig((prev: any) => ({ ...prev, direction: v }))} className="flex items-center space-x-4">
                     <div className="flex items-center space-x-2">
                       <RadioGroupItem value="BUY" id="buy" />
                       <Label htmlFor="buy" className="text-white/90 text-[10px]">BUY (Long)</Label>
@@ -209,11 +248,11 @@ const Index = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label className="text-white/60 text-[8px] block">Start</Label>
-                      <Input type="time" value={config.startTime} onChange={e => setConfig(prev => ({ ...prev, startTime: e.target.value }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
+                      <Input type="time" value={config.startTime} onChange={e => setConfig((prev: any) => ({ ...prev, startTime: e.target.value }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
                     </div>
                     <div>
                       <Label className="text-white/60 text-[8px] block">End</Label>
-                      <Input type="time" value={config.endTime} onChange={e => setConfig(prev => ({ ...prev, endTime: e.target.value }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
+                      <Input type="time" value={config.endTime} onChange={e => setConfig((prev: any) => ({ ...prev, endTime: e.target.value }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
                     </div>
                   </div>
                 </div>
@@ -222,11 +261,11 @@ const Index = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label className="text-white/60 text-[8px] block">Min</Label>
-                      <Input type="number" value={config.minPrice} onChange={e => setConfig(prev => ({ ...prev, minPrice: parseFloat(e.target.value) || 0 }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
+                      <Input type="number" value={config.minPrice} onChange={e => setConfig((prev: any) => ({ ...prev, minPrice: parseFloat(e.target.value) || 0 }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
                     </div>
                     <div>
                       <Label className="text-white/60 text-[8px] block">Max</Label>
-                      <Input type="number" value={config.maxPrice} onChange={e => setConfig(prev => ({ ...prev, maxPrice: parseFloat(e.target.value) || 0 }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
+                      <Input type="number" value={config.maxPrice} onChange={e => setConfig((prev: any) => ({ ...prev, maxPrice: parseFloat(e.target.value) || 0 }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
                     </div>
                   </div>
                 </div>
@@ -235,11 +274,11 @@ const Index = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label className="text-white/60 text-[8px] block">Stop Loss</Label>
-                      <Input type="number" value={config.stopLoss} onChange={e => setConfig(prev => ({ ...prev, stopLoss: parseFloat(e.target.value) || 0 }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
+                      <Input type="number" value={config.stopLoss} onChange={e => setConfig((prev: any) => ({ ...prev, stopLoss: parseFloat(e.target.value) || 0 }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
                     </div>
                     <div>
                       <Label className="text-white/60 text-[8px] block">Take Profit</Label>
-                      <Input type="number" value={config.takeProfit} onChange={e => setConfig(prev => ({ ...prev, takeProfit: parseFloat(e.target.value) || 0 }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
+                      <Input type="number" value={config.takeProfit} onChange={e => setConfig((prev: any) => ({ ...prev, takeProfit: parseFloat(e.target.value) || 0 }))} className="w-full bg-[#12131a] border border-white/[0.04] rounded px-3 py-1.5 text-white text-xs" />
                     </div>
                   </div>
                 </div>
@@ -255,17 +294,32 @@ const Index = () => {
       </header>
 
       <main className="flex-grow p-8 max-w-[1600px] w-full mx-auto flex flex-col space-y-8">
-        {/* Asset summary */}
+        {/* Asset Summary */}
         {twelveDataLike && (
-          <AssetSummaryCard
-            data={twelveDataLike}
-            precision={activeConfig.precision}
-          />
+          <AssetSummaryCard data={twelveDataLike} precision={activeConfig.precision} />
         )}
 
-        {/* Main grid: Context Engine + Indicators */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          <div className="lg:col-span-5 flex flex-col">
+        {/* Main Grid: Compass + Context Engine + Technical Details */}
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-8">
+          {/* Column 1: Compass (4/12 cols) */}
+          <div className="xl:col-span-4 flex flex-col">
+            {twelveDataLike ? (
+              <TradingViewGauge
+                overallSummary={twelveDataLike.overallSummary}
+                oscillatorsSummary={twelveDataLike.oscillatorsSummary}
+                maSummary={twelveDataLike.maSummary}
+                orderFlowSummary={twelveDataLike.orderFlowSummary}
+                selectedAsset={selectedAsset}
+              />
+            ) : (
+              <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.06] p-8 text-center text-white/40 text-xs">
+                Loading compass...
+              </div>
+            )}
+          </div>
+
+          {/* Column 2: Context Engine View (4/12 cols) */}
+          <div className="xl:col-span-4 flex flex-col">
             {context ? (
               <ContextEngineView context={context} />
             ) : (
@@ -277,13 +331,17 @@ const Index = () => {
               </div>
             )}
           </div>
-          <div className="lg:col-span-7 flex flex-col">
+
+          {/* Column 3: Technical Details Table (4/12 cols) */}
+          <div className="xl:col-span-4 flex flex-col">
             {twelveDataLike ? (
-              <TechnicalDetailsTable
-                oscillators={twelveDataLike.oscillators}
-                movingAverages={twelveDataLike.movingAverages}
-                orderFlowIndicators={twelveDataLike.orderFlowIndicators}
-              />
+              <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.06] p-6 h-full overflow-y-auto">
+                <TechnicalDetailsTable
+                  oscillators={twelveDataLike.oscillators}
+                  movingAverages={twelveDataLike.movingAverages}
+                  orderFlowIndicators={twelveDataLike.orderFlowIndicators}
+                />
+              </div>
             ) : (
               <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.06] p-8 text-center text-white/40 text-xs">
                 Loading technical analysis...
@@ -292,12 +350,9 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Order flow + book + tape */}
+        {/* Order Flow + Book + Trades */}
         {twelveDataLike && (
-          <RealtimeOrderFlow
-            data={twelveDataLike}
-            precision={activeConfig.precision}
-          />
+          <RealtimeOrderFlow data={twelveDataLike} precision={activeConfig.precision} />
         )}
       </main>
     </div>
