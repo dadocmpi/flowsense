@@ -1,6 +1,6 @@
 import React from 'react';
 import { TwelveDataState } from '../../types/trading';
-import { TrendingUp, TrendingDown, Clock, ShieldAlert } from 'lucide-react';
+import { TrendingUp, TrendingDown, Clock } from 'lucide-react';
 
 interface AssetSummaryCardProps {
   data: TwelveDataState & { isLoading?: boolean };

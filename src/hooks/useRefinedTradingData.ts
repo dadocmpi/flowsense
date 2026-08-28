@@ -59,21 +59,15 @@ function buildIndicatorSignals(
   const bbLower = sma20 - stdDev * 2;
 
   oscillators.push({
-    name: 'Bands de Bollinger',
-    value: currentPrice > bbUpper ? 'Sobrecomprado' : currentPrice < bbLower ? 'Sobrevendido' : 'Dentro da Banda',
+    name: 'Bollinger Bands',
+    value: currentPrice > bbUpper ? 'Overbought' : currentPrice < bbLower ? 'Oversold' : 'Inside Band',
     action: currentPrice > bbUpper ? 'SELL' : currentPrice < bbLower ? 'BUY' : 'NEUTRAL',
   });
 
-  // Build moving averages in a single loop — no intermediate array needed
   const periods = [10, 20, 50, 100, 200];
   periods.forEach(period => {
     const emaValue = calculateEMA(prices, period);
     const action: IndicatorSignal['action'] = currentPrice > emaValue ? 'BUY' : 'SELL';
-    
-    const label = period === 200 ? 'EMA 200 (Institutional Base)' :
-                  period === 100 ? 'EMA 100 (Major Trend)' :
-                  period === 50 ? 'EMA 50 (Trend Line)' :
-                  period === 20 ? 'EMA 20 (Fast)' : 'EMA 10 (Quick)';
     
     movingAverages.push({
       name: `EMA ${period}`,

@@ -392,17 +392,13 @@ export const useMarketContextEngine = (
     if (priceHistory.length < 5) return zones;
 
     // 1. FVG (Fair Value Gap) Detection
-    // A bullish FVG: candle[i-2].high < candle[i].low (gap up)
-    // A bearish FVG: candle[i-2].low > candle[i].high (gap down)
     if (priceHistory.length >= 3) {
       for (let i = 2; i < Math.min(priceHistory.length, 30); i++) {
         const prev = priceHistory[priceHistory.length - 1 - i + 2];
         const curr = priceHistory[priceHistory.length - 1 - i];
         const next = priceHistory[priceHistory.length - 1 - i - 1] || curr;
         
-        // Bullish FVG: prev.low < next.low (gap between)
         const bullishFVG = prev < next - (next * 0.0005);
-        // Bearish FVG: prev.high > next.high
         const bearishFVG = prev > next + (next * 0.0005);
         
         if (bullishFVG) {
@@ -465,11 +461,10 @@ export const useMarketContextEngine = (
       }
     }
 
-    // 2. Order Block Detection (last opposite-direction candle before strong move)
+    // 2. Order Block Detection
     if (priceHistory.length >= 10) {
       const recent = priceHistory.slice(-10);
       for (let i = 1; i < recent.length - 2; i++) {
-        // Bullish OB: down candle followed by 2+ up candles
         if (recent[i] < recent[i - 1] && recent[i + 1] > recent[i] && recent[i + 2] > recent[i + 1]) {
           const midpoint = (recent[i] + recent[i - 1]) / 2;
           if (Math.abs(price - midpoint) < config.zoneProximityThreshold * 2) {
@@ -496,7 +491,6 @@ export const useMarketContextEngine = (
           }
         }
         
-        // Bearish OB: up candle followed by 2+ down candles
         if (recent[i] > recent[i - 1] && recent[i + 1] < recent[i] && recent[i + 2] < recent[i + 1]) {
           const midpoint = (recent[i] + recent[i - 1]) / 2;
           if (Math.abs(price - midpoint) < config.zoneProximityThreshold * 2) {
@@ -571,7 +565,6 @@ export const useMarketContextEngine = (
       const range = max - min;
       
       if (range > 0) {
-        // Swing high zone
         if (Math.abs(price - max) < config.zoneProximityThreshold * 2) {
           zones.push({
             id: `swing-h-${now}`,
@@ -595,7 +588,6 @@ export const useMarketContextEngine = (
           });
         }
         
-        // Swing low zone
         if (Math.abs(price - min) < config.zoneProximityThreshold * 2) {
           zones.push({
             id: `swing-l-${now}`,
@@ -621,12 +613,11 @@ export const useMarketContextEngine = (
       }
     }
 
-    // 5. Liquidity zones (where large orders sit in book)
+    // 5. Liquidity zones
     if (orderBook.bids.length > 0 && orderBook.asks.length > 0) {
       const allLevels = [...orderBook.bids, ...orderBook.asks];
       const avgSize = allLevels.reduce((sum, l) => sum + l.size, 0) / allLevels.length;
       
-      // Find levels 3x larger than average = potential liquidity pools
       allLevels.forEach((level, idx) => {
         if (level.size > avgSize * 3 && Math.abs(price - level.price) < config.zoneProximityThreshold * 2) {
           zones.push({
@@ -653,7 +644,6 @@ export const useMarketContextEngine = (
       });
     }
 
-    // 6. Add Manual Zone if defined
     return zones;
   }, [config.zoneProximityThreshold]);
 
@@ -665,28 +655,24 @@ export const useMarketContextEngine = (
     price: number
   ): InstitutionalZone[] => {
     return zones.map(zone => {
-      // Check if price has broken through the invalidation level
       if (zone.invalidationPrice > 0) {
         if (zone.priceMin < zone.priceMax) {
-          // Bullish zone: invalidated if price drops below invalidationPrice
           if (price < zone.invalidationPrice) {
             return { ...zone, status: 'INVALIDATED' as ZoneStatus };
           }
         } else {
-          // Bearish zone: invalidated if price rises above invalidationPrice
           if (price > zone.invalidationPrice) {
             return { ...zone, status: 'INVALIDATED' as ZoneStatus };
           }
         }
       }
       
-      // Mark as CONSUMED if price has touched it multiple times
       if (zone.touches >= 3) {
         return { ...zone, status: 'CONSUMED' as ZoneStatus };
       }
       
       return zone;
-    }).filter(z => z.status === 'ACTIVE' || z.status === 'CONSUMED'); // Remove invalidated/broken
+    }).filter(z => z.status === 'ACTIVE' || z.status === 'CONSUMED');
   }, []);
 
   // ============================================
@@ -722,7 +708,6 @@ export const useMarketContextEngine = (
         const allConfluences: ZoneConfluence[] = [];
         allZones.forEach(z => allConfluences.push(...z.confluences));
         
-        // Score = sum of confluence strengths
         const totalScore = allConfluences.reduce((sum, c) => {
           return sum + (c.strength === 'VERY_HIGH' ? 25 : 
                        c.strength === 'HIGH' ? 20 : 
@@ -743,7 +728,6 @@ export const useMarketContextEngine = (
           totalScore,
         });
       } else {
-        // Single zone as a cluster
         clusters.push({
           id: `cluster-${clusters.length}`,
           zones: [zone],
@@ -774,7 +758,6 @@ export const useMarketContextEngine = (
     manualZone: ManualDailyZone | null,
     price: number
   ): { clusters: ZoneCluster[]; primary: ZoneCluster | ManualDailyZone | null } => {
-    // Calculate distances for clusters
     const updatedClusters = clusters.map(cluster => ({
       ...cluster,
       distanceFromPrice: Math.abs(price - cluster.midpoint),
@@ -782,7 +765,6 @@ export const useMarketContextEngine = (
     
     let primary: ZoneCluster | ManualDailyZone | null = null;
     
-    // Manual zone takes priority if defined and valid
     if (manualZone && manualZone.zoneMin > 0 && manualZone.zoneMax > 0) {
       const inManualZone = price >= manualZone.zoneMin && price <= manualZone.zoneMax;
       const distToManual = Math.min(
@@ -823,17 +805,7 @@ export const useMarketContextEngine = (
     const factors: SignalFactor[] = [];
     const now = Date.now();
     
-    // ============================================
-    // CORRELATION GROUPS:
-    // - EMA_CLOUD: all EMAs (10/20/50/100/200) — collapse to one
-    // - STRUCTURE: market structure + BOS
-    // - FLOW: delta + tape + institutional pressure
-    // - ZONE_CLUSTER: FVG + OB + POC + MANUAL_ZONE
-    // ============================================
-    
     // ---- ZONE FACTORS ----
-    
-    // Manual zone (highest weight if defined)
     if (manualZone && manualZone.zoneMin > 0 && manualZone.zoneMax > 0) {
       const inZone = price >= manualZone.zoneMin && price <= manualZone.zoneMax;
       const approaching = !inZone && 
@@ -851,14 +823,11 @@ export const useMarketContextEngine = (
       });
     }
     
-    // Zone cluster proximity (grouped — single contribution)
     if (clusters.length > 0) {
       const nearest = clusters[0];
       const distFromPrice = nearest.distanceFromPrice;
       const inCluster = price >= nearest.priceMin && price <= nearest.priceMax;
       
-      // Zone proximity alone doesn't give direction
-      // But cluster strength influences weight
       const clusterWeight = nearest.strength === 'VERY_HIGH' ? 12 :
                            nearest.strength === 'HIGH' ? 10 :
                            nearest.strength === 'MEDIUM' ? 6 : 3;
@@ -867,7 +836,7 @@ export const useMarketContextEngine = (
         name: 'ZONE_CLUSTER',
         value: inCluster ? `IN_CLUSTER (${nearest.totalConfluence.length} confluences)` : 
                `Near cluster (${distFromPrice.toFixed(1)} pts)`,
-        action: 'HOLD', // Direction comes from structure
+        action: 'HOLD',
         weight: clusterWeight,
         isCorrelated: false,
         correlationGroup: 'ZONE_CLUSTER',
@@ -877,8 +846,6 @@ export const useMarketContextEngine = (
     }
     
     // ---- STRUCTURE FACTORS ----
-    
-    // Market structure (HTF/MTF/LTF combined)
     if (structure.htfTrend !== 'NEUTRAL') {
       factors.push({
         name: 'MARKET_STRUCTURE',
@@ -893,7 +860,6 @@ export const useMarketContextEngine = (
       });
     }
     
-    // BOS (only if confirmed)
     if (structure.bosConfirmed) {
       factors.push({
         name: 'BOS',
@@ -901,7 +867,7 @@ export const useMarketContextEngine = (
         action: structure.bosDirection === 'BULL' ? 'BUY' : 
                structure.bosDirection === 'BEAR' ? 'SELL' : 'HOLD',
         weight: config.weights.find(w => w.name === 'BOS')?.baseWeight || 10,
-        isCorrelated: true, // Part of structure group
+        isCorrelated: true,
         correlationGroup: 'STRUCTURE',
         source: 'BOS Detection',
         timestamp: now,
@@ -909,8 +875,6 @@ export const useMarketContextEngine = (
     }
     
     // ---- ORDER FLOW FACTORS ----
-    
-    // Order flow (delta + aggression combined)
     if (data.buyersPercent > 0 && data.buyersPercent < 100) {
       const flowAction = data.buyersPercent > 60 ? 'BUY' : 
                         data.buyersPercent < 40 ? 'SELL' : 'HOLD';
@@ -927,7 +891,6 @@ export const useMarketContextEngine = (
       });
     }
     
-    // Tape reading
     if (data.recentTrades.length > 0) {
       const buyTrades = data.recentTrades.filter(t => t.type === 'BUY').length;
       const sellTrades = data.recentTrades.filter(t => t.type === 'SELL').length;
@@ -939,14 +902,13 @@ export const useMarketContextEngine = (
         value: `${buyTrades} B / ${sellTrades} S`,
         action: buyRatio > 0.6 ? 'BUY' : buyRatio < 0.4 ? 'SELL' : 'HOLD',
         weight: config.weights.find(w => w.name === 'TAPE')?.baseWeight || 8,
-        isCorrelated: true, // Part of flow group
+        isCorrelated: true,
         correlationGroup: 'FLOW',
         source: 'Trade Tape Analysis',
         timestamp: now,
       });
     }
     
-    // Institutional pressure
     if (data.institutionalPressure !== 'LOW') {
       factors.push({
         name: 'INST_PRESSURE',
@@ -955,7 +917,7 @@ export const useMarketContextEngine = (
           ? (data.volumeDelta > 0 ? 'BUY' : 'SELL')
           : 'HOLD',
         weight: config.weights.find(w => w.name === 'ABSORPTION')?.baseWeight || 8,
-        isCorrelated: true, // Part of flow group
+        isCorrelated: true,
         correlationGroup: 'FLOW',
         source: 'Institutional Flow Detection',
         timestamp: now,
@@ -963,8 +925,6 @@ export const useMarketContextEngine = (
     }
     
     // ---- EMA FACTORS (CORRELATION-COLLAPSED) ----
-    
-    // Only add ONE EMA factor representing the entire cloud (not 4 separate votes)
     if (data.movingAverages.length > 0) {
       const emas = data.movingAverages.filter(ma => ma.name.includes('EMA'));
       if (emas.length > 0) {
@@ -972,7 +932,6 @@ export const useMarketContextEngine = (
         const sellCount = emas.filter(e => e.action.includes('SELL')).length;
         const total = emas.length || 1;
         
-        // EMA cloud bias
         let emaAction: SignalAction = 'HOLD';
         if (buyCount > sellCount) emaAction = 'BUY';
         else if (sellCount > buyCount) emaAction = 'SELL';
@@ -983,7 +942,7 @@ export const useMarketContextEngine = (
           action: emaAction,
           weight: config.weights
             .filter(w => w.category === 'EMA')
-            .reduce((sum, w) => sum + w.baseWeight, 0) * 0.6, // Reduced for correlation
+            .reduce((sum, w) => sum + w.baseWeight, 0) * 0.6,
           isCorrelated: false,
           correlationGroup: 'EMA_CLOUD',
           source: 'EMA Cloud (collapsed)',
@@ -993,8 +952,6 @@ export const useMarketContextEngine = (
     }
     
     // ---- OSCILLATOR FACTORS ----
-    
-    // Oscillators (RSI + MACD + momentum combined)
     if (data.oscillators.length > 0) {
       const oscBuyCount = data.oscillators.filter(o => o.action.includes('BUY')).length;
       const oscSellCount = data.oscillators.filter(o => o.action.includes('SELL')).length;
@@ -1027,11 +984,9 @@ export const useMarketContextEngine = (
   const calculateConfluence = useCallback((
     factors: SignalFactor[]
   ): ConfluenceResult => {
-    // Separate zone factors from supporting factors
     const zoneFactors = factors.filter(f => f.correlationGroup === 'ZONE_CLUSTER');
     const supportingFactors = factors.filter(f => f.correlationGroup !== 'ZONE_CLUSTER');
     
-    // Collapse correlated groups (take the highest-weight factor from each group)
     const processedFactors: SignalFactor[] = [];
     const groupMap = new Map<string, SignalFactor[]>();
     
@@ -1045,14 +1000,11 @@ export const useMarketContextEngine = (
       }
     });
     
-    // For each group, take the highest-weight factor as the representative
     groupMap.forEach((groupFactors, group) => {
       const sorted = [...groupFactors].sort((a, b) => b.weight - a.weight);
-      // Top factor represents the group
       processedFactors.push({ ...sorted[0], name: `${group}_REPRESENTATIVE` });
     });
     
-    // Calculate raw scores
     let zoneWeightScore = 0;
     let supportingScore = 0;
     let buyWeight = 0;
@@ -1073,8 +1025,6 @@ export const useMarketContextEngine = (
     
     const totalRawScore = zoneWeightScore + supportingScore;
     
-    // Normalize to 0-100
-    // Max possible: assume each weight at max
     const maxZoneWeight = config.weights
       .filter(w => w.category === 'ZONE')
       .reduce((sum, w) => sum + w.maxWeight, 0);
@@ -1087,12 +1037,10 @@ export const useMarketContextEngine = (
     const normalizedSupporting = maxSupportingWeight > 0 ? (supportingScore / maxSupportingWeight) * 100 : 0;
     const normalizedTotal = maxTotal > 0 ? (totalRawScore / maxTotal) * 100 : 0;
     
-    // Zone weight percentage (must be ≥50% per the rule)
     const zoneWeightPercentage = normalizedTotal > 0 
       ? Math.round((normalizedZone / normalizedTotal) * 100) 
       : 0;
     
-    // Determine dominant action
     let dominantAction: SignalAction = 'HOLD';
     if (buyWeight > sellWeight * 1.2 && buyWeight > neutralWeight) {
       dominantAction = 'BUY';
@@ -1100,7 +1048,6 @@ export const useMarketContextEngine = (
       dominantAction = 'SELL';
     }
     
-    // Find contradictions
     const buyFactors = processedFactors.filter(f => f.action === 'BUY');
     const sellFactors = processedFactors.filter(f => f.action === 'SELL');
     
@@ -1110,7 +1057,6 @@ export const useMarketContextEngine = (
       ? buyFactors.filter(f => f.weight > 4)
       : [];
     
-    // Calculate conflict severity
     let conflictSeverity: ConfluenceResult['conflictSeverity'] = 'LOW';
     const contradictionRatio = processedFactors.length > 0 
       ? contradictions.length / processedFactors.length 
@@ -1148,7 +1094,6 @@ export const useMarketContextEngine = (
     
     if (!inZone) return { reacted: false, quality: 'NONE' };
     
-    // Check if there's meaningful delta
     const avgVolume = volumeHistory.length > 0 
       ? volumeHistory.reduce((a, b) => a + b, 0) / volumeHistory.length 
       : 0;
@@ -1200,7 +1145,6 @@ export const useMarketContextEngine = (
     reactionQuality: { reacted: boolean; quality: string },
     dataQuality: DataQualityScore
   ): MarketState => {
-    // No zone defined or far from zone
     if (!primaryZone) return 'WAITING';
     
     const distToZone = 'midpoint' in primaryZone
@@ -1211,7 +1155,6 @@ export const useMarketContextEngine = (
       ? price >= primaryZone.priceMin && price <= primaryZone.priceMax
       : price >= primaryZone.zoneMin && price <= primaryZone.zoneMax;
     
-    // Trend alignment check for manual zones
     let trendAligned = true;
     if (manualZone) {
       trendAligned = (manualZone.direction === 'BUY' && gate0Trend === 'BULLISH') ||
@@ -1219,7 +1162,6 @@ export const useMarketContextEngine = (
                      gate0Trend === 'NEUTRAL';
     }
     
-    // State machine logic
     if (!inZone && distToZone > config.zoneProximityThreshold * 2) {
       return 'WAITING';
     }
@@ -1232,14 +1174,11 @@ export const useMarketContextEngine = (
       return 'ENTERING_ZONE';
     }
     
-    // In zone
     if (inZone) {
-      // Low quality reaction = just touching, not reacting
       if (reactionQuality.quality === 'NONE' || reactionQuality.quality === 'WEAK') {
         return 'IN_ZONE';
       }
       
-      // Good reaction but low confluence
       if (confluence.totalScore < 40) {
         return 'IN_ZONE';
       }
@@ -1248,20 +1187,17 @@ export const useMarketContextEngine = (
         return 'ANALYZING';
       }
       
-      // Strong confluence but check zone weight minimum
       if (confluence.totalScore >= 60 && confluence.zoneWeightPercentage < 50) {
-        return 'ANALYZING'; // Can't reach CONFIRMATION without zone weight
+        return 'ANALYZING';
       }
       
-      // Trend conflict
       if (!trendAligned) {
         return 'ANALYZING';
       }
       
-      // All gates passed
       if (confluence.totalScore >= 80 && confluence.zoneWeightPercentage >= 50 && trendAligned) {
         if (confluence.conflictSeverity === 'HIGH' || confluence.conflictSeverity === 'CRITICAL') {
-          return 'ANALYZING'; // High conflict prevents HIGH_CONFLUENCE
+          return 'ANALYZING';
         }
         return 'HIGH_CONFLUENCE';
       }
@@ -1283,7 +1219,6 @@ export const useMarketContextEngine = (
     const price = marketData.price;
     if (price <= 0) return;
     
-    // Update price history
     priceHistoryRef.current = [...priceHistoryRef.current.slice(-499), price];
     
     // ---- STEP 1: DATA QUALITY ----
@@ -1297,7 +1232,6 @@ export const useMarketContextEngine = (
     // ---- STEP 3: GATE 0 (EMA200) ----
     const gate0 = evaluateGate0(price, ema200, engineState.manualZone);
     
-    // Update manual zone with EMA200 conflict info
     let updatedManualZone = engineState.manualZone;
     if (updatedManualZone && ema200 !== null) {
       const priceAboveEma = price > ema200;
@@ -1321,7 +1255,6 @@ export const useMarketContextEngine = (
       marketData.recentTrades
     );
     
-    // Add manual zone to zones list
     const allZones = [...rawZones];
     if (updatedManualZone && updatedManualZone.zoneMin > 0 && updatedManualZone.zoneMax > 0) {
       allZones.push({
@@ -1382,12 +1315,10 @@ export const useMarketContextEngine = (
     // ---- STEP 12: PERSISTENCE TRACKING ----
     const ticksMap = new Map(consecutiveTicksRef.current);
     
-    // Determine provisional state for persistence
     const provisionalState = determineState(
       price, primary, confluence, gate0.trend, updatedManualZone, reactionQuality, dataQuality
     );
     
-    // Adaptive window: structure needs longer, flow needs shorter
     const persistenceWindow = 
       provisionalState === 'CONFIRMATION' || provisionalState === 'HIGH_CONFLUENCE'
         ? config.persistence.zoneWindow
@@ -1402,13 +1333,11 @@ export const useMarketContextEngine = (
     
     consecutiveTicksRef.current = ticksMap;
     
-    // Persistence met only if both state and direction have persisted
     const persistenceMet = persistenceResult.stateMet && persistenceResult.directionMet;
     
     // ---- STEP 13: FINAL STATE ----
     let finalState = provisionalState;
     
-    // If persistence not met, downgrade state
     if (!persistenceMet && (provisionalState === 'CONFIRMATION' || provisionalState === 'HIGH_CONFLUENCE')) {
       finalState = 'ANALYZING';
     }
@@ -1430,7 +1359,7 @@ export const useMarketContextEngine = (
       persistenceMet && 
       reactionMet &&
       ['CONFIRMATION', 'HIGH_CONFLUENCE'].includes(finalState) &&
-      dataQuality.overall >= 60; // Minimum data quality
+      dataQuality.overall >= 60;
     
     // ---- BUILD WARNINGS ----
     const warnings: string[] = [];
@@ -1454,7 +1383,7 @@ export const useMarketContextEngine = (
     const decision: MarketContextDecision = {
       state: finalState,
       contextScore: confluence.totalScore,
-      calibratedProbability: null, // Only if empirically backtested
+      calibratedProbability: null,
       confidence: confluence.totalScore >= 80 && persistenceMet && zoneWeightMet ? 'VERY_HIGH' :
                   confluence.totalScore >= 60 && persistenceMet ? 'HIGH' :
                   confluence.totalScore >= 40 ? 'MEDIUM' : 'LOW',
@@ -1476,7 +1405,6 @@ export const useMarketContextEngine = (
       warnings,
     };
     
-    // ---- UPDATE STATE HISTORY ----
     let stateHistory = engineState.stateHistory;
     if (finalState !== engineState.state) {
       stateHistory = [
@@ -1536,14 +1464,12 @@ export const useMarketContextEngine = (
     determineState,
   ]);
 
-  // ---- Trigger engine on data updates ----
   useEffect(() => {
     if (marketData.price > 0) {
       updateEngine();
     }
   }, [marketData.price, marketData.volumeDelta, marketData.buyersPercent, updateEngine]);
 
-  // ---- Convert to UI-compatible format ----
   const getUICompatibleSummary = useCallback(() => {
     const decision = engineState.decision;
     if (!decision) {
@@ -1575,7 +1501,6 @@ export const useMarketContextEngine = (
     const sellScore = sellFactors.reduce((sum, f) => sum + f.weight, 0);
     const totalScore = buyScore + sellScore + neutralFactors.reduce((sum, f) => sum + f.weight, 0);
     
-    // Determine verdict based on CONTEXTUAL rules, not vote counting
     let verdict: string;
     if (decision.state === 'WAITING') {
       verdict = 'MONITORING';
@@ -1588,7 +1513,7 @@ export const useMarketContextEngine = (
     } else if (decision.state === 'ANALYZING') {
       verdict = 'ANALYZING';
     } else if (decision.state === 'HIGH_CONFLUENCE' && decision.isTradeable) {
-      verdict = 'STRONG BUY'; // This will be adjusted by actual direction
+      verdict = 'STRONG BUY';
     } else if (decision.state === 'CONFIRMATION' && decision.isTradeable) {
       verdict = 'BUY';
     } else if (decision.confluence.conflictSeverity === 'CRITICAL') {

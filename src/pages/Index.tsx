@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useRefinedTradingData } from '../hooks/useRefinedTradingData';
 import { useMultiTimeframe } from '../hooks/useMultiTimeframe';
 import { 

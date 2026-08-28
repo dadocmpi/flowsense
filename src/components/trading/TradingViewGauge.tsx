@@ -95,7 +95,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
   selectedAsset,
   isLoading,
 }) => {
-  // Loading skeleton
   if (isLoading) {
     return (
       <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.08] p-7 h-full shadow-[0_25px_60px_rgba(0,0,0,0.9)] flex flex-col justify-between">
@@ -284,7 +283,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
         </div>
       </div>
 
-      {/* DEBUG LABEL */}
       <div className="mt-3 bg-black/40 border border-white/[0.06] rounded-xl px-3 py-2 font-mono text-[9px] z-10">
         <div className="flex items-center justify-between text-white/40 uppercase tracking-wider mb-1">
           <span className="text-amber-400 font-black">DEBUG · Smoothing Live</span>

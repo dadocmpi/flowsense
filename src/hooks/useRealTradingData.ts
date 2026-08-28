@@ -8,7 +8,7 @@ import {
   LiveTrade 
 } from '../types/trading';
 
-// Funções de Cálculo Técnico Real sobre série de preços
+// Real Technical Indicator Calculations on Price Series
 function calculateRSI(prices: number[], period = 14): number {
   if (prices.length < period + 1) return 50;
   let gains = 0;
@@ -68,17 +68,17 @@ export const useRealTradingData = (selectedSymbol: string) => {
     oscillators: [],
     movingAverages: [],
     orderFlowIndicators: [],
-    overallSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
-    oscillatorsSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
-    maSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
-    orderFlowSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRO' },
+    overallSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
+    oscillatorsSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
+    maSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
+    orderFlowSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
   });
 
   const priceHistoryRef = useRef<number[]>([]);
   const buyerVolRef = useRef<number>(0);
   const sellerVolRef = useRef<number>(0);
 
-  // 1. Carregar Candles Históricos Iniciais para Cálculos Precisos
+  // 1. Load Initial Historical Candles for Precise Calculations
   useEffect(() => {
     let isMounted = true;
 
@@ -94,7 +94,7 @@ export const useRealTradingData = (selectedSymbol: string) => {
           }
         }
       } catch (e) {
-        console.error("Erro ao carregar dados kline:", e);
+        console.error("Error loading kline data:", e);
       }
     }
 
@@ -105,11 +105,11 @@ export const useRealTradingData = (selectedSymbol: string) => {
     };
   }, [symbolConfig.binanceSymbol]);
 
-  // Recalcular TUDO a partir dos preços e fluxos
+  // Recalculate EVERYTHING from prices and flows
   const recalculateAnalysis = (currentPrice: number) => {
     const prices = [...priceHistoryRef.current, currentPrice];
     
-    // Osciladores Reais
+    // Real Oscillators
     const rsi = calculateRSI(prices, 14);
     const ema12 = calculateEMA(prices, 12);
     const ema26 = calculateEMA(prices, 26);
@@ -123,26 +123,26 @@ export const useRealTradingData = (selectedSymbol: string) => {
       {
         name: 'RSI (14)',
         value: rsi.toFixed(1),
-        action: rsi > 70 ? 'VENDA FORTE' : rsi > 60 ? 'VENDA' : rsi < 30 ? 'COMPRA FORTE' : rsi < 40 ? 'COMPRA' : 'NEUTRO'
+        action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL'
       },
       {
         name: 'MACD (12, 26)',
         value: macdVal.toFixed(2),
-        action: macdVal > 0 ? 'COMPRA' : 'VENDA'
+        action: macdVal > 0 ? 'BUY' : 'SELL'
       },
       {
-        name: 'Bands de Bollinger',
-        value: currentPrice > bbUpper ? 'Sobrecomprado' : currentPrice < bbLower ? 'Sobrevendido' : 'Dentro da Banda',
-        action: currentPrice > bbUpper ? 'VENDA' : currentPrice < bbLower ? 'COMPRA' : 'NEUTRO'
+        name: 'Bollinger Bands',
+        value: currentPrice > bbUpper ? 'Overbought' : currentPrice < bbLower ? 'Oversold' : 'Inside Band',
+        action: currentPrice > bbUpper ? 'SELL' : currentPrice < bbLower ? 'BUY' : 'NEUTRAL'
       },
       {
-        name: 'Momento (10)',
+        name: 'Momentum (10)',
         value: (currentPrice - (prices[prices.length - 10] || currentPrice)).toFixed(2),
-        action: currentPrice > (prices[prices.length - 10] || currentPrice) ? 'COMPRA' : 'VENDA'
+        action: currentPrice > (prices[prices.length - 10] || currentPrice) ? 'BUY' : 'SELL'
       }
     ];
 
-    // Médias Móveis Reais
+    // Real Moving Averages
     const ema10 = calculateEMA(prices, 10);
     const ema20 = calculateEMA(prices, 20);
     const ema50 = calculateEMA(prices, 50);
@@ -150,56 +150,58 @@ export const useRealTradingData = (selectedSymbol: string) => {
     const sma50 = calculateSMA(prices, 50);
 
     const movingAverages: IndicatorSignal[] = [
-      { name: 'EMA 10', value: ema10.toFixed(symbolConfig.precision), action: currentPrice > ema10 ? 'COMPRA' : 'VENDA' },
-      { name: 'EMA 20', value: ema20.toFixed(symbolConfig.precision), action: currentPrice > ema20 ? 'COMPRA' : 'VENDA' },
-      { name: 'EMA 50', value: ema50.toFixed(symbolConfig.precision), action: currentPrice > ema50 ? 'COMPRA FORTE' : 'VENDA FORTE' },
-      { name: 'SMA 50', value: sma50.toFixed(symbolConfig.precision), action: currentPrice > sma50 ? 'COMPRA' : 'VENDA' },
-      { name: 'EMA 200', value: ema200.toFixed(symbolConfig.precision), action: currentPrice > ema200 ? 'COMPRA FORTE' : 'VENDA FORTE' },
+      { name: 'EMA 10', value: ema10.toFixed(symbolConfig.precision), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
+      { name: 'EMA 20', value: ema20.toFixed(symbolConfig.precision), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
+      { name: 'EMA 50', value: ema50.toFixed(symbolConfig.precision), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
+      { name: 'SMA 50', value: sma50.toFixed(symbolConfig.precision), action: currentPrice > sma50 ? 'BUY' : 'SELL' },
+      { name: 'EMA 200', value: ema200.toFixed(symbolConfig.precision), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
     ];
 
-    // Order Flow Indicadores
+    // Order Flow Indicators
     const totVol = buyerVolRef.current + sellerVolRef.current || 1;
     const buyerRatio = (buyerVolRef.current / totVol) * 100;
     const delta = buyerVolRef.current - sellerVolRef.current;
 
     const orderFlowIndicators: IndicatorSignal[] = [
       {
-        name: 'Dominância de Compras',
+        name: 'Buy Dominance',
         value: `${buyerRatio.toFixed(1)}%`,
-        action: buyerRatio > 65 ? 'COMPRA FORTE' : buyerRatio > 52 ? 'COMPRA' : buyerRatio < 35 ? 'VENDA FORTE' : buyerRatio < 48 ? 'VENDA' : 'NEUTRO'
+        action: buyerRatio > 65 ? 'STRONG BUY' : buyerRatio > 52 ? 'BUY' : buyerRatio < 35 ? 'STRONG SELL' : buyerRatio < 48 ? 'SELL' : 'NEUTRAL'
       },
       {
-        name: 'Delta de Volume Instantâneo',
+        name: 'Instant Volume Delta',
         value: `${delta >= 0 ? '+' : ''}${delta.toFixed(2)}`,
-        action: delta > 5 ? 'COMPRA FORTE' : delta > 0 ? 'COMPRA' : delta < -5 ? 'VENDA FORTE' : delta < 0 ? 'VENDA' : 'NEUTRO'
+        action: delta > 5 ? 'STRONG BUY' : delta > 0 ? 'BUY' : delta < -5 ? 'STRONG SELL' : delta < 0 ? 'SELL' : 'NEUTRAL'
       },
       {
-        name: 'Pressão Institucional',
-        value: Math.abs(delta) > 10 ? 'Absorção Ativa' : 'Equilibrado',
-        action: delta > 10 ? 'COMPRA FORTE' : delta < -10 ? 'VENDA FORTE' : 'NEUTRO'
+        name: 'Institutional Pressure',
+        value: Math.abs(delta) > 10 ? 'Active Absorption' : 'Balanced',
+        action: delta > 10 ? 'STRONG BUY' : delta < -10 ? 'STRONG SELL' : 'NEUTRAL'
       }
     ];
 
-    // Gerar Resumos para a Bússola
+    // Build Summaries for the Compass
     const buildSummary = (list: IndicatorSignal[]): IndicatorSummary => {
       let buy = 0;
       let neutral = 0;
       let sell = 0;
 
       list.forEach(i => {
-        if (i.action.includes('COMPRA')) buy += i.action.includes('FORTE') ? 2 : 1;
-        else if (i.action.includes('VENDA')) sell += i.action.includes('FORTE') ? 2 : 1;
+        if (i.action.includes('STRONG BUY')) buy += i.action.includes('FORTE') ? 2 : 2;
+        else if (i.action.includes('BUY')) buy += 1;
+        else if (i.action.includes('STRONG SELL')) sell += 2;
+        else if (i.action.includes('SELL')) sell += 1;
         else neutral += 1;
       });
 
       const total = buy + neutral + sell || 1;
       const score = Math.round((buy / total) * 100);
 
-      let verdict: IndicatorSummary['verdict'] = 'NEUTRO';
-      if (score >= 75) verdict = 'COMPRA FORTE';
-      else if (score >= 55) verdict = 'COMPRA';
-      else if (score <= 25) verdict = 'VENDA FORTE';
-      else if (score <= 45) verdict = 'VENDA';
+      let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
+      if (score >= 75) verdict = 'STRONG BUY';
+      else if (score >= 55) verdict = 'BUY';
+      else if (score <= 25) verdict = 'STRONG SELL';
+      else if (score <= 45) verdict = 'SELL';
 
       return {
         buyCount: buy,
@@ -231,7 +233,7 @@ export const useRealTradingData = (selectedSymbol: string) => {
     }));
   };
 
-  // 2. Conexão WebSocket com Binance (Ticker + Book de Ofertas + Trades)
+  // 2. WebSocket Connection to Binance (Ticker + Order Book + Trades)
   useEffect(() => {
     buyerVolRef.current = 0;
     sellerVolRef.current = 0;
@@ -243,7 +245,7 @@ export const useRealTradingData = (selectedSymbol: string) => {
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
 
-      // Evento de Ticker (Preço atual e estatísticas 24h)
+      // Ticker Event (Current price and 24h stats)
       if (msg.e === '24hrTicker') {
         const curPrice = parseFloat(msg.c);
         const change = parseFloat(msg.P);
@@ -262,7 +264,7 @@ export const useRealTradingData = (selectedSymbol: string) => {
         recalculateAnalysis(curPrice);
       }
 
-      // Evento de Livro de Ofertas (Depth 10)
+      // Order Book Event (Depth 10)
       if (msg.bids && msg.asks) {
         let maxVol = 0;
         const newBids: RealOrderBookLevel[] = msg.bids.map((b: string[]) => {
@@ -291,7 +293,7 @@ export const useRealTradingData = (selectedSymbol: string) => {
         }));
       }
 
-      // Evento de Trades executados ao vivo (aggTrade)
+      // Live Trades Event (aggTrade)
       if (msg.e === 'aggTrade') {
         const p = parseFloat(msg.p);
         const q = parseFloat(msg.q);

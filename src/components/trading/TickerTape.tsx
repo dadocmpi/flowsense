@@ -22,9 +22,9 @@ export const TickerTape: React.FC<TickerTapeProps> = ({
 }) => {
   return (
     <div className="bg-[#07080a] border-b border-white/[0.04] px-6 py-2.5 flex flex-wrap items-center justify-between text-xs font-mono">
-      {/* Seletor de Ativos Principais */}
+      {/* Asset Selectors */}
       <div className="flex items-center space-x-2">
-        <span className="text-[9px] text-white/30 font-sans uppercase font-bold tracking-widest mr-2">Ativos:</span>
+        <span className="text-[9px] text-white/30 font-sans uppercase font-bold tracking-widest mr-2">Assets:</span>
         {SUPPORTED_SYMBOLS.map(item => (
           <button
             key={item.symbol}
@@ -40,20 +40,20 @@ export const TickerTape: React.FC<TickerTapeProps> = ({
         ))}
       </div>
 
-      {/* Estatísticas 24h em Tempo Real */}
+      {/* 24h Stats in Real Time */}
       <div className="flex items-center space-x-6 text-[11px]">
         <div>
-          <span className="text-white/30 text-[9px] block">24H VAR%</span>
+          <span className="text-white/30 text-[9px] block">24H CHG%</span>
           <span className={`font-bold ${priceChange24h >= 0 ? 'text-[#26a69a]' : 'text-[#ef5350]'}`}>
             {priceChange24h >= 0 ? '+' : ''}{priceChange24h.toFixed(2)}%
           </span>
         </div>
         <div>
-          <span className="text-white/30 text-[9px] block">MÁXIMA 24H</span>
+          <span className="text-white/30 text-[9px] block">24H HIGH</span>
           <span className="text-white/80 font-bold">{high24h > 0 ? high24h.toFixed(2) : '--'}</span>
         </div>
         <div>
-          <span className="text-white/30 text-[9px] block">MÍNIMA 24H</span>
+          <span className="text-white/30 text-[9px] block">24H LOW</span>
           <span className="text-white/80 font-bold">{low24h > 0 ? low24h.toFixed(2) : '--'}</span>
         </div>
         <div>

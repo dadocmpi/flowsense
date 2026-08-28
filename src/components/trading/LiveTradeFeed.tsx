@@ -10,14 +10,14 @@ export const LiveTradeFeed: React.FC<LiveTradeFeedProps> = ({ trades, precision 
   return (
     <div className="bg-[#0a0b0d] rounded-2xl border border-white/[0.04] p-4 flex flex-col h-full font-mono text-[11px]">
       <div className="border-b border-white/[0.04] pb-2 mb-2 flex justify-between items-center font-sans">
-        <h3 className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Negócios ao Vivo (Time & Trades)</h3>
+        <h3 className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Live Trades (Time & Trades)</h3>
         <span className="w-2 h-2 rounded-full bg-[#26a69a] animate-ping" />
       </div>
 
       <div className="grid grid-cols-3 text-[9px] text-white/30 uppercase tracking-wider mb-2 px-1">
-        <span>Horário</span>
-        <span className="text-center">Preço</span>
-        <span className="text-right">Quantidade</span>
+        <span>Time</span>
+        <span className="text-center">Price</span>
+        <span className="text-right">Qty</span>
       </div>
 
       <div className="space-y-1 overflow-y-auto max-h-[220px] pr-1">

@@ -13,8 +13,8 @@ interface AssetSelectorProps {
 }
 
 const ASSETS = [
-  { symbol: 'XAU/USD', name: 'Gold (Ouro)', category: 'COMMODITIES' },
-  { symbol: 'OIL/USD', name: 'Crude Oil (Petróleo)', category: 'COMMODITIES' },
+  { symbol: 'XAU/USD', name: 'Gold', category: 'COMMODITIES' },
+  { symbol: 'OIL/USD', name: 'Crude Oil', category: 'COMMODITIES' },
 ];
 
 export const AssetSelector: React.FC<AssetSelectorProps> = ({ selectedAsset, onSelect }) => {

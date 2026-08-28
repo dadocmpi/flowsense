@@ -29,7 +29,6 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
 
     const container = chartContainerRef.current;
     
-    // Criar o gráfico com opções robustas
     const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: '#000000' },
@@ -56,7 +55,6 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
     });
 
     try {
-      // Usando o método padrão e seguro addCandlestickSeries
       const candlestickSeries = chart.addCandlestickSeries({
         upColor: '#26a69a',
         downColor: '#ef5350',
@@ -65,17 +63,15 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
         wickDownColor: '#ef5350',
       });
 
-      // Gerar e formatar dados
       const data = generateMockCandles(100) as CandlestickData<Time>[];
       candlestickSeries.setData(data);
       
       chartRef.current = chart;
       seriesRef.current = candlestickSeries;
 
-      // Ajustar o conteúdo inicial
       chart.timeScale().fitContent();
     } catch (err) {
-      console.error("Erro ao inicializar série do gráfico:", err);
+      console.error("Error initializing chart series:", err);
     }
 
     const handleResize = () => {
@@ -118,11 +114,11 @@ export const MainChart: React.FC<MainChartProps> = ({ asset, timeframe }) => {
       <div className="h-24 border-t border-white/5 p-4 bg-white/[0.01]">
         <div className="flex items-start space-x-3">
           <div className="px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] font-bold text-amber-500 uppercase tracking-tighter">
-            IA Veredito
+            AI Verdict
           </div>
           <p className="text-xs text-white/70 leading-relaxed">
-            Monitorando fluxo institucional em tempo real. Dados via WebSocket ativos. 
-            Análise de volume detectando absorção passiva em níveis de suporte.
+            Monitoring institutional flow in real time. WebSocket data active. 
+            Volume analysis detecting passive absorption at support levels.
           </p>
         </div>
       </div>

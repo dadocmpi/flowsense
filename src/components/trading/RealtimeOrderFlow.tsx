@@ -8,7 +8,6 @@ interface RealtimeOrderFlowProps {
 }
 
 export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, precision }) => {
-  // Loading state
   if (data.isLoading || !data.recentTrades?.length) {
     return (
       <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.08] p-7 shadow-[0_25px_60px_rgba(0,0,0,0.9)] flex flex-col space-y-6">
@@ -98,7 +97,7 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
       {/* Bottom Grid: Time & Trades + Depth */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-2">
         
-        {/* Time & Trades */}
+        {/* Settled Trades */}
         <div className="lg:col-span-6 bg-white/[0.02] border border-white/[0.05] p-5 rounded-2xl flex flex-col font-mono text-xs">
           <div className="flex justify-between items-center border-b border-white/[0.06] pb-2 mb-3">
             <span className="text-[10px] font-black text-white/50 uppercase tracking-widest font-sans">
@@ -108,7 +107,7 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
           </div>
 
           <div className="grid grid-cols-3 text-[9px] text-white/30 uppercase tracking-wider mb-2">
-            <span>STATUS / TIME</span>
+            <span>TIME</span>
             <span className="text-center">PRICE ($)</span>
             <span className="text-right">SIZE</span>
           </div>
