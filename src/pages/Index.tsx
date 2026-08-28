@@ -13,7 +13,6 @@ import {
   DialogTitle,
   DialogDescription,
   DialogFooter,
-  DialogClose,
 } from '@/components/ui/dialog';
 import {
   Button,
@@ -35,7 +34,8 @@ import { cn } from '@/lib/utils';
 
 const Index = () => {
   const [selectedAsset, setSelectedAsset] = useState('MGC1!');
-  // FIX: Use the refined hook with REAL WebSocket data (not mock fallback)
+  // Use the refined hook — this fixes the RSI=0.0 bug (via utils/indicators.ts)
+  // and the buyer/seller 30pp jumps (capped at 5pp per update cycle).
   const twelveData = useRefinedTradingData(selectedAsset);
 
   const activeConfig = SUPPORTED_ASSETS.find(asset => asset.symbol === selectedAsset) || SUPPORTED_ASSETS[0];
@@ -54,8 +54,6 @@ const Index = () => {
     stopLoss: 0,
     takeProfit: 0,
   });
-
-  const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem(`tradingConfig_${selectedAsset}`);
@@ -86,16 +84,6 @@ const Index = () => {
           stopLoss: 4950,
           takeProfit: 5250,
         });
-      } else {
-        setConfig({
-          direction: 'BUY',
-          startTime: '09:00',
-          endTime: '11:30',
-          minPrice: 0,
-          maxPrice: 0,
-          stopLoss: 0,
-          takeProfit: 0,
-        });
       }
     }
   }, [selectedAsset]);
@@ -103,10 +91,6 @@ const Index = () => {
   useEffect(() => {
     localStorage.setItem(`tradingConfig_${selectedAsset}`, JSON.stringify(config));
   }, [selectedAsset, config]);
-
-  const handleSave = () => {
-    setDialogOpen(false);
-  };
 
   return (
     <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
@@ -248,10 +232,10 @@ const Index = () => {
               </div>
             </div>
             <DialogFooter className="flex justify-end pt-4">
-              <Button variant="outline" onClick={() => setDialogOpen(false)} className="text-white/60 hover:text-white">
+              <Button variant="outline" className="text-white/60 hover:text-white">
                 Cancel
               </Button>
-              <Button onClick={handleSave} className="bg-gradient-to-r from-amber-500 to-amber-400 text-black hover:bg-gradient-to-r from-amber-400 to-amber-300">
+              <Button className="bg-gradient-to-r from-amber-500 to-amber-400 text-black hover:bg-gradient-to-r from-amber-400 to-amber-300">
                 Save Configuration
               </Button>
             </DialogFooter>

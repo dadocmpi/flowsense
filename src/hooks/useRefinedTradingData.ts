@@ -6,49 +6,13 @@ import {
   IndicatorSummary, 
   OrderBookLevel, 
   TradeFeedItem,
-  RealOrderBookLevel,
-  LiveTrade,
 } from '../types/trading';
-
-// ---- Technical Indicator Calculations ----
-function calculateRSI(prices: number[], period = 14): number {
-  if (prices.length < period + 1) return 50;
-  let gains = 0;
-  let losses = 0;
-
-  for (let i = prices.length - period; i < prices.length; i++) {
-    const diff = prices[i] - prices[i - 1];
-    if (diff >= 0) gains += diff;
-    else losses -= diff;
-  }
-
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
-
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
-}
-
-function calculateEMA(prices: number[], period: number): number {
-  if (prices.length === 0) return 0;
-  if (prices.length < period) return prices[prices.length - 1];
-
-  const k = 2 / (period + 1);
-  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
-
-  for (let i = period; i < prices.length; i++) {
-    ema = prices[i] * k + ema * (1 - k);
-  }
-
-  return ema;
-}
-
-function calculateSMA(prices: number[], period: number): number {
-  if (prices.length < period) return prices[prices.length - 1] || 0;
-  const slice = prices.slice(prices.length - period);
-  return slice.reduce((a, b) => a + b, 0) / period;
-}
+import { 
+  calculateRSI, 
+  calculateEMA, 
+  calculateSMA, 
+  calculateBollingerPosition 
+} from '../utils/indicators';
 
 // ---- Signal Builder ----
 function buildIndicatorSignals(
@@ -64,7 +28,7 @@ function buildIndicatorSignals(
   const movingAverages: IndicatorSignal[] = [];
   const orderFlowIndicators: IndicatorSignal[] = [];
 
-  // RSI
+  // RSI — using the robust version that never returns 0.0 or 100.0
   const rsi = calculateRSI(prices, 14);
   oscillators.push({
     name: 'RSI (14)',
@@ -114,7 +78,6 @@ function buildIndicatorSignals(
     emaValues.push({ period, value: ema, action: currentPrice > ema ? 'BUY' : 'SELL' });
   });
 
-  // Add individual EMAs
   emaValues.forEach(({ period, value, action }) => {
     const label = period === 200 ? 'EMA 200 (Institutional Base)' :
                   period === 100 ? 'EMA 100 (Major Trend)' :
@@ -154,7 +117,6 @@ function buildIndicatorSignals(
   return { oscillators, movingAverages, orderFlowIndicators };
 }
 
-// ---- Summary Builder ----
 function buildSummary(signals: IndicatorSignal[]): IndicatorSummary {
   let buy = 0;
   let neutral = 0;
@@ -180,7 +142,6 @@ function buildSummary(signals: IndicatorSignal[]): IndicatorSummary {
   return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
 }
 
-// ---- Main Hook ----
 export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   const [state, setState] = useState<TwelveDataState>({
     symbol: 'MGC1!',
@@ -211,19 +172,23 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   });
 
   const priceHistoryRef = useRef<number[]>([]);
-  
-  // Volume tracking with persistence for anti-flicker
   const volumeAccumulatorRef = useRef<{ buyers: number; sellers: number }>({ buyers: 0, sellers: 0 });
   const tradeHistoryRef = useRef<{ price: number; size: number; isBuyer: boolean; time: number }[]>([]);
   const lastTradeTimeRef = useRef<number>(0);
   
-  // WebSocket refs
+  // SMOOTHED buyers/sellers percentage — these are what the UI displays
+  const smoothedBuyersPctRef = useRef<number>(50);
+  const smoothedSellersPctRef = useRef<number>(50);
+  const smoothedDeltaRef = useRef<number>(0);
+  
+  // Maximum allowed change per update cycle (percentage points)
+  const MAX_PCT_CHANGE_PER_UPDATE = 5;
+  
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
 
-  // Get asset config
   const activeConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
   const precision = activeConfig.precision;
   const binanceSymbol = activeConfig.binanceSymbol || 'PAXGUSDT';
@@ -234,7 +199,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
 
     const loadInitialData = async () => {
       try {
-        // Fetch historical klines
         const response = await fetch(
           `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1m&limit=200`
         );
@@ -256,7 +220,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
           const maSummary = buildSummary(movingAverages);
           const orderFlowSummary = buildSummary(orderFlowIndicators);
 
-          // Get 24h ticker data
           try {
             const tickerRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`);
             const tickerData = await tickerRes.json();
@@ -281,10 +244,9 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
               orderFlowSummary,
             }));
           } catch {
-            // Fallback without 24h data
             setState(prev => ({
               ...prev,
-              symbol: selectedSymbol,
+              symbol: selectedAsset,
               price: currentPrice,
               high: Math.max(...closes.slice(-60)),
               low: Math.min(...closes.slice(-60)),
@@ -302,7 +264,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
       } catch (err) {
         console.error('Error loading initial data:', err);
         
-        // Generate fallback data
         if (isMounted) {
           const fallback = Array.from({ length: 100 }, (_, i) => 
             2950 + Math.sin(i / 5) * 5 + (Math.random() - 0.5) * 2 + i * 0.05
@@ -344,7 +305,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
 
   // WebSocket connection
   useEffect(() => {
-    // Clean up existing connection
     if (wsRef.current) {
       wsRef.current.close();
     }
@@ -355,7 +315,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     let reconnectDelay = 1000;
 
     const connectWebSocket = () => {
-      // Use combined streams for efficiency
       const streams = [
         `${binanceSymbol.toLowerCase()}@ticker`,
         `${binanceSymbol.toLowerCase()}@depth10@100ms`,
@@ -376,15 +335,11 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
         try {
           const msg = JSON.parse(event.data);
           
-          // Handle different message types
           if (msg.e === '24hrTicker') {
-            // 24hr ticker update
             const newPrice = parseFloat(msg.c);
             
-            // Update price history (keep last 500)
             priceHistoryRef.current = [...priceHistoryRef.current.slice(-499), newPrice];
             
-            // Recalculate indicators
             const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(
               priceHistoryRef.current,
               newPrice,
@@ -413,7 +368,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
           }
           
           else if (msg.bids && msg.asks) {
-            // Depth update
             let maxSize = 0;
             
             const newBids: OrderBookLevel[] = msg.bids.slice(0, 10).map((b: string[], idx: number) => {
@@ -438,7 +392,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
               };
             });
             
-            // Calculate percentages
             const finalBids = newBids.map(b => ({
               ...b,
               percentage: Math.min(100, (b.size / (maxSize || 1)) * 100),
@@ -457,31 +410,25 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
           }
           
           else if (msg.e === 'aggTrade') {
-            // Aggregate trade - actual executed trade
             const tradePrice = parseFloat(msg.p);
             const tradeSize = parseFloat(msg.q);
-            const isBuyerMaker = msg.m; // true = sell order was taker, false = buy order was taker
+            const isBuyerMaker = msg.m;
             
-            // Update volume accumulator (with decay to prevent stale data)
             const now = Date.now();
             const timeSinceLastTrade = now - lastTradeTimeRef.current;
             
-            // If more than 5 seconds since last trade, reset accumulator
             if (timeSinceLastTrade > 5000) {
               volumeAccumulatorRef.current = { buyers: 0, sellers: 0 };
             }
             
             lastTradeTimeRef.current = now;
             
-            // isBuyerMaker = true means the aggressor was a seller (sell order filled)
-            // isBuyerMaker = false means the aggressor was a buyer (buy order filled)
             if (isBuyerMaker) {
               volumeAccumulatorRef.current.sellers += tradeSize;
             } else {
               volumeAccumulatorRef.current.buyers += tradeSize;
             }
             
-            // Add to trade history
             const time = new Date(msg.T);
             const timeStr = time.toTimeString().split(' ')[0] + '.' + Math.floor(time.getMilliseconds() / 100);
             
@@ -494,7 +441,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
               aggressor: isBuyerMaker ? 'SELL_AGGR' : 'BUY_AGGR',
             };
             
-            // Update trade history (keep last 50)
             tradeHistoryRef.current = [...tradeHistoryRef.current.slice(-49), {
               price: tradePrice,
               size: tradeSize,
@@ -502,43 +448,54 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
               time: now,
             }];
             
-            // Calculate buyers/sellers percentage with smoothing
+            // Raw (unsmoothed) percentages from the accumulator
             const totalVol = volumeAccumulatorRef.current.buyers + volumeAccumulatorRef.current.sellers || 1;
-            const buyersPct = Math.round((volumeAccumulatorRef.current.buyers / totalVol) * 100);
-            const sellersPct = 100 - buyersPct;
+            const rawBuyersPct = Math.round((volumeAccumulatorRef.current.buyers / totalVol) * 100);
+            const rawSellersPct = 100 - rawBuyersPct;
+            const rawDelta = Math.round(volumeAccumulatorRef.current.buyers - volumeAccumulatorRef.current.sellers);
             
-            // Calculate volume delta with persistence
-            const delta = Math.round(volumeAccumulatorRef.current.buyers - volumeAccumulatorRef.current.sellers);
+            // APPLY CHANGE-CAP SMOOTHING
+            // The UI is only ever fed the smoothed value, not the raw one.
+            // Max change per update = MAX_PCT_CHANGE_PER_UPDATE percentage points.
+            const buyersDelta = rawBuyersPct - smoothedBuyersPctRef.current;
+            const clampedBuyersDelta = Math.max(-MAX_PCT_CHANGE_PER_UPDATE, Math.min(MAX_PCT_CHANGE_PER_UPDATE, buyersDelta));
+            const newSmoothedBuyersPct = Math.round(smoothedBuyersPctRef.current + clampedBuyersDelta);
+            const newSmoothedSellersPct = 100 - newSmoothedBuyersPct;
             
-            // Determine institutional pressure
+            // Same for delta
+            const deltaDelta = rawDelta - smoothedDeltaRef.current;
+            const clampedDelta = Math.max(-50, Math.min(50, deltaDelta));
+            const newSmoothedDelta = Math.round(smoothedDeltaRef.current + clampedDelta);
+            
+            smoothedBuyersPctRef.current = newSmoothedBuyersPct;
+            smoothedSellersPctRef.current = newSmoothedSellersPct;
+            smoothedDeltaRef.current = newSmoothedDelta;
+            
+            // Institutional pressure from smoothed delta
             let instPressure: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' = 'LOW';
-            const absDelta = Math.abs(delta);
+            const absDelta = Math.abs(newSmoothedDelta);
             if (absDelta > 500) instPressure = 'EXTREME';
             else if (absDelta > 200) instPressure = 'HIGH';
             else if (absDelta > 50) instPressure = 'MEDIUM';
             
             setState(prev => ({
               ...prev,
-              buyersPercent: buyersPct,
-              sellersPercent: sellersPct,
-              volumeDelta: delta,
+              buyersPercent: newSmoothedBuyersPct,    // SMOOTHED
+              sellersPercent: newSmoothedSellersPct,  // SMOOTHED
+              volumeDelta: newSmoothedDelta,          // SMOOTHED
               institutionalPressure: instPressure,
               recentTrades: [trade, ...prev.recentTrades.slice(0, 49)],
             }));
           }
         } catch (e) {
-          // Silent fail on parse error
+          // Silent fail
         }
       };
 
-      ws.onerror = () => {
-        // Will trigger onclose
-      };
-
+      ws.onerror = () => {};
       ws.onclose = () => {
         setState(prev => ({ ...prev, isLive: false }));
         
-        // Attempt reconnection
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttemptsRef.current++;

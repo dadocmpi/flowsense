@@ -1,21 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { IndicatorSummary } from '../../types/trading';
-import { SmoothedSignal, DisplayVerdict } from '../../types/signalEngine';
 import { cn } from '@/lib/utils';
+import { useCompassHysteresis, CompassVerdict } from '../../hooks/useCompassHysteresis';
 
 interface TradingViewGaugeProps {
-  // Existing props (for fallback / raw view)
   overallSummary: IndicatorSummary;
   oscillatorsSummary: IndicatorSummary;
   maSummary: IndicatorSummary;
   orderFlowSummary: IndicatorSummary;
   selectedAsset: string;
-  // NEW: smoothed signal from Layer 4
-  smoothedSignal?: SmoothedSignal | null;
 }
 
-const VERDICT_COLORS: Record<DisplayVerdict, { primary: string; bg: string; glow: string }> = {
+const VERDICT_COLORS: Record<CompassVerdict, { primary: string; bg: string; glow: string }> = {
   STRONG_BUY: { primary: '#26a69a', bg: 'bg-[#26a69a]/15', glow: 'from-[#26a69a]/30' },
   BUY: { primary: '#4db6ac', bg: 'bg-[#26a69a]/10', glow: 'from-[#4db6ac]/20' },
   NEUTRAL: { primary: '#f59e0b', bg: 'bg-amber-500/10', glow: 'from-amber-500/15' },
@@ -23,18 +20,23 @@ const VERDICT_COLORS: Record<DisplayVerdict, { primary: string; bg: string; glow
   STRONG_SELL: { primary: '#ef5350', bg: 'bg-[#ef5350]/15', glow: 'from-[#ef5350]/30' },
 };
 
+// Map raw summary verdict string to CompassVerdict enum
+function summaryToVerdict(v: string): CompassVerdict {
+  if (v === 'STRONG BUY') return 'STRONG_BUY';
+  if (v === 'BUY') return 'BUY';
+  if (v === 'SELL') return 'SELL';
+  if (v === 'STRONG SELL') return 'STRONG_SELL';
+  return 'NEUTRAL';
+}
+
 export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
   overallSummary,
   oscillatorsSummary,
   maSummary,
   orderFlowSummary,
   selectedAsset,
-  smoothedSignal,
 }) => {
   const [activeTab, setActiveTab] = useState<'overall' | 'oscillators' | 'ma' | 'orderflow'>('overall');
-  
-  // Use smoothed signal if available, else fall back to raw counts
-  const usingSmoothed = smoothedSignal !== null && smoothedSignal !== undefined;
   
   const currentSummary = 
     activeTab === 'oscillators' ? oscillatorsSummary :
@@ -42,36 +44,16 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
     activeTab === 'orderflow' ? orderFlowSummary :
     overallSummary;
   
-  // Verdict + score resolution
-  let displayVerdict: DisplayVerdict;
-  let score: number;
-  let confidence: number;
+  // #2: Apply hysteresis — the verdict the UI renders is gated
+  const hysteresis = useCompassHysteresis(currentSummary, 0.25);
   
-  if (usingSmoothed && smoothedSignal) {
-    // USE LAYER 4 OUTPUT
-    displayVerdict = smoothedSignal.displayVerdict;
-    score = smoothedSignal.compositeScore; // -100..+100
-    confidence = smoothedSignal.confidence; // 0..100
-  } else {
-    // FALLBACK to old vote-counting
-    displayVerdict = (currentSummary.verdict === 'STRONG BUY' ? 'STRONG_BUY' :
-                      currentSummary.verdict === 'BUY' ? 'BUY' :
-                      currentSummary.verdict === 'SELL' ? 'SELL' :
-                      currentSummary.verdict === 'STRONG SELL' ? 'STRONG_SELL' :
-                      'NEUTRAL') as DisplayVerdict;
-    // Convert old 0..100 score to -100..+100
-    score = currentSummary.score - 50;
-    confidence = 50; // No smoothing = no confidence
-  }
+  const colors = VERDICT_COLORS[hysteresis.displayedVerdict];
   
-  const colors = VERDICT_COLORS[displayVerdict];
-  
-  // Animate needle angle (smooth, gradual)
-  const targetAngle = -90 + ((score + 100) / 200) * 180; // -90..+90
+  // Animate needle angle from the SMOOTHED score
+  const targetAngle = -90 + ((hysteresis.displayedScore + 100) / 200) * 180;
   const [needleAngle, setNeedleAngle] = useState(targetAngle);
   
   useEffect(() => {
-    // Smooth animation toward target — visual only, not the data smoothing
     const id = requestAnimationFrame(() => {
       setNeedleAngle(prev => {
         const diff = targetAngle - prev;
@@ -112,28 +94,29 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
     return { id: i, x1, y1, x2, y2, color, isMajor };
   });
 
-  const formatVerdict = (v: DisplayVerdict): string => {
+  const formatVerdict = (v: CompassVerdict): string => {
     return v.replace('_', ' ');
   };
+
+  // Helper: how divergent the two scores are (for the debug label)
+  const divergence = Math.abs(hysteresis.rawScore - hysteresis.displayedScore);
 
   return (
     <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.08] p-7 flex flex-col justify-between h-full shadow-[0_25px_60px_rgba(0,0,0,0.9)] relative overflow-hidden backdrop-blur-2xl select-none">
       
       <div className={cn("absolute -top-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-radial rounded-full blur-3xl pointer-events-none transition-all duration-700 bg-gradient-to-b", colors.glow)} />
 
-      {/* Header — show data source badge */}
+      {/* Header */}
       <div className="flex items-center justify-between border-b border-white/[0.06] pb-4 mb-2 z-10">
         <div className="flex items-center space-x-2">
           <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
           <span className="text-[10px] font-black text-white/70 uppercase tracking-[0.2em]">CONFLUENCE COMPASS</span>
-          {usingSmoothed && (
-            <span 
-              className="text-[8px] font-black text-[#26a69a] bg-[#26a69a]/10 border border-[#26a69a]/30 px-1.5 py-0.5 rounded uppercase tracking-wider"
-              title="This gauge consumes a smoothed, hysteresis-gated signal from Layer 4 of the signal engine. Other panels below show raw live data and may temporarily disagree."
-            >
-              SMOOTHED
-            </span>
-          )}
+          <span 
+            className="text-[8px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded uppercase tracking-wider"
+            title="This gauge consumes a smoothed, hysteresis-gated signal. Other panels below show raw live data and may temporarily disagree."
+          >
+            SMOOTHED
+          </span>
         </div>
         <div className="flex bg-white/[0.03] p-1 rounded-xl border border-white/[0.06] space-x-1">
           {[
@@ -188,7 +171,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
             ))}
           </svg>
 
-          {/* Needle with spring animation (gradual movement, not snap) */}
           <motion.div
             className="absolute bottom-2 left-1/2 -ml-[3px] w-1.5 h-32 origin-bottom flex flex-col justify-start items-center z-30 pointer-events-none"
             animate={{ rotate: needleAngle }}
@@ -198,13 +180,11 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
             <div className="w-[2.5px] h-[90px] bg-gradient-to-t from-amber-500/20 via-amber-400/90 to-amber-300" />
           </motion.div>
 
-          {/* Pivot Center */}
           <div className="absolute -bottom-2 w-10 h-10 rounded-full bg-[#07080a] border-2 border-amber-400 z-40 flex items-center justify-center shadow-[0_0_20px_rgba(245,158,11,0.6)]">
             <div className="w-3.5 h-3.5 rounded-full bg-amber-400 animate-pulse" />
           </div>
         </div>
 
-        {/* Level Badges */}
         <div className="w-full grid grid-cols-5 text-center text-[8px] font-black font-mono tracking-wider mt-5 gap-1">
           <span className="text-[#ef5350] bg-[#ef5350]/10 py-1 rounded-md border border-[#ef5350]/20">STRONG SELL</span>
           <span className="text-[#e57373] bg-[#e57373]/10 py-1 rounded-md border border-[#e57373]/20">SELL</span>
@@ -213,71 +193,81 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
           <span className="text-[#26a69a] bg-[#26a69a]/10 py-1 rounded-md border border-[#26a69a]/20">STRONG BUY</span>
         </div>
 
-        {/* Verdict Box */}
         <div className={cn("mt-6 px-8 py-3.5 rounded-2xl border backdrop-blur-xl transition-all text-center w-full", colors.bg)}>
           <span 
             className="text-2xl font-black tracking-widest block drop-shadow-md uppercase"
             style={{ color: colors.primary }}
           >
-            {formatVerdict(displayVerdict)}
+            {formatVerdict(hysteresis.displayedVerdict)}
           </span>
-          {usingSmoothed && (
-            <div className="flex items-center justify-center gap-2 mt-2 text-[9px] font-bold text-white/50 uppercase tracking-wider">
-              <span>Confidence: {confidence}%</span>
-              {smoothedSignal?.quietZoneActive && (
-                <span className="text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
-                  QUIET ZONE
-                </span>
-              )}
-              {smoothedSignal?.conflictDetected && (
-                <span className="text-orange-400 bg-orange-500/10 border border-orange-500/30 px-1.5 py-0.5 rounded">
-                  CONFLICT
-                </span>
-              )}
-            </div>
-          )}
+          <div className="flex items-center justify-center gap-2 mt-2 text-[9px] font-bold text-white/50 uppercase tracking-wider">
+            <span>Confirm: {hysteresis.confirmationCount}/5</span>
+            {hysteresis.candidateVerdict && hysteresis.candidateVerdict !== hysteresis.displayedVerdict && (
+              <span className="text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                → {formatVerdict(hysteresis.candidateVerdict)}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Score Counters — show different fields when smoothed */}
+      {/* Score Counters */}
       <div className="grid grid-cols-3 gap-3 bg-white/[0.02] border border-white/[0.05] p-4 rounded-2xl z-10">
-        {usingSmoothed && smoothedSignal ? (
-          <>
-            <div className="text-center">
-              <span className="text-[9px] font-black text-[#ef5350] block uppercase tracking-wider">MACRO</span>
-              <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">
-                {smoothedSignal.macroScore > 0 ? '+' : ''}{smoothedSignal.macroScore}
-              </span>
-            </div>
-            <div className="text-center border-x border-white/[0.06]">
-              <span className="text-[9px] font-black text-amber-400 block uppercase tracking-wider">MTF</span>
-              <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">
-                {smoothedSignal.mtfScore > 0 ? '+' : ''}{smoothedSignal.mtfScore}
-              </span>
-            </div>
-            <div className="text-center">
-              <span className="text-[9px] font-black text-[#26a69a] block uppercase tracking-wider">SETUP</span>
-              <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">
-                {smoothedSignal.setupScore}
-              </span>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="text-center">
-              <span className="text-[9px] font-black text-[#ef5350] block uppercase tracking-wider">SELL SIGNALS</span>
-              <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.sellCount}</span>
-            </div>
-            <div className="text-center border-x border-white/[0.06]">
-              <span className="text-[9px] font-black text-amber-400 block uppercase tracking-wider">NEUTRAL</span>
-              <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.neutralCount}</span>
-            </div>
-            <div className="text-center">
-              <span className="text-[9px] font-black text-[#26a69a] block uppercase tracking-wider">BUY SIGNALS</span>
-              <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.buyCount}</span>
-            </div>
-          </>
-        )}
+        <div className="text-center">
+          <span className="text-[9px] font-black text-[#ef5350] block uppercase tracking-wider">SELL SIGNALS</span>
+          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.sellCount}</span>
+        </div>
+        <div className="text-center border-x border-white/[0.06]">
+          <span className="text-[9px] font-black text-amber-400 block uppercase tracking-wider">NEUTRAL</span>
+          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.neutralCount}</span>
+        </div>
+        <div className="text-center">
+          <span className="text-[9px] font-black text-[#26a69a] block uppercase tracking-wider">BUY SIGNALS</span>
+          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.buyCount}</span>
+        </div>
+      </div>
+
+      {/* DEBUG LABEL — proves smoothing + hysteresis are wired in */}
+      <div className="mt-3 bg-black/40 border border-white/[0.06] rounded-xl px-3 py-2 font-mono text-[9px] z-10">
+        <div className="flex items-center justify-between text-white/40 uppercase tracking-wider mb-1">
+          <span className="text-amber-400 font-black">DEBUG · Smoothing Live</span>
+          <span className={cn(
+            "font-black",
+            divergence > 0.1 ? "text-[#26a69a]" : "text-white/30"
+          )}>
+            Δ {divergence.toFixed(1)} pts
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-white/70">
+          <div className="flex justify-between">
+            <span className="text-white/30">RAW score</span>
+            <span className="text-orange-300 font-black">
+              {hysteresis.rawScore > 0 ? '+' : ''}{hysteresis.rawScore.toFixed(1)}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-white/30">RAW verdict</span>
+            <span className="text-orange-300 font-black">
+              {formatVerdict(hysteresis.rawVerdict)}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-white/30">SMOOTH score</span>
+            <span className="text-[#4db6ac] font-black">
+              {hysteresis.displayedScore > 0 ? '+' : ''}{hysteresis.displayedScore.toFixed(1)}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-white/30">SMOOTH verdict</span>
+            <span className="text-[#4db6ac] font-black">
+              {formatVerdict(hysteresis.displayedVerdict)}
+            </span>
+          </div>
+        </div>
+        <div className="mt-1.5 pt-1.5 border-t border-white/[0.04] flex items-center justify-between text-white/40">
+          <span>Agreement: <span className="text-white/80 font-black">{hysteresis.agreementCount}/{hysteresis.totalIndicators}</span></span>
+          <span>Cycles: <span className="text-white/80 font-black">{hysteresis.cyclesSinceLastFlip}</span></span>
+        </div>
       </div>
 
     </div>
