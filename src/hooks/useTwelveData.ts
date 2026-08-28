@@ -80,6 +80,11 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
     orderFlowSummary: { buyCount: 3, neutralCount: 0, sellCount: 0, score: 90, verdict: 'STRONG BUY' },
   });
 
+  // Update symbol in state when selectedSymbol changes
+  useEffect(() => {
+    setState(prev => ({ ...prev, symbol: selectedSymbol }));
+  }, [selectedSymbol]);
+
   const priceHistoryRef = useRef<number[]>([]);
   const buyerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 240 : 150);
   const sellerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 110 : 80);
