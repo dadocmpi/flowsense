@@ -58,9 +58,10 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
   
   // Twelve Data API configuration
-  // REPLACE 'your_api_key_here' WITH YOUR ACTUAL TWELVE DATA API KEY
+  // REPLACE 'your_api_key_here' WITH YOUR ACTUAL TWELVE DATA API KEY TO GET REAL DATA
   const API_KEY = 'your_api_key_here'; 
   const BASE_URL = 'https://api.twelvedata.com';
+  const isUsingMockData = API_KEY === 'your_api_key_here';
 
   const [state, setState] = useState<TwelveDataState>({
     symbol: selectedSymbol,
@@ -98,12 +99,72 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
   const priceHistoryRef = useRef<number[]>([]);
   const buyerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 240 : 150);
   const sellerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 110 : 80);
+  const mockTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMockPriceRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 2350.00 : 5050.00);
 
-  // Fetch initial historical data for technical indicators
+  // Generate realistic mock data that simulates real market movement
+  const generateMockData = useCallback(() => {
+    const isGold = assetConfig.symbol === 'MGC1!';
+    const basePrice = isGold ? 2350 : 5050;
+    const volatility = isGold ? 0.8 : 1.2; // % volatility per update
+    const trend = isGold ? 0.0002 : -0.0001; // slight drift
+    
+    // Generate realistic price movement with mean reversion
+    const randomWalk = (Math.random() - 0.5) * volatility * basePrice / 100;
+    const meanReversion = (basePrice - lastMockPriceRef.current) * 0.05;
+    const priceChange = randomWalk + meanReversion + (lastMockPriceRef.current * trend);
+    
+    const newPrice = Math.max(lastMockPriceRef.current * 0.95, 
+                            Math.min(lastMockPriceRef.current * 1.05, 
+                            lastMockPriceRef.current + priceChange));
+    
+    lastMockPriceRef.current = newPrice;
+    
+    // Generate realistic OHLC
+    const range = newPrice * (volatility / 100) * 0.5;
+    const open = newPrice + (Math.random() - 0.5) * range;
+    const high = Math.max(open, newPrice) + Math.random() * range;
+    const low = Math.min(open, newPrice) - Math.random() * range;
+    
+    // Calculate change from previous close (simulate previous close as price from 5 mins ago)
+    const prevClose = priceHistoryRef.current[priceHistoryRef.current.length - 5] || newPrice;
+    const change = newPrice - prevClose;
+    const percentChange = (change / prevClose) * 100;
+    
+    // Update price history
+    priceHistoryRef.current = [...priceHistoryRef.current.slice(-99), newPrice];
+    
+    return {
+      price: newPrice,
+      change,
+      percentChange,
+      high,
+      low,
+      open,
+      previousClose: prevClose
+    };
+  }, [assetConfig.symbol]);
+
+  // Fetch initial historical data for technical indicators (or generate mock)
   useEffect(() => {
     let isMounted = true;
 
     const fetchInitialData = async () => {
+      if (isUsingMockData) {
+        // Generate mock historical data
+        const basePrice = assetConfig.symbol === 'MGC1!' ? 2350 : 5050;
+        const history = Array.from({ length: 100 }, (_, i) => {
+          const noise = Math.sin(i / 10) * (assetConfig.symbol === 'MGC1!' ? 15 : 20);
+          const drift = i * 0.02;
+          return basePrice + noise + drift;
+        });
+        priceHistoryRef.current = history;
+        if (history.length > 0) {
+          updateCalculations(history[history.length - 1]);
+        }
+        return;
+      }
+
       try {
         const twelveDataSymbol = getTwelveDataSymbol(selectedSymbol);
         // Get 100 candles for initial technical analysis
@@ -134,8 +195,9 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
 
     return () => {
       isMounted = false;
+      if (mockTimerRef.current) clearInterval(mockTimerRef.current);
     };
-  }, [selectedSymbol]); // Re-run when selectedAsset changes
+  }, [selectedSymbol, isUsingMockData]); // Re-run when selectedAsset or mock status changes
 
   const updateCalculations = useCallback((currentPrice: number) => {
     const prices = [...priceHistoryRef.current.slice(-100), currentPrice];
@@ -256,62 +318,95 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
     }));
   }, [assetConfig.precision]); // Re-create callback if precision changes
 
-  // Poll for real-time data (Twelve Data REST API polling)
-  // Note: For production, consider using Twelve Data WebSocket for true real-time
+  // Poll for real-time data (Twelve Data REST API polling) or update mock data
   useEffect(() => {
     let isMounted = true;
-    let timer: NodeJS.Timeout;
 
-    const fetchRealTimeData = async () => {
-      try {
-        const twelveDataSymbol = getTwelveDataSymbol(selectedSymbol);
-        const res = await fetch(`${BASE_URL}/quote?symbol=${twelveDataSymbol}&apikey=${API_KEY}`);
-        const data = await res.json();
+    if (isUsingMockData) {
+      // Update mock data every 3 seconds to simulate real-time
+      mockTimerRef.current = setInterval(() => {
+        if (!isMounted) return;
         
-        if (isMounted && data.symbol) {
-          const price = parseFloat(data.close);
-          const change = parseFloat(data.change);
-          const percentChange = parseFloat(data.percent_change);
-          const high = parseFloat(data.high);
-          const low = parseFloat(data.low);
-          const open = parseFloat(data.open);
-          const previousClose = parseFloat(data.previous_close);
+        const mockData = generateMockData();
+        setState(prev => ({
+          ...prev,
+          ...mockData,
+          datetime: new Date().toLocaleTimeString(),
+          isLive: true,
+        }));
+        
+        updateCalculations(mockData.price);
+      }, 3000);
+      
+      // Initial mock data update
+      const initialMock = generateMockData();
+      setState(prev => ({
+        ...prev,
+        ...initialMock,
+        datetime: new Date().toLocaleTimeString(),
+        isLive: true,
+      }));
+      updateCalculations(initialMock.price);
+    } else {
+      // Real Twelve Data API polling
+      let timer: NodeJS.Timeout;
 
-          setState(prev => ({
-            ...prev,
-            price,
-            change,
-            percentChange,
-            high,
-            low,
-            open,
-            previousClose,
-            datetime: data.datetime || new Date().toLocaleTimeString(),
-            isLive: true,
-          }));
+      const fetchRealTimeData = async () => {
+        try {
+          const twelveDataSymbol = getTwelveDataSymbol(selectedSymbol);
+          const res = await fetch(`${BASE_URL}/quote?symbol=${twelveDataSymbol}&apikey=${API_KEY}`);
+          const data = await res.json();
+          
+          if (isMounted && data.symbol) {
+            const price = parseFloat(data.close);
+            const change = parseFloat(data.change);
+            const percentChange = parseFloat(data.percent_change);
+            const high = parseFloat(data.high);
+            const low = parseFloat(data.low);
+            const open = parseFloat(data.open);
+            const previousClose = parseFloat(data.previous_close);
 
-          updateCalculations(price);
-        } else {
-          console.error('Twelve Data API error:', data);
-          // Don't throw error here to avoid breaking the UI, just keep last known data
+            setState(prev => ({
+              ...prev,
+              price,
+              change,
+              percentChange,
+              high,
+              low,
+              open,
+              previousClose,
+              datetime: data.datetime || new Date().toLocaleTimeString(),
+              isLive: true,
+            }));
+
+            updateCalculations(price);
+          } else {
+            console.error('Twelve Data API error:', data);
+            // Don't throw error here to avoid breaking the UI, just keep last known data
+          }
+        } catch (err) {
+          console.error('Failed to fetch real-time data:', err);
+          // Keep last known data on error
         }
-      } catch (err) {
-        console.error('Failed to fetch real-time data:', err);
-        // Keep last known data on error
-      }
-    };
+      };
 
-    // Fetch initial data
-    fetchRealTimeData();
-    
-    // Poll every 15 seconds (adjust based on API limits)
-    timer = setInterval(fetchRealTimeData, 15000);
+      // Fetch initial data
+      fetchRealTimeData();
+      
+      // Poll every 15 seconds (adjust based on API limits)
+      timer = setInterval(fetchRealTimeData, 15000);
+
+      return () => {
+        isMounted = false;
+        if (timer) clearInterval(timer);
+      };
+    }
 
     return () => {
       isMounted = false;
-      if (timer) clearInterval(timer);
+      if (mockTimerRef.current) clearInterval(mockTimerRef.current);
     };
-  }, [selectedSymbol, updateCalculations]); // Re-run when selectedAsset changes
+  }, [selectedSymbol, isUsingMockData, updateCalculations, generateMockData]); // Re-run when selectedAsset, mock status, or callbacks change
 
   return state;
 };
