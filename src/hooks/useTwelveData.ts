@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   TwelveDataState, 
   SUPPORTED_ASSETS, 
@@ -42,28 +42,22 @@ function calculateEMA(prices: number[], period: number): number {
 }
 
 export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
-  // Get asset config
+  // Get asset config for precision and contract details
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
   
-  // Map our symbol to Binance symbol for WebSocket
-  const binanceSymbolMap: Record<string, string> = {
-    'MGC1!': 'PAXGUSDT', // Gold token
-    'ES1!': 'SPYUSDT'    // S&P 500 ETF as proxy
-  };
-  const binanceSymbol = binanceSymbolMap[selectedSymbol] || 'PAXGUSDT';
-  
-  // Price multiplier: for ES1! we need to multiply SPY price by 10 to get index value
-  const priceMultiplier = assetConfig.symbol === 'ES1!' ? 10 : 1;
+  // Twelve Data API configuration
+  const API_KEY = 'demo'; // Replace with actual API key or use environment variable
+  const BASE_URL = 'https://api.twelvedata.com';
 
   const [state, setState] = useState<TwelveDataState>({
     symbol: selectedSymbol,
-    price: (assetConfig.symbol === 'MGC1!' ? 2954.80 : 450.00) * priceMultiplier,
+    price: assetConfig.symbol === 'MGC1!' ? 2350.00 : 4500.00, // More realistic defaults
     change: 0,
     percentChange: 0,
-    high: (assetConfig.symbol === 'MGC1!' ? 2965.20 : 455.00) * priceMultiplier,
-    low: (assetConfig.symbol === 'MGC1!' ? 2940.10 : 445.00) * priceMultiplier,
-    open: (assetConfig.symbol === 'MGC1!' ? 2940.60 : 448.00) * priceMultiplier,
-    previousClose: (assetConfig.symbol === 'MGC1!' ? 2940.60 : 448.00) * priceMultiplier,
+    high: assetConfig.symbol === 'MGC1!' ? 2360.00 : 4520.00,
+    low: assetConfig.symbol === 'MGC1!' ? 2340.00 : 4480.00,
+    open: assetConfig.symbol === 'MGC1!' ? 2345.00 : 4490.00,
+    previousClose: assetConfig.symbol === 'MGC1!' ? 2345.00 : 4490.00,
     datetime: new Date().toLocaleTimeString(),
     isLive: true,
     isMarketOpen: true,
@@ -91,42 +85,42 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
   const priceHistoryRef = useRef<number[]>([]);
   const buyerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 240 : 150);
   const sellerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 110 : 80);
-  const wsRef = useRef<WebSocket | null>(null);
 
-  // Load initial candles based on selected asset
+  // Fetch initial historical data for technical indicators
   useEffect(() => {
     let isMounted = true;
 
-    async function loadInitialCandles() {
+    const fetchInitialData = async () => {
       try {
-        // Use the binance symbol for klines
-        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1m&limit=100`);
+        // Get 100 candles for initial technical analysis
+        const res = await fetch(`${BASE_URL}/time_series?symbol=${selectedSymbol}&interval=1min&outputsize=100&apikey=${API_KEY}`);
         const data = await res.json();
-        if (Array.isArray(data) && isMounted) {
-          const closes = data.map((k: any) => parseFloat(k[4]));
+        
+        if (isMounted && data.values && Array.isArray(data.values)) {
+          const closes = data.values.map((c: any) => parseFloat(c.close));
           priceHistoryRef.current = closes;
           if (closes.length > 0) {
-            updateCalculations(closes[closes.length - 1]);
+            updateCalculations(closes[0]); // Calculate with most recent price
           }
         }
       } catch (err) {
-        // Fallback to mock data based on asset
-        const basePrice = assetConfig.symbol === 'MGC1!' ? 2950 : 450;
-        const fallback = Array.from({ length: 60 }, (_, i) => basePrice + Math.sin(i / 4) * (assetConfig.symbol === 'MGC1!' ? 4 : 2) + i * 0.1);
+        console.error('Failed to fetch initial data:', err);
+        // Fallback to mock data
+        const basePrice = assetConfig.symbol === 'MGC1!' ? 2350 : 4500;
+        const fallback = Array.from({ length: 60 }, (_, i) => basePrice + Math.sin(i / 4) * (assetConfig.symbol === 'MGC1!' ? 20 : 50) + i * 0.1);
         priceHistoryRef.current = fallback;
         updateCalculations(fallback[fallback.length - 1]);
       }
-    }
+    };
 
-    loadInitialCandles();
+    fetchInitialData();
 
     return () => {
       isMounted = false;
     };
-  }, [selectedSymbol, binanceSymbol]); // Re-run when selectedAsset or binanceSymbol changes
+  }, [selectedSymbol]); // Re-run when selectedAsset changes
 
   const updateCalculations = useCallback((currentPrice: number) => {
-    const priceMultiplier = selectedSymbol === 'ES1!' ? 10 : 1;
     const prices = [...priceHistoryRef.current.slice(-100), currentPrice];
     priceHistoryRef.current = prices;
 
@@ -145,12 +139,12 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
       },
       {
         name: 'MACD (12, 26, 9)',
-        value: `${(macdVal * priceMultiplier) >= 0 ? '+' : ''}${(macdVal * priceMultiplier).toFixed(2)}`,
+        value: `${macdVal >= 0 ? '+' : ''}${macdVal.toFixed(2)}`,
         action: macdVal > 0.5 ? 'STRONG BUY' : macdVal > 0 ? 'BUY' : macdVal < -0.5 ? 'STRONG SELL' : 'SELL'
       },
       {
         name: 'Price Momentum',
-        value: `${(momentum * priceMultiplier) >= 0 ? '+' : ''}${(momentum * priceMultiplier).toFixed(2)}`,
+        value: `${momentum >= 0 ? '+' : ''}${momentum.toFixed(2)}`,
         action: momentum > 1.5 ? 'STRONG BUY' : momentum > 0 ? 'BUY' : momentum < -1.5 ? 'STRONG SELL' : 'SELL'
       }
     ];
@@ -162,13 +156,14 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
     const ema200 = calculateEMA(prices, 200);
 
     const movingAverages: IndicatorSignal[] = [
-      { name: 'EMA 10 (Fast)', value: (ema10 * priceMultiplier).toFixed(assetConfig.precision), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
-      { name: 'EMA 20 (Intermediate)', value: (ema20 * priceMultiplier).toFixed(assetConfig.precision), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
-      { name: 'EMA 50 (Trend Line)', value: (ema50 * priceMultiplier).toFixed(assetConfig.precision), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
-      { name: 'EMA 200 (Institutional Base)', value: (ema200 * priceMultiplier).toFixed(assetConfig.precision), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
+      { name: 'EMA 10 (Fast)', value: ema10.toFixed(assetConfig.precision), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
+      { name: 'EMA 20 (Intermediate)', value: ema20.toFixed(assetConfig.precision), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
+      { name: 'EMA 50 (Trend Line)', value: ema50.toFixed(assetConfig.precision), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
+      { name: 'EMA 200 (Institutional Base)', value: ema200.toFixed(assetConfig.precision), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
     ];
 
-    // Order Flow
+    // Order Flow (simplified for Twelve Data - we don't have depth data from basic API)
+    // In a real implementation, we might need to subscribe to additional streams or use different endpoints
     const totalVol = buyerVolRef.current + sellerVolRef.current || 1;
     const buyerRatio = Math.round((buyerVolRef.current / totalVol) * 100);
     const sellerRatio = 100 - buyerRatio;
@@ -228,7 +223,7 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
 
     setState(prev => ({
       ...prev,
-      price: currentPrice * priceMultiplier,
+      price: currentPrice,
       datetime: new Date().toLocaleTimeString(),
       oscillators,
       movingAverages,
@@ -242,134 +237,59 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
       maSummary,
       orderFlowSummary: ofSummary
     }));
-  }, [selectedSymbol]); // Re-create callback when selectedSymbol changes
+  }, [assetConfig.precision]); // Re-create callback if precision changes
 
-  // WebSocket Live Stream for selected asset
+  // Poll for real-time data (Twelve Data REST API polling)
+  // Note: For production, consider using Twelve Data WebSocket for true real-time
   useEffect(() => {
-    let reconnectTimeout: any;
+    let isMounted = true;
+    let timer: NodeJS.Timeout;
 
-    // Reset volume counters when symbol changes
-    buyerVolRef.current = assetConfig.symbol === 'MGC1!' ? 240 : 150;
-    sellerVolRef.current = assetConfig.symbol === 'MGC1!' ? 110 : 80;
+    const fetchRealTimeData = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}/quote?symbol=${selectedSymbol}&apikey=${API_KEY}`);
+        const data = await res.json();
+        
+        if (isMounted && data.symbol) {
+          const price = parseFloat(data.close);
+          const change = parseFloat(data.change);
+          const percentChange = parseFloat(data.percent_change);
+          const high = parseFloat(data.high);
+          const low = parseFloat(data.low);
+          const open = parseFloat(data.open);
+          const previousClose = parseFloat(data.previous_close);
 
-    const connectWebSocket = () => {
-      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${binanceSymbol.toLowerCase()}@ticker/${binanceSymbol.toLowerCase()}@depth10@100ms/${binanceSymbol.toLowerCase()}@aggTrade`);
-      wsRef.current = ws;
+          setState(prev => ({
+            ...prev,
+            price,
+            change,
+            percentChange,
+            high,
+            low,
+            open,
+            previousClose,
+            datetime: data.datetime || new Date().toLocaleTimeString(),
+            isLive: true,
+          }));
 
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-
-          // Ticker
-          if (msg.e === '24hrTicker') {
-            const curPrice = parseFloat(msg.c);
-            const change = parseFloat(msg.p);
-            const percentChange = parseFloat(msg.P);
-            const high = parseFloat(msg.h);
-            const low = parseFloat(msg.l);
-            const open = parseFloat(msg.o);
-
-            setState(prev => ({
-              ...prev,
-              price: curPrice * priceMultiplier,
-              change: change * priceMultiplier,
-              percentChange: percentChange,
-              high: high * priceMultiplier,
-              low: low * priceMultiplier,
-              open: open * priceMultiplier,
-              isLive: true,
-            }));
-
-            updateCalculations(curPrice);
-          }
-
-          // Depth with cumulative size
-          if (msg.bids && msg.asks) {
-            let runningBidCum = 0;
-            let runningAskCum = 0;
-            let maxTotal = 1;
-
-            const newBids: OrderBookLevel[] = msg.bids.slice(0, 6).map((b: string[]) => {
-              const p = parseFloat(b[0]);
-              const s = parseFloat(b[1]);
-              runningBidCum += s;
-              if (s > maxTotal) maxTotal = s;
-              return { price: p, size: s, cumulativeSize: runningBidCum, percentage: 0 };
-            });
-
-            const newAsks: OrderBookLevel[] = msg.asks.slice(0, 6).map((a: string[]) => {
-              const p = parseFloat(a[0]);
-              const s = parseFloat(a[1]);
-              runningAskCum += s;
-              if (s > maxTotal) maxTotal = s;
-              return { price: p, size: s, cumulativeSize: runningAskCum, percentage: 0 };
-            });
-
-            const finalBids = newBids.map(b => ({ 
-              ...b, 
-              percentage: Math.min(100, Math.round((b.size / maxTotal) * 100)),
-              price: b.price * priceMultiplier
-            }));
-            const finalAsks = newAsks.map(a => ({ 
-              ...a, 
-              percentage: Math.min(100, Math.round((a.size / maxTotal) * 100)),
-              price: a.price * priceMultiplier
-            }));
-
-            setState(prev => ({
-              ...prev,
-              bids: finalBids,
-              asks: finalAsks
-            }));
-          }
-
-          // Trades with aggressor side (Taker Buy vs Taker Sell)
-          if (msg.e === 'aggTrade') {
-            const p = parseFloat(msg.p);
-            const q = parseFloat(msg.q);
-            const isMaker = msg.m; // true = Taker Sell (Maker Buy), false = Taker Buy (Maker Sell)
-
-            if (isMaker) {
-              sellerVolRef.current += q * (assetConfig.symbol === 'MGC1!' ? 12 : 8); // adjust multiplier
-            } else {
-              buyerVolRef.current += q * (assetConfig.symbol === 'MGC1!' ? 12 : 8);
-            }
-
-            const d = new Date(msg.T);
-            const timeStr = d.toTimeString().split(' ')[0] + '.' + Math.floor(d.getMilliseconds() / 100);
-
-            const tradeItem: TradeFeedItem = {
-              id: `${msg.a}`,
-              price: p * priceMultiplier,
-              size: parseFloat(q.toFixed(assetConfig.symbol === 'MGC1!' ? 2 : 4)), // adjust precision for size
-              time: timeStr,
-              type: isMaker ? 'SELL' : 'BUY',
-              aggressor: isMaker ? 'SELL_AGGR' : 'BUY_AGGR'
-            };
-
-            setState(prev => ({
-              ...prev,
-              recentTrades: [tradeItem, ...prev.recentTrades.slice(0, 19)]
-            }));
-          }
-        } catch (e) {
-          // ignore parsing glitch
+          updateCalculations(price);
         }
-      };
-
-      ws.onerror = () => ws.close();
-      ws.onclose = () => {
-        reconnectTimeout = setTimeout(connectWebSocket, 3000);
-      };
+      } catch (err) {
+        console.error('Failed to fetch real-time data:', err);
+      }
     };
 
-    connectWebSocket();
+    // Fetch initial data
+    fetchRealTimeData();
+    
+    // Poll every 15 seconds (adjust based on API limits)
+    timer = setInterval(fetchRealTimeData, 15000);
 
     return () => {
-      clearTimeout(reconnectTimeout);
-      if (wsRef.current) wsRef.current.close();
+      isMounted = false;
+      if (timer) clearInterval(timer);
     };
-  }, [selectedSymbol, binanceSymbol, updateCalculations]); // Re-run when selectedAsset changes
+  }, [selectedSymbol, updateCalculations]); // Re-run when selectedAsset changes
 
   return state;
 };
