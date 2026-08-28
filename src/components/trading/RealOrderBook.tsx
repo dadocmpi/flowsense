@@ -1,28 +1,27 @@
 import React from 'react';
-import { RealOrderBookLevel } from '../../types/trading';
 
 interface RealOrderBookProps {
-  bids: RealOrderBookLevel[];
-  asks: RealOrderBookLevel[];
+  bids: { price: number; size: number; total: number; percentage: number }[];
+  asks: { price: number; size: number; total: number; percentage: number }[];
   currentPrice: number;
   precision: number;
 }
 
 export const RealOrderBook: React.FC<RealOrderBookProps> = ({ bids, asks, currentPrice, precision }) => {
   return (
-    <div className="bg-[#0a0b0d] rounded-2xl border border-white/[0.04] p-4 flex flex-col h-full font-mono text-[11px] select-none">
+    <div className="bg-[#0a0b0d] rounded-2xl border border-white/[0.04] p-4 flex flex-col h-full font-mono text-[11px]">
       <div className="border-b border-white/[0.04] pb-2 mb-2 flex justify-between items-center font-sans">
-        <h3 className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Livro de Ofertas (Pro)</h3>
-        <span className="text-[9px] text-[#26a69a] font-mono">REAL-TIME DEPTH</span>
+        <h3 className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Order Book (Depth)</h3>
+        <span className="text-[9px] text-[#26a69a] font-mono">REAL-TIME</span>
       </div>
 
       <div className="grid grid-cols-3 text-[9px] text-white/30 uppercase tracking-wider mb-2 px-1">
-        <span>Preço</span>
-        <span className="text-right">Qtd</span>
+        <span>Price</span>
+        <span className="text-right">Qty</span>
         <span className="text-right">Total ($)</span>
       </div>
 
-      {/* Asks (Vendedores - Vermelho) */}
+      {/* Asks (sellers - red) */}
       <div className="space-y-[2px] mb-2 flex flex-col justify-end">
         {asks.slice(0, 6).reverse().map((ask, idx) => (
           <div key={`ask-${idx}`} className="grid grid-cols-3 items-center relative py-0.5 px-1 hover:bg-white/[0.02]">
@@ -37,13 +36,13 @@ export const RealOrderBook: React.FC<RealOrderBookProps> = ({ bids, asks, curren
         ))}
       </div>
 
-      {/* Preço Atual */}
+      {/* Current Price */}
       <div className="py-2 border-y border-white/[0.05] bg-white/[0.01] my-1 text-center font-bold text-sm text-white flex items-center justify-between px-2">
-        <span className="text-[10px] text-white/40 font-sans">Preço Atual</span>
-        <span className="text-amber-400 font-mono text-base animate-pulse">{currentPrice.toFixed(precision)}</span>
+        <span className="text-[10px] text-white/40 font-sans">Market Price</span>
+        <span className="text-amber-400 font-mono text-base font-black">{currentPrice.toFixed(precision)}</span>
       </div>
 
-      {/* Bids (Compradores - Verde) */}
+      {/* Bids (buyers - green) */}
       <div className="space-y-[2px] mt-2">
         {bids.slice(0, 6).map((bid, idx) => (
           <div key={`bid-${idx}`} className="grid grid-cols-3 items-center relative py-0.5 px-1 hover:bg-white/[0.02]">
