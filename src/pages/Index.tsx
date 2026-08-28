@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useTwelveData } from '../hooks/useTwelveData';
+import { useRefinedTradingData } from '../hooks/useRefinedTradingData';
 import { TradingViewGauge } from '../components/trading/TradingViewGauge';
 import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
 import { AssetSummaryCard } from '../components/trading/AssetSummaryCard';
@@ -34,19 +34,17 @@ import {
 import { cn } from '@/lib/utils';
 
 const Index = () => {
-  const [selectedAsset, setSelectedAsset] = useState('MGC1!'); // Start with GOLD
-  const twelveData = useTwelveData(selectedAsset);
+  const [selectedAsset, setSelectedAsset] = useState('MGC1!');
+  // FIX: Use the refined hook with REAL WebSocket data (not mock fallback)
+  const twelveData = useRefinedTradingData(selectedAsset);
 
-  // Find config for selected asset
   const activeConfig = SUPPORTED_ASSETS.find(asset => asset.symbol === selectedAsset) || SUPPORTED_ASSETS[0];
 
-  // Display name mapping for cleaner UI
   const displayNameMap: Record<string, string> = {
     'MGC1!': 'GOLD',
     'ES1!': 'SP500'
   };
 
-  // Config state per asset
   const [config, setConfig] = useState({
     direction: 'BUY' as 'BUY' | 'SELL',
     startTime: '09:00',
@@ -59,7 +57,6 @@ const Index = () => {
 
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  // Load config from localStorage for the selected asset
   useEffect(() => {
     const saved = localStorage.getItem(`tradingConfig_${selectedAsset}`);
     if (saved) {
@@ -69,7 +66,6 @@ const Index = () => {
         console.error('Failed to parse config', e);
       }
     } else {
-      // Set defaults based on asset
       if (selectedAsset === 'MGC1!') {
         setConfig({
           direction: 'BUY',
@@ -104,23 +100,19 @@ const Index = () => {
     }
   }, [selectedAsset]);
 
-  // Save config to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem(`tradingConfig_${selectedAsset}`, JSON.stringify(config));
   }, [selectedAsset, config]);
 
   const handleSave = () => {
     setDialogOpen(false);
-    // Already saved via useEffect
   };
 
   return (
     <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
       
-      {/* Header Bar */}
       <header className="w-full border-b border-white/[0.04] bg-[#07080a] px-8 py-4 flex items-center justify-between sticky top-0 z-50 backdrop-blur-md">
         
-        {/* Asset Selection */}
         <div className="flex items-center space-x-4">
           {SUPPORTED_ASSETS.map(asset => (
             <button
@@ -140,7 +132,6 @@ const Index = () => {
           ))}
         </div>
 
-        {/* Market Status Button (also opens config dialog) */}
         <Dialog>
           <DialogTrigger asChild>
             <button className="flex items-center space-x-2 bg-white/[0.02] border border-white/[0.05] px-3 py-1.5 rounded-full hover:bg-white/[0.03] transition-colors">
@@ -162,7 +153,6 @@ const Index = () => {
             </DialogHeader>
             <Separator className="my-4" />
             <div className="space-y-4">
-              {/* Direction */}
               <div className="space-y-2">
                 <Label className="text-white/70 font-medium text-[9px] uppercase tracking-wider">Direction</Label>
                 <RadioGroup
@@ -185,7 +175,6 @@ const Index = () => {
                 </RadioGroup>
               </div>
 
-              {/* Time Window */}
               <div className="space-y-2">
                 <Label className="text-white/70 font-medium text-[9px] uppercase tracking-wider">Trading Hours (Local)</Label>
                 <div className="grid grid-cols-2 gap-3">
@@ -210,7 +199,6 @@ const Index = () => {
                 </div>
               </div>
 
-              {/* Price Zone */}
               <div className="space-y-2">
                 <Label className="text-white/70 font-medium text-[9px] uppercase tracking-wider">Institutional Price Zone</Label>
                 <div className="grid grid-cols-2 gap-3">
@@ -235,7 +223,6 @@ const Index = () => {
                 </div>
               </div>
 
-              {/* Stop Loss & Take Profit */}
               <div className="space-y-2">
                 <Label className="text-white/70 font-medium text-[9px] uppercase tracking-wider">Risk Management</Label>
                 <div className="grid grid-cols-2 gap-3">
@@ -272,19 +259,15 @@ const Index = () => {
         </Dialog>
       </header>
 
-      {/* Main Terminal Content */}
       <main className="flex-grow p-8 max-w-[1600px] w-full mx-auto flex flex-col space-y-8">
         
-        {/* Highlight Asset Summary Card */}
         <AssetSummaryCard
           data={twelveData}
           precision={activeConfig.precision}
         />
 
-        {/* Main Grid: Compass + Technical Details */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           
-          {/* Column 1: Confluence Compass (5/12 cols) */}
           <div className="lg:col-span-5 flex flex-col">
             <TradingViewGauge
               overallSummary={twelveData.overallSummary}
@@ -295,7 +278,6 @@ const Index = () => {
             />
           </div>
 
-          {/* Column 2: Detailed Technical Indicators (7/12 cols) */}
           <div className="lg:col-span-7 flex flex-col">
             <TechnicalDetailsTable
               oscillators={twelveData.oscillators}
@@ -306,7 +288,6 @@ const Index = () => {
 
         </div>
 
-        {/* Lower Section: REAL-TIME ORDER FLOW */}
         <RealtimeOrderFlow
           data={twelveData}
           precision={activeConfig.precision}
