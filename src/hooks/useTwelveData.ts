@@ -238,7 +238,7 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
       maSummary,
       orderFlowSummary: ofSummary
     }));
-  }, [assetConfig.precision]); // Re-create callback if precision changes (unlikely)
+  }, [selectedSymbol]); // Re-create callback when selectedSymbol changes to ensure correct assetConfig closure
 
   // WebSocket Live Stream for selected asset
   useEffect(() => {
