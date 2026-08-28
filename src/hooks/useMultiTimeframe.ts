@@ -30,7 +30,8 @@ function calculateRSI(closes: number[], period = 14): number {
   const avgGain = gains / period;
   const avgLoss = losses / period;
   
-  if (avgLoss === 0) return 100;
+  if (avgLoss === 0) return 99.9;
+  if (avgGain === 0) return 0.1;
   const rs = avgGain / avgLoss;
   return 100 - (100 / (1 + rs));
 }
@@ -184,8 +185,13 @@ export const useMultiTimeframe = (
   const [result, setResult] = useState<MultiTimeframeResult | null>(null);
   const lastFetchRef = useRef<Record<Timeframe, number>>({} as any);
   const cacheRef = useRef<Record<Timeframe, CandleData[]>>({} as any);
-  
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isMountedRef = useRef<boolean>(true);
+  const activeAssetRef = useRef<string>(binanceSymbol);
+
   const fetchAll = useCallback(async () => {
+    if (!isMountedRef.current) return;
+    
     const now = Date.now();
     const newResult: MultiTimeframeResult = {
       weightedScore: 0,
@@ -203,14 +209,12 @@ export const useMultiTimeframe = (
     let neutralCount = 0;
     
     for (const tf of config.mtfTimeframes) {
-      const lastFetch = lastFetchRef.current[tf] || 0;
       const interval = TF_TO_BINANCE[tf];
-      
       const refreshMs = tf === 'M5' ? 30_000 : tf === 'M15' ? 60_000 : 5 * 60_000;
       
-      if (now - lastFetch > refreshMs || !cacheRef.current[tf] || cacheRef.current[tf].length === 0) {
+      if (now - (lastFetchRef.current[tf] || 0) > refreshMs || !cacheRef.current[tf]?.length) {
         const candles = await fetchCandles(binanceSymbol, interval, 200);
-        if (candles.length > 0) {
+        if (candles.length > 0 && isMountedRef.current) {
           cacheRef.current[tf] = candles;
           lastFetchRef.current[tf] = now;
         }
@@ -219,8 +223,9 @@ export const useMultiTimeframe = (
       const candles = cacheRef.current[tf] || [];
       const weight = config.mtfWeights[tf] || 0.2;
       const tfResult = computeTimeframeConfluence(candles, weight, tf);
-      if (currentPrice > 0 && tf === 'M5') {
-        tfResult.score = (tfResult.score * 0.7) + (currentPrice > candles[candles.length-1]?.close ? 5 : -5);
+      
+      if (currentPrice > 0 && tf === 'M5' && candles.length > 0) {
+        tfResult.score = (tfResult.score * 0.7) + (currentPrice > candles[candles.length - 1]?.close ? 5 : -5);
       }
       
       newResult.timeframes.push(tfResult);
@@ -250,14 +255,33 @@ export const useMultiTimeframe = (
       (newResult.agreementPercent / 100) >= config.mtfAgreementThreshold &&
       newResult.dominantDirection !== 'NEUTRAL';
     
-    setResult(newResult);
+    if (isMountedRef.current && activeAssetRef.current === binanceSymbol) {
+      setResult(newResult);
+    }
   }, [binanceSymbol, currentPrice, config]);
-  
+
   useEffect(() => {
+    isMountedRef.current = true;
+    activeAssetRef.current = binanceSymbol;
+    
+    // Clear cache and last fetch on asset switch
+    lastFetchRef.current = {} as any;
+    cacheRef.current = {} as any;
+    setResult(null);
+    
     fetchAll();
-    const interval = setInterval(fetchAll, 60_000);
-    return () => clearInterval(interval);
-  }, [fetchAll]);
+    
+    // Poll every 30 seconds
+    intervalRef.current = setInterval(fetchAll, 30_000);
+    
+    return () => {
+      isMountedRef.current = false;
+      if (intervalRef.current !== null) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [binanceSymbol, fetchAll]);
 
   return result;
 };

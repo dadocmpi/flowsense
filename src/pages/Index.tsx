@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 
 const Index = () => {
   const [selectedAsset, setSelectedAsset] = useState('MGC1!');
-  const twelveData = useRefinedTradingData(selectedAsset);
+  const tradingData = useRefinedTradingData(selectedAsset);
 
   const activeConfig = SUPPORTED_ASSETS.find(asset => asset.symbol === selectedAsset) || SUPPORTED_ASSETS[0];
   const binanceSymbol = activeConfig.binanceSymbol || 'PAXGUSDT';
@@ -23,14 +23,13 @@ const Index = () => {
     'ES1!': 'SP500'
   };
 
-  // Multi-timeframe engine (Layer 2)
-  const mtfResult = useMultiTimeframe(binanceSymbol, twelveData.price);
+  // Multi-timeframe
+  const mtfResult = useMultiTimeframe(binanceSymbol, tradingData.price);
 
-  // Build a true OVERALL composite that factors in EVERY layer
+  // True OVERALL composite
   const overallComposite: IndicatorSummary = useMemo(() => {
-    if (!mtfResult) return twelveData.overallSummary;
+    if (!mtfResult) return tradingData.overallSummary;
     
-    // Convert MTF weightedScore (-100..+100) to 0..100 summary
     const mtfSummary: IndicatorSummary = {
       buyCount: mtfResult.timeframes.filter(t => t.direction === 'BUY').length,
       sellCount: mtfResult.timeframes.filter(t => t.direction === 'SELL').length,
@@ -41,59 +40,12 @@ const Index = () => {
     };
     
     return buildOverallComposite(
-      twelveData.oscillatorsSummary,
-      twelveData.maSummary,
-      twelveData.orderFlowSummary,
+      tradingData.oscillatorsSummary,
+      tradingData.maSummary,
+      tradingData.orderFlowSummary,
       mtfSummary
     );
-  }, [twelveData, mtfResult]);
-
-  const [config, setConfig] = useState({
-    direction: 'BUY' as 'BUY' | 'SELL',
-    startTime: '09:00',
-    endTime: '11:30',
-    minPrice: 0,
-    maxPrice: 0,
-    stopLoss: 0,
-    takeProfit: 0,
-  });
-
-  useEffect(() => {
-    const saved = localStorage.getItem(`tradingConfig_${selectedAsset}`);
-    if (saved) {
-      try {
-        setConfig(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to parse config', e);
-      }
-    } else {
-      if (selectedAsset === 'MGC1!') {
-        setConfig({
-          direction: 'BUY',
-          startTime: '09:00',
-          endTime: '11:30',
-          minPrice: 2900,
-          maxPrice: 3000,
-          stopLoss: 2850,
-          takeProfit: 3050,
-        });
-      } else if (selectedAsset === 'ES1!') {
-        setConfig({
-          direction: 'BUY',
-          startTime: '09:30',
-          endTime: '11:30',
-          minPrice: 5000,
-          maxPrice: 5200,
-          stopLoss: 4950,
-          takeProfit: 5250,
-        });
-      }
-    }
-  }, [selectedAsset]);
-
-  useEffect(() => {
-    localStorage.setItem(`tradingConfig_${selectedAsset}`, JSON.stringify(config));
-  }, [selectedAsset, config]);
+  }, [tradingData, mtfResult]);
 
   return (
     <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
@@ -124,7 +76,7 @@ const Index = () => {
       <main className="flex-grow p-8 max-w-[1600px] w-full mx-auto flex flex-col space-y-8">
         
         <AssetSummaryCard
-          data={twelveData}
+          data={tradingData}
           precision={activeConfig.precision}
         />
 
@@ -133,26 +85,28 @@ const Index = () => {
           <div className="lg:col-span-5 flex flex-col">
             <TradingViewGauge
               overallSummary={overallComposite}
-              oscillatorsSummary={twelveData.oscillatorsSummary}
-              maSummary={twelveData.maSummary}
-              orderFlowSummary={twelveData.orderFlowSummary}
+              oscillatorsSummary={tradingData.oscillatorsSummary}
+              maSummary={tradingData.maSummary}
+              orderFlowSummary={tradingData.orderFlowSummary}
               mtfSummary={overallComposite}
               selectedAsset={selectedAsset}
+              isLoading={tradingData.isLoading}
             />
           </div>
 
           <div className="lg:col-span-7 flex flex-col">
             <TechnicalDetailsTable
-              oscillators={twelveData.oscillators}
-              movingAverages={twelveData.movingAverages}
-              orderFlowIndicators={twelveData.orderFlowIndicators}
+              oscillators={tradingData.oscillators}
+              movingAverages={tradingData.movingAverages}
+              orderFlowIndicators={tradingData.orderFlowIndicators}
+              isLoading={tradingData.isLoading}
             />
           </div>
 
         </div>
 
         <RealtimeOrderFlow
-          data={twelveData}
+          data={tradingData}
           precision={activeConfig.precision}
         />
 

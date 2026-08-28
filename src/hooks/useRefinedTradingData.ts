@@ -65,14 +65,9 @@ function buildIndicatorSignals(
   });
 
   const periods = [10, 20, 50, 100, 200];
-  const emaValues: { period: number; value: number; action: string }[] = [];
 
   periods.forEach(period => {
     const ema = calculateEMA(prices, period);
-    emaValues.push({ period, value: ema, action: currentPrice > ema ? 'BUY' : 'SELL' });
-  });
-
-  emaValues.forEach(({ period, value, action }) => {
     const label = period === 200 ? 'EMA 200 (Institutional Base)' :
                   period === 100 ? 'EMA 100 (Major Trend)' :
                   period === 50 ? 'EMA 50 (Trend Line)' :
@@ -81,7 +76,7 @@ function buildIndicatorSignals(
     movingAverages.push({
       name: `EMA ${period}`,
       value: value.toFixed(precision),
-      action: action as IndicatorSignal['action'],
+      action: currentPrice > ema ? 'BUY' : 'SELL',
     });
   });
 
@@ -135,17 +130,36 @@ function buildSummary(signals: IndicatorSignal[]): IndicatorSummary {
   return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
 }
 
+// Safe numeric helpers — never return NaN
+function safeNum(val: number | undefined | null, fallback: number): number {
+  if (val === undefined || val === null || isNaN(val) || !isFinite(val)) return fallback;
+  return val;
+}
+
+function safePercentChange(current: number, prev: number): number {
+  if (!current || !prev || current === 0 || prev === 0 || isNaN(current) || isNaN(prev)) return 0;
+  const pct = ((current - prev) / prev) * 100;
+  return isNaN(pct) || !isFinite(pct) ? 0 : pct;
+}
+
 export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
+  // Track which asset the current data belongs to — prevents stale WS messages
+  // from the previous asset leaking in after a switch.
+  const activeAssetRef = useRef<string>(selectedSymbol);
+  
+  // Loading state — true while fetching initial data
+  const [isLoading, setIsLoading] = useState(true);
+  
   const [state, setState] = useState<TwelveDataState>({
-    symbol: 'MGC1!',
-    price: 2954.80,
-    change: 14.20,
-    percentChange: 0.48,
-    high: 2965.20,
-    low: 2940.10,
-    open: 2940.60,
-    previousClose: 2940.60,
-    datetime: new Date().toLocaleTimeString(),
+    symbol: selectedSymbol,
+    price: 0,
+    change: 0,
+    percentChange: 0,
+    high: 0,
+    low: 0,
+    open: 0,
+    previousClose: 0,
+    datetime: '',
     isLive: false,
     isMarketOpen: true,
     oscillators: [],
@@ -164,11 +178,13 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     orderFlowSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
   });
 
+  // All mutable state lives in refs so they don't cause re-renders
   const priceHistoryRef = useRef<number[]>([]);
   const volumeAccumulatorRef = useRef<{ buyers: number; sellers: number }>({ buyers: 0, sellers: 0 });
   const tradeHistoryRef = useRef<{ price: number; size: number; isBuyer: boolean; time: number }[]>([]);
   const lastTradeTimeRef = useRef<number>(0);
   
+  // SMOOTHED buyer/seller values
   const smoothedBuyersPctRef = useRef<number>(50);
   const smoothedSellersPctRef = useRef<number>(50);
   const smoothedDeltaRef = useRef<number>(0);
@@ -177,139 +193,173 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 5;
-
+  const reconnectAttemptRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+  
   const activeConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
   const precision = activeConfig.precision;
   const binanceSymbol = activeConfig.binanceSymbol || 'PAXGUSDT';
 
-  // SP500 price scaler — Binance doesn't have a true SP500 instrument.
-  // We use BTCUSDT as the live movement source but display a representative
-  // SP500 futures price (ES1!) by rescaling BTC's price movement against a
-  // realistic SP500 reference level. This keeps the percent change and
-  // order-flow direction faithful while showing a sensible ES1! number.
-  const SP500_REFERENCE = 5200;     // ES1! baseline price (approx)
-  const SP500_BTC_REFERENCE = 65000; // BTC price at calibration time
-  const SP500_BTC_BETA = 0.25;      // BTC vs SP500 correlation factor
-  let sp500Anchor: number | null = null;
+  // SP500 rescaling constants
+  const SP500_REFERENCE = 5200;
+  const SP500_BTC_REFERENCE = 65000;
+  const SP500_BTC_BETA = 0.25;
 
-  useEffect(() => {
-    let isMounted = true;
+  // ---- Cancel any pending reconnect ----
+  const cancelReconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current !== null) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+  }, []);
 
-    const loadInitialData = async () => {
+  // ---- Clean disconnect ----
+  const disconnect = useCallback(() => {
+    cancelReconnect();
+    if (wsRef.current) {
+      wsRef.current.onclose = null; // prevent reconnect loop
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+  }, [cancelReconnect]);
+
+  // ---- Reset all per-asset state ----
+  const resetPerAssetState = useCallback(() => {
+    priceHistoryRef.current = [];
+    volumeAccumulatorRef.current = { buyers: 0, sellers: 0 };
+    tradeHistoryRef.current = [];
+    lastTradeTimeRef.current = 0;
+    smoothedBuyersPctRef.current = 50;
+    smoothedSellersPctRef.current = 50;
+    smoothedDeltaRef.current = 0;
+    reconnectAttemptRef.current = 0;
+    setIsLoading(true);
+  }, []);
+
+  // ---- Fetch and apply initial kline data ----
+  const loadInitialData = useCallback(async (symbol: string, binanceSym: string, prec: number) => {
+    try {
+      const response = await fetch(
+        `https://api.binance.com/api/v3/klines?symbol=${binanceSym}&interval=1m&limit=200`
+      );
+      
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      
+      const data = await response.json();
+      if (!Array.isArray(data) || !isMountedRef.current) return;
+      
+      const closes = data.map((k: any[]) => safeNum(parseFloat(k[4]), 0));
+      // CLEAR old price history and set fresh for this asset
+      priceHistoryRef.current = closes;
+      
+      const currentPrice = closes[closes.length - 1] || 0;
+      const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(closes, currentPrice, prec);
+      
+      const allSignals = [...oscillators, ...movingAverages, ...orderFlowIndicators];
+      const overallSummary = buildSummary(allSignals);
+      const oscillatorsSummary = buildSummary(oscillators);
+      const maSummary = buildSummary(movingAverages);
+      const orderFlowSummary = buildSummary(orderFlowIndicators);
+
+      // Fetch ticker for 24h stats
       try {
-        const response = await fetch(
-          `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1m&limit=200`
-        );
+        const tickerRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`);
+        const tickerData = await tickerRes.json();
         
-        if (!response.ok) throw new Error('Failed to fetch klines');
+        let displayPrice = safeNum(parseFloat(tickerData.lastPrice), currentPrice);
+        let displayChange = safeNum(parseFloat(tickerData.priceChange), 0);
+        let displayPctChange = safeNum(parseFloat(tickerData.priceChangePercent), 0);
+        let displayHigh = safeNum(parseFloat(tickerData.highPrice), 0);
+        let displayLow = safeNum(parseFloat(tickerData.lowPrice), 0);
+        let displayOpen = safeNum(parseFloat(tickerData.openPrice), 0);
+        let displayPrevClose = safeNum(parseFloat(tickerData.prevClosePrice), 0);
         
-        const data = await response.json();
-        
-        if (Array.isArray(data) && isMounted) {
-          const closes = data.map((k: any[]) => parseFloat(k[4]));
-          priceHistoryRef.current = closes;
+        if (symbol === 'ES1!') {
+          const btcPrice = safeNum(parseFloat(tickerData.lastPrice), 0);
+          const btcOpen = safeNum(parseFloat(tickerData.openPrice), SP500_BTC_REFERENCE);
+          const btcHigh = safeNum(parseFloat(tickerData.highPrice), SP500_BTC_REFERENCE);
+          const btcLow = safeNum(parseFloat(tickerData.lowPrice), SP500_BTC_REFERENCE);
           
-          const currentPrice = closes[closes.length - 1];
-          const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(closes, currentPrice, precision);
-          
-          const allSignals = [...oscillators, ...movingAverages, ...orderFlowIndicators];
-          const overallSummary = buildSummary(allSignals);
-          const oscillatorsSummary = buildSummary(oscillators);
-          const maSummary = buildSummary(movingAverages);
-          const orderFlowSummary = buildSummary(orderFlowIndicators);
-
-          try {
-            const tickerRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`);
-            const tickerData = await tickerRes.json();
-            
-            let displayPrice = parseFloat(tickerData.lastPrice);
-            let displayChange = parseFloat(tickerData.priceChange);
-            let displayPctChange = parseFloat(tickerData.priceChangePercent);
-            let displayHigh = parseFloat(tickerData.highPrice);
-            let displayLow = parseFloat(tickerData.lowPrice);
-            let displayOpen = parseFloat(tickerData.openPrice);
-            let displayPrevClose = parseFloat(tickerData.prevClosePrice);
-            
-            // For ES1! / SP500: rescale BTC movement into SP500 space
-            if (selectedSymbol === 'ES1!') {
-              const btcPrice = parseFloat(tickerData.lastPrice);
-              const btcChange = parseFloat(tickerData.priceChange);
-              const btcOpen = parseFloat(tickerData.openPrice);
-              const btcHigh = parseFloat(tickerData.highPrice);
-              const btcLow = parseFloat(tickerData.lowPrice);
-              
-              sp500Anchor = SP500_REFERENCE + (btcPrice - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
-              displayPrice = sp500Anchor;
-              displayChange = btcChange * SP500_BTC_BETA;
-              displayPctChange = displayChange / (sp500Anchor - displayChange) * 100;
-              displayHigh = SP500_REFERENCE + (btcHigh - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
-              displayLow = SP500_REFERENCE + (btcLow - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
-              displayOpen = SP500_REFERENCE + (btcOpen - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
-              displayPrevClose = displayOpen - displayChange;
-            }
-            
-            setState(prev => ({
-              ...prev,
-              symbol: selectedSymbol,
-              price: displayPrice,
-              change: displayChange,
-              percentChange: displayPctChange,
-              high: displayHigh,
-              low: displayLow,
-              open: displayOpen,
-              previousClose: displayPrevClose,
-              isLive: false,
-              oscillators,
-              movingAverages,
-              orderFlowIndicators,
-              overallSummary,
-              oscillatorsSummary,
-              maSummary,
-              orderFlowSummary,
-            }));
-          } catch {
-            setState(prev => ({
-              ...prev,
-              symbol: selectedSymbol,
-              price: currentPrice,
-              high: Math.max(...closes.slice(-60)),
-              low: Math.min(...closes.slice(-60)),
-              isLive: false,
-              oscillators,
-              movingAverages,
-              orderFlowIndicators,
-              overallSummary,
-              oscillatorsSummary,
-              maSummary,
-              orderFlowSummary,
-            }));
-          }
+          const sp500Price = SP500_REFERENCE + (btcPrice - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+          displayPrice = sp500Price;
+          displayChange = (btcPrice - btcOpen) * SP500_BTC_BETA;
+          displayPctChange = safePercentChange(btcPrice, btcOpen);
+          displayHigh = SP500_REFERENCE + (btcHigh - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+          displayLow = SP500_REFERENCE + (btcLow - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+          displayOpen = SP500_REFERENCE + (btcOpen - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+          displayPrevClose = displayOpen;
         }
-      } catch (err) {
-        console.error('Error loading initial data:', err);
         
-        if (isMounted) {
-          const fallback = Array.from({ length: 100 }, (_, i) => 
-            selectedSymbol === 'MGC1!'
-              ? 2950 + Math.sin(i / 5) * 5 + (Math.random() - 0.5) * 2 + i * 0.05
-              : SP500_REFERENCE + Math.sin(i / 5) * 10 + (Math.random() - 0.5) * 4 + i * 0.1
-          );
-          priceHistoryRef.current = fallback;
-          
-          const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(
-            fallback, 
-            fallback[fallback.length - 1], 
-            precision
-          );
-          
-          const allSignals = [...oscillators, ...movingAverages, ...orderFlowIndicators];
-          
+        if (isMountedRef.current) {
+          setState({
+            symbol,
+            price: displayPrice,
+            change: displayChange,
+            percentChange: displayPctChange,
+            high: displayHigh,
+            low: displayLow,
+            open: displayOpen,
+            previousClose: displayPrevClose,
+            datetime: new Date().toLocaleTimeString(),
+            isLive: false,
+            isMarketOpen: true,
+            oscillators,
+            movingAverages,
+            orderFlowIndicators,
+            overallSummary,
+            oscillatorsSummary,
+            maSummary,
+            orderFlowSummary,
+            buyersPercent: 50,
+            sellersPercent: 50,
+            volumeDelta: 0,
+            institutionalPressure: 'LOW',
+            bids: [],
+            asks: [],
+            recentTrades: [],
+          });
+          setIsLoading(false);
+        }
+      } catch {
+        if (isMountedRef.current) {
           setState(prev => ({
             ...prev,
-            symbol: selectedSymbol,
-            price: fallback[fallback.length - 1],
+            symbol,
+            price: currentPrice,
+            high: Math.max(...closes.slice(-60)),
+            low: Math.min(...closes.slice(-60)),
+            isLive: false,
+            isMarketOpen: true,
+            oscillators,
+            movingAverages,
+            orderFlowIndicators,
+            overallSummary,
+            oscillatorsSummary,
+            maSummary,
+            orderFlowSummary,
+          }));
+          setIsLoading(false);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load initial data:', err);
+      if (isMountedRef.current) {
+        const fallback = Array.from({ length: 100 }, (_, i) => 
+          symbol === 'MGC1!'
+            ? 2950 + Math.sin(i / 5) * 5 + (Math.random() - 0.5) * 2 + i * 0.05
+            : SP500_REFERENCE + Math.sin(i / 5) * 10 + (Math.random() - 0.5) * 4 + i * 0.1
+        );
+        priceHistoryRef.current = fallback;
+        const lastPrice = fallback[fallback.length - 1];
+        const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(fallback, lastPrice, precision);
+        const allSignals = [...oscillators, ...movingAverages, ...orderFlowIndicators];
+        if (isMountedRef.current) {
+          setState(prev => ({
+            ...prev,
+            symbol,
+            price: lastPrice,
+            high: Math.max(...fallback.slice(-60)),
+            low: Math.min(...fallback.slice(-60)),
             isLive: false,
             isMarketOpen: true,
             oscillators,
@@ -320,28 +370,40 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             maSummary: buildSummary(movingAverages),
             orderFlowSummary: buildSummary(orderFlowIndicators),
           }));
+          setIsLoading(false);
         }
       }
-    };
+    }
+  }, [precision]);
 
-    loadInitialData();
+  // ---- When asset changes: reset state, disconnect old WS, load new data ----
+  useEffect(() => {
+    isMountedRef.current = true;
+    resetPerAssetState();
+    disconnect();
+    
+    // Mark this ref immediately so stale WS messages are dropped
+    activeAssetRef.current = selectedSymbol;
+    
+    loadInitialData(selectedSymbol, binanceSymbol, precision);
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
+      disconnect();
     };
-  }, [selectedSymbol, binanceSymbol, precision]);
+  }, [selectedSymbol, binanceSymbol, precision, loadInitialData, disconnect, resetPerAssetState]);
 
+  // ---- WebSocket live feed ----
   useEffect(() => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-
+    // Wait for initial load to finish before connecting WS
+    if (isLoading) return;
+    
     let reconnectDelay = 1000;
+    const MAX_DELAY = 15000;
 
     const connectWebSocket = () => {
+      if (!isMountedRef.current) return;
+      
       const streams = [
         `${binanceSymbol.toLowerCase()}@ticker`,
         `${binanceSymbol.toLowerCase()}@depth10@100ms`,
@@ -352,99 +414,104 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        reconnectAttemptsRef.current = 0;
+        reconnectAttemptRef.current = 0;
         reconnectDelay = 1000;
-        
-        setState(prev => ({ ...prev, isLive: true }));
+        if (isMountedRef.current) {
+          setState(prev => ({ ...prev, isLive: true }));
+        }
       };
 
       ws.onmessage = (event) => {
+        // DROP messages from the wrong asset (race condition on fast switch)
+        if (!isMountedRef.current || activeAssetRef.current !== selectedSymbol) return;
+        
         try {
           const msg = JSON.parse(event.data);
           
           if (msg.e === '24hrTicker') {
-            const newBtcPrice = parseFloat(msg.c);
+            const newBtcPrice = safeNum(parseFloat(msg.c), 0);
             
             let displayPrice = newBtcPrice;
             if (selectedSymbol === 'ES1!') {
               displayPrice = SP500_REFERENCE + (newBtcPrice - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
             }
             
-            priceHistoryRef.current = [...priceHistoryRef.current.slice(-499), displayPrice];
+            // Only append if not a duplicate (WS can send the same tick twice)
+            const lastPrice = priceHistoryRef.current[priceHistoryRef.current.length - 1];
+            if (displayPrice !== lastPrice) {
+              priceHistoryRef.current = [...priceHistoryRef.current.slice(-499), displayPrice];
+            }
+            
+            const prices = priceHistoryRef.current;
+            if (prices.length < 2) return;
             
             const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(
-              priceHistoryRef.current,
-              displayPrice,
-              precision
+              prices, displayPrice, precision
             );
             
             const allSignals = [...oscillators, ...movingAverages, ...orderFlowIndicators];
             
-            setState(prev => ({
-              ...prev,
-              price: displayPrice,
-              change: parseFloat(msg.p) * (selectedSymbol === 'ES1!' ? SP500_BTC_BETA : 1),
-              percentChange: parseFloat(msg.P),
-              high: parseFloat(msg.h) * (selectedSymbol === 'ES1!' ? SP500_BTC_BETA : 1),
-              low: parseFloat(msg.l) * (selectedSymbol === 'ES1!' ? SP500_BTC_BETA : 1),
-              datetime: new Date().toLocaleTimeString(),
-              isLive: true,
-              oscillators,
-              movingAverages,
-              orderFlowIndicators,
-              overallSummary: buildSummary(allSignals),
-              oscillatorsSummary: buildSummary(oscillators),
-              maSummary: buildSummary(movingAverages),
-              orderFlowSummary: buildSummary(orderFlowIndicators),
-            }));
+            // Safe ticker fields
+            const tickerChange = safeNum(parseFloat(msg.p), 0);
+            const tickerPct = safeNum(parseFloat(msg.P), 0);
+            const tickerHigh = safeNum(parseFloat(msg.h), 0);
+            const tickerLow = safeNum(parseFloat(msg.l), 0);
+            
+            if (isMountedRef.current && activeAssetRef.current === selectedSymbol) {
+              setState(prev => ({
+                ...prev,
+                price: displayPrice,
+                change: selectedSymbol === 'ES1!' ? tickerChange * SP500_BTC_BETA : tickerChange,
+                percentChange: selectedSymbol === 'ES1!' ? tickerPct : tickerPct,
+                high: selectedSymbol === 'ES1!' ? tickerHigh * SP500_BTC_BETA : tickerHigh,
+                low: selectedSymbol === 'ES1!' ? tickerLow * SP500_BTC_BETA : tickerLow,
+                datetime: new Date().toLocaleTimeString(),
+                isLive: true,
+                oscillators,
+                movingAverages,
+                orderFlowIndicators,
+                overallSummary: buildSummary(allSignals),
+                oscillatorsSummary: buildSummary(oscillators),
+                maSummary: buildSummary(movingAverages),
+                orderFlowSummary: buildSummary(orderFlowIndicators),
+              }));
+            }
           }
           
           else if (msg.bids && msg.asks) {
             let maxSize = 0;
             
-            const newBids: OrderBookLevel[] = msg.bids.slice(0, 10).map((b: string[], idx: number) => {
-              const size = parseFloat(b[1]);
+            const newBids: OrderBookLevel[] = msg.bids.slice(0, 10).map((b: string[]) => {
+              const size = safeNum(parseFloat(b[1]), 0);
               if (size > maxSize) maxSize = size;
-              return {
-                price: parseFloat(b[0]),
-                size,
-                cumulativeSize: 0,
-                percentage: 0,
-              };
+              return { price: safeNum(parseFloat(b[0]), 0), size, cumulativeSize: 0, percentage: 0 };
             });
             
             const newAsks: OrderBookLevel[] = msg.asks.slice(0, 10).map((a: string[]) => {
-              const size = parseFloat(a[1]);
+              const size = safeNum(parseFloat(a[1]), 0);
               if (size > maxSize) maxSize = size;
-              return {
-                price: parseFloat(a[0]),
-                size,
-                cumulativeSize: 0,
-                percentage: 0,
-              };
+              return { price: safeNum(parseFloat(a[0]), 0), size, cumulativeSize: 0, percentage: 0 };
             });
             
             const finalBids = newBids.map(b => ({
               ...b,
-              percentage: Math.min(100, (b.size / (maxSize || 1)) * 100),
+              percentage: maxSize > 0 ? Math.min(100, (b.size / maxSize) * 100) : 0,
             }));
             
             const finalAsks = newAsks.map(a => ({
               ...a,
-              percentage: Math.min(100, (a.size / (maxSize || 1)) * 100),
+              percentage: maxSize > 0 ? Math.min(100, (a.size / maxSize) * 100) : 0,
             }));
             
-            setState(prev => ({
-              ...prev,
-              bids: finalBids,
-              asks: finalAsks,
-            }));
+            if (isMountedRef.current && activeAssetRef.current === selectedSymbol) {
+              setState(prev => ({ ...prev, bids: finalBids, asks: finalAsks }));
+            }
           }
           
           else if (msg.e === 'aggTrade') {
-            const tradePrice = parseFloat(msg.p);
-            const tradeSize = parseFloat(msg.q);
-            const isBuyerMaker = msg.m;
+            const tradePrice = safeNum(parseFloat(msg.p), 0);
+            const tradeSize = safeNum(parseFloat(msg.q), 0);
+            const isBuyerMaker = Boolean(msg.m);
             
             const now = Date.now();
             const timeSinceLastTrade = now - lastTradeTimeRef.current;
@@ -461,11 +528,11 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
               volumeAccumulatorRef.current.buyers += tradeSize;
             }
             
-            const time = new Date(msg.T);
+            const time = new Date(safeNum(msg.T, now));
             const timeStr = time.toTimeString().split(' ')[0] + '.' + Math.floor(time.getMilliseconds() / 100);
             
             const trade: TradeFeedItem = {
-              id: String(msg.a),
+              id: String(safeNum(msg.a, now)),
               price: tradePrice,
               size: tradeSize,
               time: timeStr,
@@ -485,14 +552,15 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             const rawSellersPct = 100 - rawBuyersPct;
             const rawDelta = Math.round(volumeAccumulatorRef.current.buyers - volumeAccumulatorRef.current.sellers);
             
+            // Cap change at MAX_PCT_CHANGE_PER_UPDATE
             const buyersDelta = rawBuyersPct - smoothedBuyersPctRef.current;
             const clampedBuyersDelta = Math.max(-MAX_PCT_CHANGE_PER_UPDATE, Math.min(MAX_PCT_CHANGE_PER_UPDATE, buyersDelta));
-            const newSmoothedBuyersPct = Math.round(smoothedBuyersPctRef.current + clampedBuyersDelta);
+            const newSmoothedBuyersPct = Math.max(0, Math.min(100, smoothedBuyersPctRef.current + clampedBuyersDelta));
             const newSmoothedSellersPct = 100 - newSmoothedBuyersPct;
             
             const deltaDelta = rawDelta - smoothedDeltaRef.current;
             const clampedDelta = Math.max(-50, Math.min(50, deltaDelta));
-            const newSmoothedDelta = Math.round(smoothedDeltaRef.current + clampedDelta);
+            const newSmoothedDelta = smoothedDeltaRef.current + clampedDelta;
             
             smoothedBuyersPctRef.current = newSmoothedBuyersPct;
             smoothedSellersPctRef.current = newSmoothedSellersPct;
@@ -504,45 +572,46 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             else if (absDelta > 200) instPressure = 'HIGH';
             else if (absDelta > 50) instPressure = 'MEDIUM';
             
-            setState(prev => ({
-              ...prev,
-              buyersPercent: newSmoothedBuyersPct,
-              sellersPercent: newSmoothedSellersPct,
-              volumeDelta: newSmoothedDelta,
-              institutionalPressure: instPressure,
-              recentTrades: [trade, ...prev.recentTrades.slice(0, 49)],
-            }));
+            if (isMountedRef.current && activeAssetRef.current === selectedSymbol) {
+              setState(prev => ({
+                ...prev,
+                buyersPercent: newSmoothedBuyersPct,
+                sellersPercent: newSmoothedSellersPct,
+                volumeDelta: newSmoothedDelta,
+                institutionalPressure: instPressure,
+                recentTrades: [trade, ...prev.recentTrades.slice(0, 49)],
+              }));
+            }
           }
         } catch (e) {
-          // Silent fail
+          // Drop parse errors silently
         }
       };
 
-      ws.onerror = () => {};
+      ws.onerror = () => {
+        // Let onclose handle reconnect
+      };
+
       ws.onclose = () => {
+        if (!isMountedRef.current) return;
+        
         setState(prev => ({ ...prev, isLive: false }));
         
-        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectAttemptsRef.current++;
-            reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
-            connectWebSocket();
-          }, reconnectDelay);
-        }
+        // NO CAP — keep reconnecting forever with cap on delay
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectAttemptRef.current++;
+          reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_DELAY);
+          connectWebSocket();
+        }, reconnectDelay);
       };
     };
 
     connectWebSocket();
 
     return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
+      disconnect();
     };
-  }, [binanceSymbol, precision, selectedSymbol]);
+  }, [binanceSymbol, precision, selectedSymbol, isLoading, disconnect]);
 
-  return state;
+  return { ...state, isLoading };
 };

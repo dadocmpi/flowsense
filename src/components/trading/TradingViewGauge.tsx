@@ -9,8 +9,9 @@ interface TradingViewGaugeProps {
   oscillatorsSummary: IndicatorSummary;
   maSummary: IndicatorSummary;
   orderFlowSummary: IndicatorSummary;
-  mtfSummary: IndicatorSummary;            // NEW: multi-timeframe composite
+  mtfSummary: IndicatorSummary;
   selectedAsset: string;
+  isLoading?: boolean;
 }
 
 const VERDICT_COLORS: Record<CompassVerdict, { primary: string; bg: string; glow: string }> = {
@@ -29,17 +30,6 @@ function summaryToVerdict(v: string): CompassVerdict {
   return 'NEUTRAL';
 }
 
-/**
- * Build a true composite summary by combining every indicator group
- * with explicit category weights. OVERALL must factor in:
- *   - Oscillators (RSI, MACD, Momentum, Bollinger)        → 30%
- *   - Institutional Moving Averages (EMA 10/20/50/100/200) → 20%
- *   - EMA Cloud / Order-Flow trend                        → 15%
- *   - Multi-Timeframe agreement (M5, M15, H1, H4, D1)     → 35%
- *
- * Each contributor's score and weighted buy/sell/neutral counts are
- * summed here — no single category dominates the headline verdict.
- */
 export function buildOverallComposite(
   osc: IndicatorSummary,
   ma: IndicatorSummary,
@@ -55,7 +45,6 @@ export function buildOverallComposite(
   
   const totalW = weights.oscillators + weights.movingAverages + weights.orderFlow + weights.mtf;
   
-  // Weighted buy / sell / neutral counts
   const buy =
     osc.buyCount * weights.oscillators +
     ma.buyCount * weights.movingAverages +
@@ -72,7 +61,6 @@ export function buildOverallComposite(
     of.neutralCount * weights.orderFlow +
     mtf.neutralCount * weights.mtf;
   
-  // Weighted score (0..100)
   const score = Math.max(
     5,
     Math.min(95, Math.round(
@@ -105,7 +93,21 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
   orderFlowSummary,
   mtfSummary,
   selectedAsset,
+  isLoading,
 }) => {
+  // Loading skeleton
+  if (isLoading) {
+    return (
+      <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.08] p-7 h-full shadow-[0_25px_60px_rgba(0,0,0,0.9)] flex flex-col justify-between">
+        <div className="h-4 w-48 bg-white/5 rounded animate-pulse mb-4" />
+        <div className="flex flex-col items-center justify-center flex-grow py-8">
+          <div className="w-72 h-36 bg-white/5 rounded-3xl animate-pulse" />
+        </div>
+        <div className="h-16 bg-white/5 rounded-2xl animate-pulse mt-4" />
+      </div>
+    );
+  }
+
   const [activeTab, setActiveTab] = useState<'overall' | 'oscillators' | 'ma' | 'orderflow' | 'mtf'>('overall');
   
   const currentSummary = 
@@ -162,10 +164,7 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
     return { id: i, x1, y1, x2, y2, color, isMajor };
   });
 
-  const formatVerdict = (v: CompassVerdict): string => {
-    return v.replace('_', ' ');
-  };
-
+  const formatVerdict = (v: CompassVerdict): string => v.replace('_', ' ');
   const divergence = Math.abs(hysteresis.rawScore - hysteresis.displayedScore);
 
   return (
@@ -173,7 +172,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
       
       <div className={cn("absolute -top-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-radial rounded-full blur-3xl pointer-events-none transition-all duration-700 bg-gradient-to-b", colors.glow)} />
 
-      {/* Header — no SMOOTHED label, no status text after the title */}
       <div className="flex items-center justify-between border-b border-white/[0.06] pb-4 mb-2 z-10">
         <div className="flex items-center space-x-2">
           <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
@@ -203,7 +201,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
         </div>
       </div>
 
-      {/* Radial Ticks Gauge */}
       <div className="relative w-full max-w-[340px] mx-auto flex flex-col items-center justify-center my-4 z-10">
         
         <div className="relative w-72 h-36 flex items-end justify-center">
@@ -228,7 +225,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
                 strokeWidth={tick.isMajor ? 3 : 1.8}
                 strokeLinecap="round"
                 opacity={tick.isMajor ? 1 : 0.75}
-                className="transition-all duration-300 hover:opacity-100"
               />
             ))}
           </svg>
@@ -273,7 +269,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
         </div>
       </div>
 
-      {/* Score Counters */}
       <div className="grid grid-cols-3 gap-3 bg-white/[0.02] border border-white/[0.05] p-4 rounded-2xl z-10">
         <div className="text-center">
           <span className="text-[9px] font-black text-[#ef5350] block uppercase tracking-wider">SELL SIGNALS</span>
@@ -289,14 +284,11 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
         </div>
       </div>
 
-      {/* DEBUG LABEL — proves smoothing + hysteresis are wired in */}
+      {/* DEBUG LABEL */}
       <div className="mt-3 bg-black/40 border border-white/[0.06] rounded-xl px-3 py-2 font-mono text-[9px] z-10">
         <div className="flex items-center justify-between text-white/40 uppercase tracking-wider mb-1">
           <span className="text-amber-400 font-black">DEBUG · Smoothing Live</span>
-          <span className={cn(
-            "font-black",
-            divergence > 0.1 ? "text-[#26a69a]" : "text-white/30"
-          )}>
+          <span className={cn("font-black", divergence > 0.1 ? "text-[#26a69a]" : "text-white/30")}>
             Δ {divergence.toFixed(1)} pts
           </span>
         </div>
@@ -309,9 +301,7 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
           </div>
           <div className="flex justify-between">
             <span className="text-white/30">RAW verdict</span>
-            <span className="text-orange-300 font-black">
-              {formatVerdict(hysteresis.rawVerdict)}
-            </span>
+            <span className="text-orange-300 font-black">{formatVerdict(hysteresis.rawVerdict)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-white/30">SMOOTH score</span>
@@ -321,9 +311,7 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
           </div>
           <div className="flex justify-between">
             <span className="text-white/30">SMOOTH verdict</span>
-            <span className="text-[#4db6ac] font-black">
-              {formatVerdict(hysteresis.displayedVerdict)}
-            </span>
+            <span className="text-[#4db6ac] font-black">{formatVerdict(hysteresis.displayedVerdict)}</span>
           </div>
         </div>
         <div className="mt-1.5 pt-1.5 border-t border-white/[0.04] flex items-center justify-between text-white/40">

@@ -3,12 +3,25 @@ import { TwelveDataState } from '../../types/trading';
 import { TrendingUp, TrendingDown, Clock, ShieldAlert } from 'lucide-react';
 
 interface AssetSummaryCardProps {
-  data: TwelveDataState;
+  data: TwelveDataState & { isLoading?: boolean };
   precision: number;
 }
 
 export const AssetSummaryCard: React.FC<AssetSummaryCardProps> = ({ data, precision }) => {
   const isPositive = data.change >= 0;
+
+  // Loading skeleton
+  if (data.isLoading || data.price === 0) {
+    return (
+      <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.06] p-6 flex flex-wrap items-center justify-between gap-4 shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
+        <div className="flex flex-col gap-3">
+          <div className="h-4 w-32 bg-white/5 rounded animate-pulse" />
+          <div className="h-10 w-56 bg-white/5 rounded animate-pulse" />
+        </div>
+        <div className="h-16 w-48 bg-white/5 rounded-2xl animate-pulse" />
+      </div>
+    );
+  }
 
   return (
     <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.06] p-6 flex flex-wrap items-center justify-between gap-4 shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
@@ -16,21 +29,21 @@ export const AssetSummaryCard: React.FC<AssetSummaryCardProps> = ({ data, precis
         <div className="flex items-center space-x-3">
           <span className="text-xs font-black text-amber-400 uppercase tracking-widest">{data.symbol}</span>
           
-          {data.isMarketOpen ? (
+          {data.isLive ? (
             <div className="flex items-center space-x-1.5 bg-[#26a69a]/10 border border-[#26a69a]/30 px-2 py-0.5 rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-[#26a69a] animate-ping" />
-              <span className="text-[9px] font-bold text-[#26a69a]">OPEN</span>
+              <span className="text-[9px] font-bold text-[#26a69a]">LIVE</span>
             </div>
           ) : (
             <div className="flex items-center space-x-1.5 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              <span className="text-[9px] font-bold text-amber-400">WEEKEND CLOSE</span>
+              <span className="text-[9px] font-bold text-amber-400">RECONNECTING</span>
             </div>
           )}
 
           <span className="text-[10px] text-white/40 font-mono flex items-center gap-1">
             <Clock size={10} className="text-white/30" />
-            {data.datetime}
+            {data.datetime || '--:--:--'}
           </span>
         </div>
 
