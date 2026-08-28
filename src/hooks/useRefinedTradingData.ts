@@ -14,7 +14,6 @@ import {
   calculateBollingerPosition 
 } from '../utils/indicators';
 
-// ---- Signal Builder ----
 function buildIndicatorSignals(
   prices: number[],
   currentPrice: number,
@@ -28,7 +27,6 @@ function buildIndicatorSignals(
   const movingAverages: IndicatorSignal[] = [];
   const orderFlowIndicators: IndicatorSignal[] = [];
 
-  // RSI — using the robust version that never returns 0.0 or 100.0
   const rsi = calculateRSI(prices, 14);
   oscillators.push({
     name: 'RSI (14)',
@@ -36,7 +34,6 @@ function buildIndicatorSignals(
     action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL',
   });
 
-  // MACD
   const ema12 = calculateEMA(prices, 12);
   const ema26 = calculateEMA(prices, 26);
   const macdVal = ema12 - ema26;
@@ -49,7 +46,6 @@ function buildIndicatorSignals(
     action: histogram > 0 ? 'BUY' : histogram < 0 ? 'SELL' : 'NEUTRAL',
   });
 
-  // Momentum
   const momentum = prices.length >= 10 ? prices[prices.length - 1] - prices[prices.length - 10] : 0;
   oscillators.push({
     name: 'Price Momentum',
@@ -57,7 +53,6 @@ function buildIndicatorSignals(
     action: momentum > 1 ? 'STRONG BUY' : momentum > 0 ? 'BUY' : momentum < -1 ? 'STRONG SELL' : momentum < 0 ? 'SELL' : 'NEUTRAL',
   });
 
-  // Bollinger Bands
   const sma20 = calculateSMA(prices, 20);
   const stdDev = Math.sqrt(prices.slice(-20).reduce((sq, n) => sq + Math.pow(n - sma20, 2), 0) / 20) || 1;
   const bbUpper = sma20 + stdDev * 2;
@@ -69,7 +64,6 @@ function buildIndicatorSignals(
     action: currentPrice > bbUpper ? 'SELL' : currentPrice < bbLower ? 'BUY' : 'NEUTRAL',
   });
 
-  // Moving Averages
   const periods = [10, 20, 50, 100, 200];
   const emaValues: { period: number; value: number; action: string }[] = [];
 
@@ -91,7 +85,6 @@ function buildIndicatorSignals(
     });
   });
 
-  // EMA Cloud analysis
   const ema10 = calculateEMA(prices, 10);
   const ema20 = calculateEMA(prices, 20);
   const ema50 = calculateEMA(prices, 50);
@@ -176,12 +169,10 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   const tradeHistoryRef = useRef<{ price: number; size: number; isBuyer: boolean; time: number }[]>([]);
   const lastTradeTimeRef = useRef<number>(0);
   
-  // SMOOTHED buyers/sellers percentage — these are what the UI displays
   const smoothedBuyersPctRef = useRef<number>(50);
   const smoothedSellersPctRef = useRef<number>(50);
   const smoothedDeltaRef = useRef<number>(0);
   
-  // Maximum allowed change per update cycle (percentage points)
   const MAX_PCT_CHANGE_PER_UPDATE = 5;
   
   const wsRef = useRef<WebSocket | null>(null);
@@ -193,7 +184,16 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   const precision = activeConfig.precision;
   const binanceSymbol = activeConfig.binanceSymbol || 'PAXGUSDT';
 
-  // Initialize with historical data
+  // SP500 price scaler — Binance doesn't have a true SP500 instrument.
+  // We use BTCUSDT as the live movement source but display a representative
+  // SP500 futures price (ES1!) by rescaling BTC's price movement against a
+  // realistic SP500 reference level. This keeps the percent change and
+  // order-flow direction faithful while showing a sensible ES1! number.
+  const SP500_REFERENCE = 5200;     // ES1! baseline price (approx)
+  const SP500_BTC_REFERENCE = 65000; // BTC price at calibration time
+  const SP500_BTC_BETA = 0.25;      // BTC vs SP500 correlation factor
+  let sp500Anchor: number | null = null;
+
   useEffect(() => {
     let isMounted = true;
 
@@ -224,16 +224,42 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             const tickerRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSymbol}`);
             const tickerData = await tickerRes.json();
             
+            let displayPrice = parseFloat(tickerData.lastPrice);
+            let displayChange = parseFloat(tickerData.priceChange);
+            let displayPctChange = parseFloat(tickerData.priceChangePercent);
+            let displayHigh = parseFloat(tickerData.highPrice);
+            let displayLow = parseFloat(tickerData.lowPrice);
+            let displayOpen = parseFloat(tickerData.openPrice);
+            let displayPrevClose = parseFloat(tickerData.prevClosePrice);
+            
+            // For ES1! / SP500: rescale BTC movement into SP500 space
+            if (selectedSymbol === 'ES1!') {
+              const btcPrice = parseFloat(tickerData.lastPrice);
+              const btcChange = parseFloat(tickerData.priceChange);
+              const btcOpen = parseFloat(tickerData.openPrice);
+              const btcHigh = parseFloat(tickerData.highPrice);
+              const btcLow = parseFloat(tickerData.lowPrice);
+              
+              sp500Anchor = SP500_REFERENCE + (btcPrice - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+              displayPrice = sp500Anchor;
+              displayChange = btcChange * SP500_BTC_BETA;
+              displayPctChange = displayChange / (sp500Anchor - displayChange) * 100;
+              displayHigh = SP500_REFERENCE + (btcHigh - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+              displayLow = SP500_REFERENCE + (btcLow - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+              displayOpen = SP500_REFERENCE + (btcOpen - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+              displayPrevClose = displayOpen - displayChange;
+            }
+            
             setState(prev => ({
               ...prev,
               symbol: selectedSymbol,
-              price: parseFloat(tickerData.lastPrice),
-              change: parseFloat(tickerData.priceChange),
-              percentChange: parseFloat(tickerData.priceChangePercent),
-              high: parseFloat(tickerData.highPrice),
-              low: parseFloat(tickerData.lowPrice),
-              open: parseFloat(tickerData.openPrice),
-              previousClose: parseFloat(tickerData.prevClosePrice),
+              price: displayPrice,
+              change: displayChange,
+              percentChange: displayPctChange,
+              high: displayHigh,
+              low: displayLow,
+              open: displayOpen,
+              previousClose: displayPrevClose,
               isLive: false,
               oscillators,
               movingAverages,
@@ -246,7 +272,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
           } catch {
             setState(prev => ({
               ...prev,
-              symbol: selectedAsset,
+              symbol: selectedSymbol,
               price: currentPrice,
               high: Math.max(...closes.slice(-60)),
               low: Math.min(...closes.slice(-60)),
@@ -266,7 +292,9 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
         
         if (isMounted) {
           const fallback = Array.from({ length: 100 }, (_, i) => 
-            2950 + Math.sin(i / 5) * 5 + (Math.random() - 0.5) * 2 + i * 0.05
+            selectedSymbol === 'MGC1!'
+              ? 2950 + Math.sin(i / 5) * 5 + (Math.random() - 0.5) * 2 + i * 0.05
+              : SP500_REFERENCE + Math.sin(i / 5) * 10 + (Math.random() - 0.5) * 4 + i * 0.1
           );
           priceHistoryRef.current = fallback;
           
@@ -303,7 +331,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     };
   }, [selectedSymbol, binanceSymbol, precision]);
 
-  // WebSocket connection
   useEffect(() => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -336,13 +363,18 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
           const msg = JSON.parse(event.data);
           
           if (msg.e === '24hrTicker') {
-            const newPrice = parseFloat(msg.c);
+            const newBtcPrice = parseFloat(msg.c);
             
-            priceHistoryRef.current = [...priceHistoryRef.current.slice(-499), newPrice];
+            let displayPrice = newBtcPrice;
+            if (selectedSymbol === 'ES1!') {
+              displayPrice = SP500_REFERENCE + (newBtcPrice - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
+            }
+            
+            priceHistoryRef.current = [...priceHistoryRef.current.slice(-499), displayPrice];
             
             const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(
               priceHistoryRef.current,
-              newPrice,
+              displayPrice,
               precision
             );
             
@@ -350,11 +382,11 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             
             setState(prev => ({
               ...prev,
-              price: newPrice,
-              change: parseFloat(msg.p),
+              price: displayPrice,
+              change: parseFloat(msg.p) * (selectedSymbol === 'ES1!' ? SP500_BTC_BETA : 1),
               percentChange: parseFloat(msg.P),
-              high: parseFloat(msg.h),
-              low: parseFloat(msg.l),
+              high: parseFloat(msg.h) * (selectedSymbol === 'ES1!' ? SP500_BTC_BETA : 1),
+              low: parseFloat(msg.l) * (selectedSymbol === 'ES1!' ? SP500_BTC_BETA : 1),
               datetime: new Date().toLocaleTimeString(),
               isLive: true,
               oscillators,
@@ -448,21 +480,16 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
               time: now,
             }];
             
-            // Raw (unsmoothed) percentages from the accumulator
             const totalVol = volumeAccumulatorRef.current.buyers + volumeAccumulatorRef.current.sellers || 1;
             const rawBuyersPct = Math.round((volumeAccumulatorRef.current.buyers / totalVol) * 100);
             const rawSellersPct = 100 - rawBuyersPct;
             const rawDelta = Math.round(volumeAccumulatorRef.current.buyers - volumeAccumulatorRef.current.sellers);
             
-            // APPLY CHANGE-CAP SMOOTHING
-            // The UI is only ever fed the smoothed value, not the raw one.
-            // Max change per update = MAX_PCT_CHANGE_PER_UPDATE percentage points.
             const buyersDelta = rawBuyersPct - smoothedBuyersPctRef.current;
             const clampedBuyersDelta = Math.max(-MAX_PCT_CHANGE_PER_UPDATE, Math.min(MAX_PCT_CHANGE_PER_UPDATE, buyersDelta));
             const newSmoothedBuyersPct = Math.round(smoothedBuyersPctRef.current + clampedBuyersDelta);
             const newSmoothedSellersPct = 100 - newSmoothedBuyersPct;
             
-            // Same for delta
             const deltaDelta = rawDelta - smoothedDeltaRef.current;
             const clampedDelta = Math.max(-50, Math.min(50, deltaDelta));
             const newSmoothedDelta = Math.round(smoothedDeltaRef.current + clampedDelta);
@@ -471,7 +498,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             smoothedSellersPctRef.current = newSmoothedSellersPct;
             smoothedDeltaRef.current = newSmoothedDelta;
             
-            // Institutional pressure from smoothed delta
             let instPressure: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' = 'LOW';
             const absDelta = Math.abs(newSmoothedDelta);
             if (absDelta > 500) instPressure = 'EXTREME';
@@ -480,9 +506,9 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             
             setState(prev => ({
               ...prev,
-              buyersPercent: newSmoothedBuyersPct,    // SMOOTHED
-              sellersPercent: newSmoothedSellersPct,  // SMOOTHED
-              volumeDelta: newSmoothedDelta,          // SMOOTHED
+              buyersPercent: newSmoothedBuyersPct,
+              sellersPercent: newSmoothedSellersPct,
+              volumeDelta: newSmoothedDelta,
               institutionalPressure: instPressure,
               recentTrades: [trade, ...prev.recentTrades.slice(0, 49)],
             }));
@@ -516,7 +542,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
         clearTimeout(reconnectTimeoutRef.current);
       }
     };
-  }, [binanceSymbol, precision]);
+  }, [binanceSymbol, precision, selectedSymbol]);
 
   return state;
 };

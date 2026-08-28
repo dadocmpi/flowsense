@@ -9,6 +9,7 @@ interface TradingViewGaugeProps {
   oscillatorsSummary: IndicatorSummary;
   maSummary: IndicatorSummary;
   orderFlowSummary: IndicatorSummary;
+  mtfSummary: IndicatorSummary;            // NEW: multi-timeframe composite
   selectedAsset: string;
 }
 
@@ -20,7 +21,6 @@ const VERDICT_COLORS: Record<CompassVerdict, { primary: string; bg: string; glow
   STRONG_SELL: { primary: '#ef5350', bg: 'bg-[#ef5350]/15', glow: 'from-[#ef5350]/30' },
 };
 
-// Map raw summary verdict string to CompassVerdict enum
 function summaryToVerdict(v: string): CompassVerdict {
   if (v === 'STRONG BUY') return 'STRONG_BUY';
   if (v === 'BUY') return 'BUY';
@@ -29,27 +29,96 @@ function summaryToVerdict(v: string): CompassVerdict {
   return 'NEUTRAL';
 }
 
+/**
+ * Build a true composite summary by combining every indicator group
+ * with explicit category weights. OVERALL must factor in:
+ *   - Oscillators (RSI, MACD, Momentum, Bollinger)        → 30%
+ *   - Institutional Moving Averages (EMA 10/20/50/100/200) → 20%
+ *   - EMA Cloud / Order-Flow trend                        → 15%
+ *   - Multi-Timeframe agreement (M5, M15, H1, H4, D1)     → 35%
+ *
+ * Each contributor's score and weighted buy/sell/neutral counts are
+ * summed here — no single category dominates the headline verdict.
+ */
+export function buildOverallComposite(
+  osc: IndicatorSummary,
+  ma: IndicatorSummary,
+  of: IndicatorSummary,
+  mtf: IndicatorSummary
+): IndicatorSummary {
+  const weights = {
+    oscillators: 0.30,
+    movingAverages: 0.20,
+    orderFlow: 0.15,
+    mtf: 0.35,
+  };
+  
+  const totalW = weights.oscillators + weights.movingAverages + weights.orderFlow + weights.mtf;
+  
+  // Weighted buy / sell / neutral counts
+  const buy =
+    osc.buyCount * weights.oscillators +
+    ma.buyCount * weights.movingAverages +
+    of.buyCount * weights.orderFlow +
+    mtf.buyCount * weights.mtf;
+  const sell =
+    osc.sellCount * weights.oscillators +
+    ma.sellCount * weights.movingAverages +
+    of.sellCount * weights.orderFlow +
+    mtf.sellCount * weights.mtf;
+  const neutral =
+    osc.neutralCount * weights.oscillators +
+    ma.neutralCount * weights.movingAverages +
+    of.neutralCount * weights.orderFlow +
+    mtf.neutralCount * weights.mtf;
+  
+  // Weighted score (0..100)
+  const score = Math.max(
+    5,
+    Math.min(95, Math.round(
+      (osc.score * weights.oscillators +
+       ma.score * weights.movingAverages +
+       of.score * weights.orderFlow +
+       mtf.score * weights.mtf) / totalW
+    ))
+  );
+  
+  let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
+  if (score >= 75) verdict = 'STRONG BUY';
+  else if (score >= 55) verdict = 'BUY';
+  else if (score <= 25) verdict = 'STRONG SELL';
+  else if (score <= 45) verdict = 'SELL';
+  
+  return {
+    buyCount: Math.round(buy / totalW),
+    neutralCount: Math.round(neutral / totalW),
+    sellCount: Math.round(sell / totalW),
+    score,
+    verdict,
+  };
+}
+
 export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
   overallSummary,
   oscillatorsSummary,
   maSummary,
   orderFlowSummary,
+  mtfSummary,
   selectedAsset,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overall' | 'oscillators' | 'ma' | 'orderflow'>('overall');
+  const [activeTab, setActiveTab] = useState<'overall' | 'oscillators' | 'ma' | 'orderflow' | 'mtf'>('overall');
   
   const currentSummary = 
     activeTab === 'oscillators' ? oscillatorsSummary :
     activeTab === 'ma' ? maSummary :
     activeTab === 'orderflow' ? orderFlowSummary :
+    activeTab === 'mtf' ? mtfSummary :
     overallSummary;
   
-  // #2: Apply hysteresis — the verdict the UI renders is gated
   const hysteresis = useCompassHysteresis(currentSummary, 0.25);
   
   const colors = VERDICT_COLORS[hysteresis.displayedVerdict];
   
-  // Animate needle angle from the SMOOTHED score
   const targetAngle = -90 + ((hysteresis.displayedScore + 100) / 200) * 180;
   const [needleAngle, setNeedleAngle] = useState(targetAngle);
   
@@ -63,7 +132,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
     return () => cancelAnimationFrame(id);
   }, [targetAngle]);
 
-  // Generate 35 radial ticks
   const numTicks = 35;
   const cx = 150;
   const cy = 135;
@@ -98,7 +166,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
     return v.replace('_', ' ');
   };
 
-  // Helper: how divergent the two scores are (for the debug label)
   const divergence = Math.abs(hysteresis.rawScore - hysteresis.displayedScore);
 
   return (
@@ -106,17 +173,11 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
       
       <div className={cn("absolute -top-24 left-1/2 -translate-x-1/2 w-80 h-80 bg-radial rounded-full blur-3xl pointer-events-none transition-all duration-700 bg-gradient-to-b", colors.glow)} />
 
-      {/* Header */}
+      {/* Header — no SMOOTHED label, no status text after the title */}
       <div className="flex items-center justify-between border-b border-white/[0.06] pb-4 mb-2 z-10">
         <div className="flex items-center space-x-2">
           <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
           <span className="text-[10px] font-black text-white/70 uppercase tracking-[0.2em]">CONFLUENCE COMPASS</span>
-          <span 
-            className="text-[8px] font-black text-amber-400 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded uppercase tracking-wider"
-            title="This gauge consumes a smoothed, hysteresis-gated signal. Other panels below show raw live data and may temporarily disagree."
-          >
-            SMOOTHED
-          </span>
         </div>
         <div className="flex bg-white/[0.03] p-1 rounded-xl border border-white/[0.06] space-x-1">
           {[
@@ -124,6 +185,7 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
             { id: 'oscillators', label: 'OSCILLATORS' },
             { id: 'ma', label: 'MOVING AVG' },
             { id: 'orderflow', label: 'FLOW' },
+            { id: 'mtf', label: 'MTF' },
           ].map(tab => (
             <button
               key={tab.id}

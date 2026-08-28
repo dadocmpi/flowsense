@@ -7,14 +7,6 @@ import {
   DEFAULT_SIGNAL_CONFIG,
 } from '../types/signalEngine';
 
-// ============================================
-// LAYER 2: MULTI-TIMEFRAME CONFLUENCE
-// ============================================
-//
-// Runs indicator set on multiple timeframes independently.
-// Key: higher TFs weighted more, correlated indicators grouped.
-//
-
 interface CandleData {
   openTime: number;
   open: number;
@@ -74,7 +66,6 @@ function calculateBollingerPosition(closes: number[], period = 20, stdDev = 2): 
   return { position, pctB };
 }
 
-// Fetch candles for a specific timeframe from Binance
 async function fetchCandles(
   binanceSymbol: string,
   interval: string,
@@ -130,46 +121,38 @@ function computeTimeframeConfluence(
   const closes = candles.map(c => c.close);
   const current = closes[closes.length - 1];
   
-  // ---- Single trend vote (collapse correlated EMAs) ----
   const ema10 = calculateEMA(closes, 10);
   const ema20 = calculateEMA(closes, 20);
   const ema50 = calculateEMA(closes, 50);
   const ema200 = calculateEMA(closes, 200);
   
-  // EMA cloud bias — ONE vote, not four
   const emaCloudBias: 'BULL' | 'BEAR' | 'NEUTRAL' = 
     (current > ema10 && current > ema20 && current > ema50 && current > ema200) ? 'BULL' :
     (current < ema10 && current < ema20 && current < ema50 && current < ema200) ? 'BEAR' :
     (current > ema200) ? 'BULL' : (current < ema200) ? 'BEAR' : 'NEUTRAL';
   
-  // ---- RSI ----
   const rsi = calculateRSI(closes, 14);
   let rsiBias: number = 0;
-  if (rsi > 70) rsiBias = -20; // overbought = bearish lean
+  if (rsi > 70) rsiBias = -20;
   else if (rsi > 60) rsiBias = -5;
-  else if (rsi < 30) rsiBias = 20; // oversold = bullish lean
+  else if (rsi < 30) rsiBias = 20;
   else if (rsi < 40) rsiBias = 5;
   
-  // ---- Bollinger position ----
   const boll = calculateBollingerPosition(closes);
   let bollBias = 0;
-  if (boll.position === 'OVERSOLD') bollBias = 10; // mean reversion buy
+  if (boll.position === 'OVERSOLD') bollBias = 10;
   else if (boll.position === 'OVERBOUGHT') bollBias = -10;
   
-  // ---- Momentum ----
   const momentum = closes.length >= 10 
     ? current - closes[closes.length - 10] 
     : 0;
   const momBias = Math.max(-30, Math.min(30, momentum * 2));
   
-  // ---- Trend (price vs EMA200) ----
   const trend: 'UP' | 'DOWN' | 'FLAT' = 
     emaCloudBias === 'BULL' ? 'UP' :
     emaCloudBias === 'BEAR' ? 'DOWN' : 'FLAT';
   
-  // ---- Composite score (clamped -100..+100) ----
   let score = rsiBias + bollBias + momBias;
-  // EMA cloud dominates (single trend vote)
   if (emaCloudBias === 'BULL') score += 40;
   else if (emaCloudBias === 'BEAR') score -= 40;
   
@@ -223,7 +206,6 @@ export const useMultiTimeframe = (
       const lastFetch = lastFetchRef.current[tf] || 0;
       const interval = TF_TO_BINANCE[tf];
       
-      // Refresh timeframe data every 1-5 minutes depending on TF
       const refreshMs = tf === 'M5' ? 30_000 : tf === 'M15' ? 60_000 : 5 * 60_000;
       
       if (now - lastFetch > refreshMs || !cacheRef.current[tf] || cacheRef.current[tf].length === 0) {
@@ -237,7 +219,6 @@ export const useMultiTimeframe = (
       const candles = cacheRef.current[tf] || [];
       const weight = config.mtfWeights[tf] || 0.2;
       const tfResult = computeTimeframeConfluence(candles, weight, tf);
-      // Append the latest price to the closes for live responsiveness
       if (currentPrice > 0 && tf === 'M5') {
         tfResult.score = (tfResult.score * 0.7) + (currentPrice > candles[candles.length-1]?.close ? 5 : -5);
       }
@@ -253,7 +234,6 @@ export const useMultiTimeframe = (
     
     newResult.weightedScore = totalWeight > 0 ? weightedSum / totalWeight : 0;
     
-    // Agreement: dominant direction count vs total
     const totalTfs = newResult.timeframes.length || 1;
     const dominantCount = Math.max(buyCount, sellCount, neutralCount);
     newResult.agreementPercent = (dominantCount / totalTfs) * 100;
@@ -275,7 +255,7 @@ export const useMultiTimeframe = (
   
   useEffect(() => {
     fetchAll();
-    const interval = setInterval(fetchAll, 60_000); // refresh every minute
+    const interval = setInterval(fetchAll, 60_000);
     return () => clearInterval(interval);
   }, [fetchAll]);
 
