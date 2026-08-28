@@ -41,12 +41,13 @@ function calculateEMA(prices: number[], period: number): number {
   return ema;
 }
 
-// Map our internal symbols to Twelve Data format
+// Map our internal symbols to Twelve Data forex/index symbols
+// Keeping display names as futures (MGC1!, ES1!) in UI but using forex/index for data
 const getTwelveDataSymbol = (internalSymbol: string): string => {
-  // Twelve Data uses different symbols for futures
+  // Twelve Data forex/index symbols
   const symbolMap: Record<string, string> = {
-    'MGC1!': 'GC=F',  // Gold Futures
-    'ES1!': 'ES',     // E-mini S&P 500 (front month)
+    'MGC1!': 'XAUUSD',  // Gold/USD forex pair (instead of GC=F futures)
+    'ES1!': 'US500',    // S&P 500 index (instead of ES e-mini futures)
   };
   
   return symbolMap[internalSymbol] || internalSymbol;
@@ -63,13 +64,13 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
 
   const [state, setState] = useState<TwelveDataState>({
     symbol: selectedSymbol,
-    price: assetConfig.symbol === 'MGC1!' ? 2350.00 : 4500.00, // More realistic defaults
+    price: assetConfig.symbol === 'MGC1!' ? 2350.00 : 5050.00, // Typical forex/index values
     change: 0,
     percentChange: 0,
-    high: assetConfig.symbol === 'MGC1!' ? 2360.00 : 4520.00,
-    low: assetConfig.symbol === 'MGC1!' ? 2340.00 : 4480.00,
-    open: assetConfig.symbol === 'MGC1!' ? 2345.00 : 4490.00,
-    previousClose: assetConfig.symbol === 'MGC1!' ? 2345.00 : 4490.00,
+    high: assetConfig.symbol === 'MGC1!' ? 2360.00 : 5070.00,
+    low: assetConfig.symbol === 'MGC1!' ? 2340.00 : 5030.00,
+    open: assetConfig.symbol === 'MGC1!' ? 2345.00 : 5040.00,
+    previousClose: assetConfig.symbol === 'MGC1!' ? 2345.00 : 5040.00,
     datetime: new Date().toLocaleTimeString(),
     isLive: true,
     isMarketOpen: true,
@@ -122,8 +123,8 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
       } catch (err) {
         console.error('Failed to fetch initial data:', err);
         // Fallback to mock data
-        const basePrice = assetConfig.symbol === 'MGC1!' ? 2350 : 4500;
-        const fallback = Array.from({ length: 60 }, (_, i) => basePrice + Math.sin(i / 4) * (assetConfig.symbol === 'MGC1!' ? 20 : 50) + i * 0.1);
+        const basePrice = assetConfig.symbol === 'MGC1!' ? 2350 : 5050;
+        const fallback = Array.from({ length: 60 }, (_, i) => basePrice + Math.sin(i / 4) * (assetConfig.symbol === 'MGC1!' ? 20 : 25) + i * 0.1);
         priceHistoryRef.current = fallback;
         updateCalculations(fallback[fallback.length - 1]);
       }
