@@ -64,10 +64,12 @@ function buildIndicatorSignals(
     action: currentPrice > bbUpper ? 'SELL' : currentPrice < bbLower ? 'BUY' : 'NEUTRAL',
   });
 
+  // Build moving averages in a single loop — no intermediate array needed
   const periods = [10, 20, 50, 100, 200];
-
   periods.forEach(period => {
-    const ema = calculateEMA(prices, period);
+    const emaValue = calculateEMA(prices, period);
+    const action: IndicatorSignal['action'] = currentPrice > emaValue ? 'BUY' : 'SELL';
+    
     const label = period === 200 ? 'EMA 200 (Institutional Base)' :
                   period === 100 ? 'EMA 100 (Major Trend)' :
                   period === 50 ? 'EMA 50 (Trend Line)' :
@@ -75,8 +77,8 @@ function buildIndicatorSignals(
     
     movingAverages.push({
       name: `EMA ${period}`,
-      value: value.toFixed(precision),
-      action: currentPrice > ema ? 'BUY' : 'SELL',
+      value: emaValue.toFixed(precision),
+      action,
     });
   });
 
@@ -130,7 +132,6 @@ function buildSummary(signals: IndicatorSignal[]): IndicatorSummary {
   return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
 }
 
-// Safe numeric helpers — never return NaN
 function safeNum(val: number | undefined | null, fallback: number): number {
   if (val === undefined || val === null || isNaN(val) || !isFinite(val)) return fallback;
   return val;
@@ -143,11 +144,7 @@ function safePercentChange(current: number, prev: number): number {
 }
 
 export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
-  // Track which asset the current data belongs to — prevents stale WS messages
-  // from the previous asset leaking in after a switch.
   const activeAssetRef = useRef<string>(selectedSymbol);
-  
-  // Loading state — true while fetching initial data
   const [isLoading, setIsLoading] = useState(true);
   
   const [state, setState] = useState<TwelveDataState>({
@@ -178,13 +175,11 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     orderFlowSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
   });
 
-  // All mutable state lives in refs so they don't cause re-renders
   const priceHistoryRef = useRef<number[]>([]);
   const volumeAccumulatorRef = useRef<{ buyers: number; sellers: number }>({ buyers: 0, sellers: 0 });
   const tradeHistoryRef = useRef<{ price: number; size: number; isBuyer: boolean; time: number }[]>([]);
   const lastTradeTimeRef = useRef<number>(0);
   
-  // SMOOTHED buyer/seller values
   const smoothedBuyersPctRef = useRef<number>(50);
   const smoothedSellersPctRef = useRef<number>(50);
   const smoothedDeltaRef = useRef<number>(0);
@@ -200,12 +195,10 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   const precision = activeConfig.precision;
   const binanceSymbol = activeConfig.binanceSymbol || 'PAXGUSDT';
 
-  // SP500 rescaling constants
   const SP500_REFERENCE = 5200;
   const SP500_BTC_REFERENCE = 65000;
   const SP500_BTC_BETA = 0.25;
 
-  // ---- Cancel any pending reconnect ----
   const cancelReconnect = useCallback(() => {
     if (reconnectTimeoutRef.current !== null) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -213,17 +206,15 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     }
   }, []);
 
-  // ---- Clean disconnect ----
   const disconnect = useCallback(() => {
     cancelReconnect();
     if (wsRef.current) {
-      wsRef.current.onclose = null; // prevent reconnect loop
+      wsRef.current.onclose = null;
       wsRef.current.close();
       wsRef.current = null;
     }
   }, [cancelReconnect]);
 
-  // ---- Reset all per-asset state ----
   const resetPerAssetState = useCallback(() => {
     priceHistoryRef.current = [];
     volumeAccumulatorRef.current = { buyers: 0, sellers: 0 };
@@ -236,7 +227,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     setIsLoading(true);
   }, []);
 
-  // ---- Fetch and apply initial kline data ----
   const loadInitialData = useCallback(async (symbol: string, binanceSym: string, prec: number) => {
     try {
       const response = await fetch(
@@ -249,7 +239,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
       if (!Array.isArray(data) || !isMountedRef.current) return;
       
       const closes = data.map((k: any[]) => safeNum(parseFloat(k[4]), 0));
-      // CLEAR old price history and set fresh for this asset
       priceHistoryRef.current = closes;
       
       const currentPrice = closes[closes.length - 1] || 0;
@@ -261,7 +250,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
       const maSummary = buildSummary(movingAverages);
       const orderFlowSummary = buildSummary(orderFlowIndicators);
 
-      // Fetch ticker for 24h stats
       try {
         const tickerRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`);
         const tickerData = await tickerRes.json();
@@ -329,7 +317,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             high: Math.max(...closes.slice(-60)),
             low: Math.min(...closes.slice(-60)),
             isLive: false,
-            isMarketOpen: true,
             oscillators,
             movingAverages,
             orderFlowIndicators,
@@ -376,13 +363,11 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     }
   }, [precision]);
 
-  // ---- When asset changes: reset state, disconnect old WS, load new data ----
   useEffect(() => {
     isMountedRef.current = true;
     resetPerAssetState();
     disconnect();
     
-    // Mark this ref immediately so stale WS messages are dropped
     activeAssetRef.current = selectedSymbol;
     
     loadInitialData(selectedSymbol, binanceSymbol, precision);
@@ -393,9 +378,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     };
   }, [selectedSymbol, binanceSymbol, precision, loadInitialData, disconnect, resetPerAssetState]);
 
-  // ---- WebSocket live feed ----
   useEffect(() => {
-    // Wait for initial load to finish before connecting WS
     if (isLoading) return;
     
     let reconnectDelay = 1000;
@@ -422,7 +405,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
       };
 
       ws.onmessage = (event) => {
-        // DROP messages from the wrong asset (race condition on fast switch)
         if (!isMountedRef.current || activeAssetRef.current !== selectedSymbol) return;
         
         try {
@@ -436,7 +418,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
               displayPrice = SP500_REFERENCE + (newBtcPrice - SP500_BTC_REFERENCE) * SP500_BTC_BETA;
             }
             
-            // Only append if not a duplicate (WS can send the same tick twice)
             const lastPrice = priceHistoryRef.current[priceHistoryRef.current.length - 1];
             if (displayPrice !== lastPrice) {
               priceHistoryRef.current = [...priceHistoryRef.current.slice(-499), displayPrice];
@@ -451,7 +432,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             
             const allSignals = [...oscillators, ...movingAverages, ...orderFlowIndicators];
             
-            // Safe ticker fields
             const tickerChange = safeNum(parseFloat(msg.p), 0);
             const tickerPct = safeNum(parseFloat(msg.P), 0);
             const tickerHigh = safeNum(parseFloat(msg.h), 0);
@@ -462,7 +442,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
                 ...prev,
                 price: displayPrice,
                 change: selectedSymbol === 'ES1!' ? tickerChange * SP500_BTC_BETA : tickerChange,
-                percentChange: selectedSymbol === 'ES1!' ? tickerPct : tickerPct,
+                percentChange: tickerPct,
                 high: selectedSymbol === 'ES1!' ? tickerHigh * SP500_BTC_BETA : tickerHigh,
                 low: selectedSymbol === 'ES1!' ? tickerLow * SP500_BTC_BETA : tickerLow,
                 datetime: new Date().toLocaleTimeString(),
@@ -552,7 +532,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             const rawSellersPct = 100 - rawBuyersPct;
             const rawDelta = Math.round(volumeAccumulatorRef.current.buyers - volumeAccumulatorRef.current.sellers);
             
-            // Cap change at MAX_PCT_CHANGE_PER_UPDATE
             const buyersDelta = rawBuyersPct - smoothedBuyersPctRef.current;
             const clampedBuyersDelta = Math.max(-MAX_PCT_CHANGE_PER_UPDATE, Math.min(MAX_PCT_CHANGE_PER_UPDATE, buyersDelta));
             const newSmoothedBuyersPct = Math.max(0, Math.min(100, smoothedBuyersPctRef.current + clampedBuyersDelta));
@@ -584,20 +563,17 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             }
           }
         } catch (e) {
-          // Drop parse errors silently
+          // Silent parse error
         }
       };
 
-      ws.onerror = () => {
-        // Let onclose handle reconnect
-      };
+      ws.onerror = () => {};
 
       ws.onclose = () => {
         if (!isMountedRef.current) return;
         
         setState(prev => ({ ...prev, isLive: false }));
         
-        // NO CAP — keep reconnecting forever with cap on delay
         reconnectTimeoutRef.current = setTimeout(() => {
           reconnectAttemptRef.current++;
           reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_DELAY);
