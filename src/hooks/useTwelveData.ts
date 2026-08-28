@@ -61,11 +61,10 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
   // USING THE PROVIDED API KEY FROM THE USER
   const API_KEY = 'eb8bf0091a1c46b8b13d9adefed660c5'; 
   const BASE_URL = 'https://api.twelvedata.com';
-  const isUsingMockData = false; // Now using real API key
 
   const [state, setState] = useState<TwelveDataState>({
     symbol: selectedSymbol,
-    price: assetConfig.symbol === 'MGC1!' ? 2350.00 : 5050.00, // Typical forex/index values
+    price: assetConfig.symbol === 'MGC1!' ? 2350.00 : 5050.00, // Typical forex/index values as placeholders
     change: 0,
     percentChange: 0,
     high: assetConfig.symbol === 'MGC1!' ? 2360.00 : 5070.00,
@@ -101,6 +100,8 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
   const sellerVolRef = useRef<number>(assetConfig.symbol === 'MGC1!' ? 110 : 80);
 
   // Fetch initial historical data for technical indicators
+  // NOTE: We do NOT fall back to mock data on failure to avoid price jumps
+  // Instead, we rely on real-time polling to get actual data
   useEffect(() => {
     let isMounted = true;
 
@@ -119,15 +120,13 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
           }
         } else {
           console.error('Twelve Data API error:', data);
-          throw new Error('Failed to fetch initial data from Twelve Data');
+          // Do NOT fall back to mock data; keep initial state values
+          // Real-time polling will eventually get us actual data
         }
       } catch (err) {
         console.error('Failed to fetch initial data:', err);
-        // Fallback to mock data only if API fails
-        const basePrice = assetConfig.symbol === 'MGC1!' ? 2350 : 5050;
-        const fallback = Array.from({ length: 60 }, (_, i) => basePrice + Math.sin(i / 4) * (assetConfig.symbol === 'MGC1!' ? 20 : 25) + i * 0.1);
-        priceHistoryRef.current = fallback;
-        updateCalculations(fallback[fallback.length - 1]);
+        // Do NOT fall back to mock data; keep initial state values
+        // Real-time polling will eventually get us actual data
       }
     };
 
