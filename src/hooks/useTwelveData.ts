@@ -41,12 +41,24 @@ function calculateEMA(prices: number[], period: number): number {
   return ema;
 }
 
+// Map our internal symbols to Twelve Data format
+const getTwelveDataSymbol = (internalSymbol: string): string => {
+  // Twelve Data uses different symbols for futures
+  const symbolMap: Record<string, string> = {
+    'MGC1!': 'GC=F',  // Gold Futures
+    'ES1!': 'ES',     // E-mini S&P 500 (front month)
+  };
+  
+  return symbolMap[internalSymbol] || internalSymbol;
+};
+
 export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
   // Get asset config for precision and contract details
   const assetConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
   
   // Twelve Data API configuration
-  const API_KEY = 'demo'; // Replace with actual API key or use environment variable
+  // REPLACE 'your_api_key_here' WITH YOUR ACTUAL TWELVE DATA API KEY
+  const API_KEY = 'your_api_key_here'; 
   const BASE_URL = 'https://api.twelvedata.com';
 
   const [state, setState] = useState<TwelveDataState>({
@@ -92,8 +104,9 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
 
     const fetchInitialData = async () => {
       try {
+        const twelveDataSymbol = getTwelveDataSymbol(selectedSymbol);
         // Get 100 candles for initial technical analysis
-        const res = await fetch(`${BASE_URL}/time_series?symbol=${selectedSymbol}&interval=1min&outputsize=100&apikey=${API_KEY}`);
+        const res = await fetch(`${BASE_URL}/time_series?symbol=${twelveDataSymbol}&interval=1min&outputsize=100&apikey=${API_KEY}`);
         const data = await res.json();
         
         if (isMounted && data.values && Array.isArray(data.values)) {
@@ -102,6 +115,9 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
           if (closes.length > 0) {
             updateCalculations(closes[0]); // Calculate with most recent price
           }
+        } else {
+          console.error('Twelve Data API error:', data);
+          throw new Error('Failed to fetch initial data from Twelve Data');
         }
       } catch (err) {
         console.error('Failed to fetch initial data:', err);
@@ -247,7 +263,8 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
 
     const fetchRealTimeData = async () => {
       try {
-        const res = await fetch(`${BASE_URL}/quote?symbol=${selectedSymbol}&apikey=${API_KEY}`);
+        const twelveDataSymbol = getTwelveDataSymbol(selectedSymbol);
+        const res = await fetch(`${BASE_URL}/quote?symbol=${twelveDataSymbol}&apikey=${API_KEY}`);
         const data = await res.json();
         
         if (isMounted && data.symbol) {
@@ -273,9 +290,13 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
           }));
 
           updateCalculations(price);
+        } else {
+          console.error('Twelve Data API error:', data);
+          // Don't throw error here to avoid breaking the UI, just keep last known data
         }
       } catch (err) {
         console.error('Failed to fetch real-time data:', err);
+        // Keep last known data on error
       }
     };
 
