@@ -34,16 +34,19 @@ export interface AssetConfig {
   precision: number;
   contractSize: string;
   tickSize: number;
+  /** Binance trading pair to use as real-time data proxy (e.g. 'PAXGUSDT' for XAU). */
+  binanceSymbol: string;
 }
 
 export const SUPPORTED_ASSETS: AssetConfig[] = [
-  { 
-    symbol: 'MGC1!', 
-    name: 'Micro Gold Futures (Continuous)', 
-    exchange: 'COMEX / CME', 
+  {
+    symbol: 'MGC1!',
+    name: 'Micro Gold Futures (Continuous)',
+    exchange: 'COMEX / CME',
     precision: 2,
     contractSize: '10 troy oz',
-    tickSize: 0.10
+    tickSize: 0.10,
+    binanceSymbol: 'PAXGUSDT',
   },
   {
     symbol: 'ES1!',
@@ -51,7 +54,8 @@ export const SUPPORTED_ASSETS: AssetConfig[] = [
     exchange: 'CME',
     precision: 2,
     contractSize: '50 USD',
-    tickSize: 0.25
+    tickSize: 0.25,
+    binanceSymbol: 'BTCUSDT', // placeholder - no direct S&P proxy on Binance
   },
 ];
 
@@ -98,12 +102,12 @@ export interface TwelveDataState {
   datetime: string;
   isLive: boolean;
   isMarketOpen: boolean;
-  
+
   // Indicators
   oscillators: IndicatorSignal[];
   movingAverages: IndicatorSignal[];
   orderFlowIndicators: IndicatorSignal[];
-  
+
   // Order Flow
   buyersPercent: number;
   sellersPercent: number;
@@ -112,7 +116,7 @@ export interface TwelveDataState {
   bids: OrderBookLevel[];
   asks: OrderBookLevel[];
   recentTrades: TradeFeedItem[];
-  
+
   // Summaries
   overallSummary: IndicatorSummary;
   oscillatorsSummary: IndicatorSummary;
