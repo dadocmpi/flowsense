@@ -9,8 +9,6 @@ interface AssetSummaryCardProps {
 
 export const AssetSummaryCard: React.FC<AssetSummaryCardProps> = ({ data, precision }) => {
   const isPositive = data.change >= 0;
-  // Only show dollar sign for gold (XAUUSD), not for S&P 500 index
-  const showDollarSign = data.symbol === 'MGC1!';
 
   return (
     <div className="bg-[#0b0c10] rounded-3xl border border-white/[0.06] p-6 flex flex-wrap items-center justify-between gap-4 shadow-[0_20px_50px_rgba(0,0,0,0.8)]">
@@ -38,7 +36,7 @@ export const AssetSummaryCard: React.FC<AssetSummaryCardProps> = ({ data, precis
 
         <div className="flex items-baseline space-x-4 mt-2">
           <span className="text-4xl font-black font-mono tracking-tight text-white transition-all">
-            {showDollarSign ? '$' : ''}${data.price.toFixed(precision)}
+            ${data.price.toFixed(precision)}
           </span>
           <div className={`flex items-center space-x-1 font-mono text-sm font-black px-2.5 py-1 rounded-xl ${
             isPositive ? 'bg-[#26a69a]/15 text-[#26a69a]' : 'bg-[#ef5350]/15 text-[#ef5350]'
@@ -52,11 +50,11 @@ export const AssetSummaryCard: React.FC<AssetSummaryCardProps> = ({ data, precis
       <div className="grid grid-cols-2 gap-x-8 gap-y-2 font-mono text-right text-xs bg-white/[0.02] border border-white/[0.04] p-3.5 rounded-2xl">
         <div>
           <span className="text-[9px] font-bold text-white/30 uppercase block">24H HIGH</span>
-          <span className="font-black text-white/90 text-sm">{showDollarSign ? '$' : ''}${data.high.toFixed(precision)}</span>
+          <span className="font-black text-white/90 text-sm">${data.high.toFixed(precision)}</span>
         </div>
         <div>
           <span className="text-[9px] font-bold text-white/30 uppercase block">24H LOW</span>
-          <span className="font-black text-white/90 text-sm">{showDollarSign ? '$' : ''}${data.low.toFixed(precision)}</span>
+          <span className="font-black text-white/90 text-sm">${data.low.toFixed(precision)}</span>
         </div>
       </div>
     </div>
