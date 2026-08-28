@@ -51,16 +51,19 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
     'ES1!': 'SPYUSDT'    // S&P 500 ETF as proxy
   };
   const binanceSymbol = binanceSymbolMap[selectedSymbol] || 'PAXGUSDT';
+  
+  // Price multiplier: for ES1! we need to multiply SPY price by 10 to get index value
+  const priceMultiplier = assetConfig.symbol === 'ES1!' ? 10 : 1;
 
   const [state, setState] = useState<TwelveDataState>({
     symbol: selectedSymbol,
-    price: assetConfig.symbol === 'MGC1!' ? 2954.80 : 450.00, // approximate default
+    price: (assetConfig.symbol === 'MGC1!' ? 2954.80 : 450.00) * priceMultiplier,
     change: 0,
     percentChange: 0,
-    high: assetConfig.symbol === 'MGC1!' ? 2965.20 : 455.00,
-    low: assetConfig.symbol === 'MGC1!' ? 2940.10 : 445.00,
-    open: assetConfig.symbol === 'MGC1!' ? 2940.60 : 448.00,
-    previousClose: assetConfig.symbol === 'MGC1!' ? 2940.60 : 448.00,
+    high: (assetConfig.symbol === 'MGC1!' ? 2965.20 : 455.00) * priceMultiplier,
+    low: (assetConfig.symbol === 'MGC1!' ? 2940.10 : 445.00) * priceMultiplier,
+    open: (assetConfig.symbol === 'MGC1!' ? 2940.60 : 448.00) * priceMultiplier,
+    previousClose: (assetConfig.symbol === 'MGC1!' ? 2940.60 : 448.00) * priceMultiplier,
     datetime: new Date().toLocaleTimeString(),
     isLive: true,
     isMarketOpen: true,
@@ -123,6 +126,7 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
   }, [selectedSymbol, binanceSymbol]); // Re-run when selectedAsset or binanceSymbol changes
 
   const updateCalculations = useCallback((currentPrice: number) => {
+    const priceMultiplier = selectedSymbol === 'ES1!' ? 10 : 1;
     const prices = [...priceHistoryRef.current.slice(-100), currentPrice];
     priceHistoryRef.current = prices;
 
@@ -141,12 +145,12 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
       },
       {
         name: 'MACD (12, 26, 9)',
-        value: `${macdVal >= 0 ? '+' : ''}${macdVal.toFixed(2)}`,
+        value: `${(macdVal * priceMultiplier) >= 0 ? '+' : ''}${(macdVal * priceMultiplier).toFixed(2)}`,
         action: macdVal > 0.5 ? 'STRONG BUY' : macdVal > 0 ? 'BUY' : macdVal < -0.5 ? 'STRONG SELL' : 'SELL'
       },
       {
         name: 'Price Momentum',
-        value: `${momentum >= 0 ? '+' : ''}${momentum.toFixed(2)}`,
+        value: `${(momentum * priceMultiplier) >= 0 ? '+' : ''}${(momentum * priceMultiplier).toFixed(2)}`,
         action: momentum > 1.5 ? 'STRONG BUY' : momentum > 0 ? 'BUY' : momentum < -1.5 ? 'STRONG SELL' : 'SELL'
       }
     ];
@@ -158,10 +162,10 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
     const ema200 = calculateEMA(prices, 200);
 
     const movingAverages: IndicatorSignal[] = [
-      { name: 'EMA 10 (Fast)', value: ema10.toFixed(assetConfig.precision), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
-      { name: 'EMA 20 (Intermediate)', value: ema20.toFixed(assetConfig.precision), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
-      { name: 'EMA 50 (Trend Line)', value: ema50.toFixed(assetConfig.precision), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
-      { name: 'EMA 200 (Institutional Base)', value: ema200.toFixed(assetConfig.precision), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
+      { name: 'EMA 10 (Fast)', value: (ema10 * priceMultiplier).toFixed(assetConfig.precision), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
+      { name: 'EMA 20 (Intermediate)', value: (ema20 * priceMultiplier).toFixed(assetConfig.precision), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
+      { name: 'EMA 50 (Trend Line)', value: (ema50 * priceMultiplier).toFixed(assetConfig.precision), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
+      { name: 'EMA 200 (Institutional Base)', value: (ema200 * priceMultiplier).toFixed(assetConfig.precision), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
     ];
 
     // Order Flow
@@ -224,7 +228,7 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
 
     setState(prev => ({
       ...prev,
-      price: currentPrice,
+      price: currentPrice * priceMultiplier,
       datetime: new Date().toLocaleTimeString(),
       oscillators,
       movingAverages,
@@ -238,7 +242,7 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
       maSummary,
       orderFlowSummary: ofSummary
     }));
-  }, [selectedSymbol]); // Re-create callback when selectedSymbol changes to ensure correct assetConfig closure
+  }, [selectedSymbol]); // Re-create callback when selectedSymbol changes
 
   // WebSocket Live Stream for selected asset
   useEffect(() => {
@@ -267,12 +271,12 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
 
             setState(prev => ({
               ...prev,
-              price: curPrice,
-              change,
-              percentChange,
-              high,
-              low,
-              open,
+              price: curPrice * priceMultiplier,
+              change: change * priceMultiplier,
+              percentChange: percentChange,
+              high: high * priceMultiplier,
+              low: low * priceMultiplier,
+              open: open * priceMultiplier,
               isLive: true,
             }));
 
@@ -301,8 +305,16 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
               return { price: p, size: s, cumulativeSize: runningAskCum, percentage: 0 };
             });
 
-            const finalBids = newBids.map(b => ({ ...b, percentage: Math.min(100, Math.round((b.size / maxTotal) * 100)) }));
-            const finalAsks = newAsks.map(a => ({ ...a, percentage: Math.min(100, Math.round((a.size / maxTotal) * 100)) }));
+            const finalBids = newBids.map(b => ({ 
+              ...b, 
+              percentage: Math.min(100, Math.round((b.size / maxTotal) * 100)),
+              price: b.price * priceMultiplier
+            }));
+            const finalAsks = newAsks.map(a => ({ 
+              ...a, 
+              percentage: Math.min(100, Math.round((a.size / maxTotal) * 100)),
+              price: a.price * priceMultiplier
+            }));
 
             setState(prev => ({
               ...prev,
@@ -328,7 +340,7 @@ export const useTwelveData = (selectedSymbol: string = 'MGC1!') => {
 
             const tradeItem: TradeFeedItem = {
               id: `${msg.a}`,
-              price: p,
+              price: p * priceMultiplier,
               size: parseFloat(q.toFixed(assetConfig.symbol === 'MGC1!' ? 2 : 4)), // adjust precision for size
               time: timeStr,
               type: isMaker ? 'SELL' : 'BUY',
