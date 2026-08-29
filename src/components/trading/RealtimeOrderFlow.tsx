@@ -170,13 +170,31 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
                 <span className="text-center text-white/60 z-10">{bid.size}</span>
                 <span className="text-right text-white/30 text-[10px] z-10">BID</span>
               </div>
-            ))}
+            )}
           </div>
 
         </div>
 
       </div>
 
+      {/* Footer Metrics */}
+      <div className="grid grid-cols-2 border-t border-white/[0.03] bg-black/40">
+        <div className="p-4 border-r border-white/[0.03]">
+          <span className="text-[8px] font-bold text-white/30 uppercase tracking-wider block">Delta</span>
+          <span className={cn(
+            "text-xs font-mono font-bold block mt-1",
+            data.volumeDelta >= 0 ? "text-[#26a69a]" : "text-[#ef5350]"
+          )}>
+            {data.volumeDelta >= 0 ? '+' : ''}{(data.volumeDelta || 0).toLocaleString()}
+          </span>
+        </div>
+        <div className="p-4">
+          <span className="text-[8px] font-bold text-white/30 uppercase tracking-wider block">Absorption</span>
+          <span className="text-xs font-bold text-amber-500 block mt-1 uppercase tracking-wider">
+            {data.institutionalPressure || 'LOW'}
+          </span>
+        </div>
+      </div>
     </div>
   );
 };
