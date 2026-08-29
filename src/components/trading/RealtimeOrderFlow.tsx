@@ -145,7 +145,7 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
                   className="absolute right-0 top-0 bottom-0 bg-[#ef5350]/15 border-r border-[#ef5350]/40 rounded-sm pointer-events-none" 
                   style={{ width: `${Math.max(1, ask.percentage || 0)}%` }}
                 />
-                <span className="text-[#ef5350] font-bold z-10">${ask.price.toFixed(precision)}</span>
+                <span className="text-[#ef5350] font-bold z-10">{ask.price.toFixed(precision)}</span>
                 <span className="text-center text-white/60 z-10">{ask.size}</span>
                 <span className="text-right text-white/30 text-[10px] z-10">ASK</span>
               </div>
@@ -166,11 +166,11 @@ export const RealtimeOrderFlow: React.FC<RealtimeOrderFlowProps> = ({ data, prec
                   className="absolute left-0 top-0 bottom-0 bg-[#26a69a]/15 border-l border-[#26a69a]/40 rounded-sm pointer-events-none" 
                   style={{ width: `${Math.max(1, bid.percentage || 0)}%` }}
                 />
-                <span className="text-[#26a69a] font-bold z-10">${bid.price.toFixed(precision)}</span>
+                <span className="text-[#26a69a] font-bold z-10">{bid.price.toFixed(precision)}</span>
                 <span className="text-center text-white/60 z-10">{bid.size}</span>
                 <span className="text-right text-white/30 text-[10px] z-10">BID</span>
               </div>
-            )}
+            ))}
           </div>
 
         </div>
