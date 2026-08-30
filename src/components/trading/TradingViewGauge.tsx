@@ -292,15 +292,21 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
       <div className="grid grid-cols-3 gap-3 bg-white/[0.02] border border-white/[0.05] p-4 rounded-2xl z-10">
         <div className="text-center">
           <span className="text-[9px] font-black text-[#ef5350] block uppercase tracking-wider">SELL SIGNALS</span>
-          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.sellCount}</span>
+          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">
+            {currentSummary.sellCount}
+          </span>
         </div>
         <div className="text-center border-x border-white/[0.06]">
           <span className="text-[9px] font-black text-amber-400 block uppercase tracking-wider">NEUTRAL</span>
-          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block>{currentSummary.neutralCount}</span>
+          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">
+            {currentSummary.neutralCount}
+          </span>
         </div>
         <div className="text-center">
           <span className="text-[9px] font-black text-[#26a69a] block uppercase tracking-wider">BUY SIGNALS</span>
-          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block>{currentSummary.buyCount}</span>
+          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">
+            {currentSummary.buyCount}
+          </span>
         </div>
       </div>
 
