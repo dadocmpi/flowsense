@@ -296,11 +296,11 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
         </div>
         <div className="text-center border-x border-white/[0.06]">
           <span className="text-[9px] font-black text-amber-400 block uppercase tracking-wider">NEUTRAL</span>
-          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.neutralCount}</span>
+          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block>{currentSummary.neutralCount}</span>
         </div>
         <div className="text-center">
           <span className="text-[9px] font-black text-[#26a69a] block uppercase tracking-wider">BUY SIGNALS</span>
-          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block">{currentSummary.buyCount}</span>
+          <span className="text-2xl font-mono font-black text-white/90 mt-0.5 block>{currentSummary.buyCount}</span>
         </div>
       </div>
 
@@ -355,11 +355,14 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
           </div>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-4 text-lg font-bold">
-          <div className="text-white/50">BUY SUPPORT</div>
-          <span className="text-white">{buySupport}</span>
-        </div>
-        <div className="text-white/50">SELL SUPPORT</div>
-        <span className="text-white">{sellSupport}</span>
+          <div className="flex flex-col">
+            <div className="text-white/50">BUY SUPPORT</div>
+            <span className="text-white">{buySupport}</span>
+          </div>
+          <div className="flex flex-col">
+            <div className="text-white/50">SELL SUPPORT</div>
+            <span className="text-white">{sellSupport}</span>
+          </div>
         </div>
         <div className="mt-2 text-white/50 text-center">STATE: {state}</div>
       </div>
