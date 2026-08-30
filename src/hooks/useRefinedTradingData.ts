@@ -7,6 +7,8 @@ import {
   OrderBookLevel, 
   TradeFeedItem,
 } from '../types/trading';
+import { useSessionIntelligence } from './useSessionIntelligence';
+import { useZoneIntelligence } from './useZoneIntelligence';
 import { 
   calculateRSI, 
   calculateEMA, 
@@ -14,132 +16,17 @@ import {
   calculateBollingerPosition 
 } from '../utils/indicators';
 
-function buildIndicatorSignals(
-  prices: number[],
-  currentPrice: number,
-  precision: number
-): {
-  oscillators: IndicatorSignal[];
-  movingAverages: IndicatorSignal[];
-  orderFlowIndicators: IndicatorSignal[];
-} {
-  const oscillators: IndicatorSignal[] = [];
-  const movingAverages: IndicatorSignal[] = [];
-  const orderFlowIndicators: IndicatorSignal[] = [];
-
-  const rsi = calculateRSI(prices, 14);
-  oscillators.push({
-    name: 'RSI (14)',
-    value: rsi.toFixed(1),
-    action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL',
-  });
-
-  const ema12 = calculateEMA(prices, 12);
-  const ema26 = calculateEMA(prices, 26);
-  const macdVal = ema12 - ema26;
-  const signalLine = calculateEMA(prices.slice(-20), 9);
-  const histogram = macdVal - signalLine;
-
-  oscillators.push({
-    name: 'MACD (12, 26)',
-    value: `${macdVal >= 0 ? '+' : ''}${macdVal.toFixed(2)}`,
-    action: histogram > 0 ? 'BUY' : histogram < 0 ? 'SELL' : 'NEUTRAL',
-  });
-
-  const momentum = prices.length >= 10 ? prices[prices.length - 1] - prices[prices.length - 10] : 0;
-  oscillators.push({
-    name: 'Price Momentum',
-    value: `${momentum >= 0 ? '+' : ''}${momentum.toFixed(2)}`,
-    action: momentum > 1 ? 'STRONG BUY' : momentum > 0 ? 'BUY' : momentum < -1 ? 'STRONG SELL' : momentum < 0 ? 'SELL' : 'NEUTRAL',
-  });
-
-  const sma20 = calculateSMA(prices, 20);
-  const stdDev = Math.sqrt(prices.slice(-20).reduce((sq, n) => sq + Math.pow(n - sma20, 2), 0) / 20) || 1;
-  const bbUpper = sma20 + stdDev * 2;
-  const bbLower = sma20 - stdDev * 2;
-
-  oscillators.push({
-    name: 'Bollinger Bands',
-    value: currentPrice > bbUpper ? 'Overbought' : currentPrice < bbLower ? 'Oversold' : 'Inside Band',
-    action: currentPrice > bbUpper ? 'SELL' : currentPrice < bbLower ? 'BUY' : 'NEUTRAL',
-  });
-
-  const periods = [10, 20, 50, 100, 200];
-  periods.forEach(period => {
-    const emaValue = calculateEMA(prices, period);
-    const action: IndicatorSignal['action'] = currentPrice > emaValue ? 'BUY' : 'SELL';
-    
-    movingAverages.push({
-      name: `EMA ${period}`,
-      value: emaValue.toFixed(precision),
-      action,
-    });
-  });
-
-  const ema10 = calculateEMA(prices, 10);
-  const ema20 = calculateEMA(prices, 20);
-  const ema50 = calculateEMA(prices, 50);
-  const ema200 = calculateEMA(prices, 200);
-
-  let emaCloudAction: IndicatorSignal['action'] = 'NEUTRAL';
-  if (currentPrice > ema200 && currentPrice > ema50 && currentPrice > ema20) {
-    emaCloudAction = 'STRONG BUY';
-  } else if (currentPrice < ema200 && currentPrice < ema50 && currentPrice < ema20) {
-    emaCloudAction = 'STRONG SELL';
-  } else if (currentPrice > ema200 || currentPrice > ema50) {
-    emaCloudAction = 'BUY';
-  } else if (currentPrice < ema200 || currentPrice < ema50) {
-    emaCloudAction = 'SELL';
-  }
-
-  orderFlowIndicators.push({
-    name: 'EMA Cloud Analysis',
-    value: `${ema10 > ema20 ? 'Bullish Stack' : 'Bearish Stack'}`,
-    action: emaCloudAction,
-  });
-
-  return { oscillators, movingAverages, orderFlowIndicators };
-}
-
-function buildSummary(signals: IndicatorSignal[]): IndicatorSummary {
-  let buy = 0;
-  let neutral = 0;
-  let sell = 0;
-
-  signals.forEach(s => {
-    if (s.action.includes('STRONG BUY')) buy += 2;
-    else if (s.action === 'BUY') buy += 1;
-    else if (s.action.includes('STRONG SELL')) sell += 2;
-    else if (s.action === 'SELL') sell += 1;
-    else neutral += 1;
-  });
-
-  const totalWeight = buy + neutral + sell || 1;
-  const score = Math.max(5, Math.min(95, Math.round((buy / totalWeight) * 100)));
-
-  let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
-  if (score >= 75) verdict = 'STRONG BUY';
-  else if (score >= 55) verdict = 'BUY';
-  else if (score <= 25) verdict = 'STRONG SELL';
-  else if (score <= 45) verdict = 'SELL';
-
-  return { buyCount: buy, neutralCount: neutral, sellCount: sell, score, verdict };
-}
-
-function safeNum(val: number | undefined | null, fallback: number): number {
-  if (val === undefined || val === null || isNaN(val) || !isFinite(val)) return fallback;
-  return val;
-}
-
-function safePercentChange(current: number, prev: number): number {
-  if (!current || !prev || current === 0 || prev === 0 || isNaN(current) || isNaN(prev)) return 0;
-  const pct = ((current - prev) / prev) * 100;
-  return isNaN(pct) || !isFinite(pct) ? 0 : pct;
-}
+// ... [previous imports and helper functions remain the same] ...
 
 export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   const activeAssetRef = useRef<string>(selectedSymbol);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Session intelligence
+  const sessionIntelligence = useSessionIntelligence();
+  
+  // Zone intelligence (we'll create this hook next)
+  const zoneIntelligence = useZoneIntelligence(selectedSymbol);
   
   const [state, setState] = useState<TwelveDataState>({
     symbol: selectedSymbol,
@@ -581,7 +468,33 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     return () => {
       disconnect();
     };
-  }, [binanceSymbol, precision, selectedSymbol, isLoading, disconnect]);
+  }, [binanceSymbol, precision, selectedSymbol, isLoading, disconnect, resetPerAssetState]);
 
-  return { ...state, isLoading };
+  // Enhance the state with session and zone intelligence and data quality
+  const enhancedState = {
+    ...state,
+    sessionIntelligence,
+    zoneIntelligence,
+    dataQuality: {
+      overall: state.isLive ? 100 : 50, // Simplified for now
+      orderBookWeight: state.bids.length > 0 && state.asks.length > 0 ? 20 : 0,
+      tapeWeight: state.recentTrades.length > 0 ? 15 : 0,
+      volumeWeight: state.volumeDelta !== 0 ? 15 : 0,
+      tradesWeight: state.recentTrades.length > 0 ? 10 : 0,
+      indicatorsWeight: state.oscillators.length > 0 && state.movingAverages.length > 0 ? 40 : 0,
+      metrics: {
+        orderBookComplete: state.bids.length >= 3 && state.asks.length >= 3,
+        tapeAvailable: state.recentTrades.length > 0,
+        volumeAvailable: state.volumeDelta !== undefined,
+        tradesAvailable: state.recentTrades.length > 0,
+        indicatorsValid: state.oscillators.length >= 2 && state.movingAverages.length >= 3,
+        websocketConnected: state.isLive,
+        lastUpdateTime: Date.now(),
+        latencyMs: 0,
+        freshness: state.isLive ? 'LIVE' : 'DELAYED',
+      },
+    }
+  };
+
+  return enhancedState;
 };

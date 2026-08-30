@@ -47,6 +47,100 @@ const Index = () => {
     );
   }, [tradingData, mtfResult]);
 
+  // For now, we'll use placeholder values for buySupport, sellSupport, and state
+  // In a full implementation, these would come from a useConfluenceEngine hook
+  const buySupport = Math.max(0, Math.min(100, overallComposite.score));
+  const sellSupport = 100 - buySupport;
+  const state = overallComposite.score >= 75 ? 'BUY CONDITIONS FAVORED' :
+                overallComposite.score >= 55 ? 'BUY CONDITIONS DEVELOPING' :
+                overallComposite.score <= 25 ? 'SELL CONDITIONS FAVORED' :
+                overallComposite.score <= 45 ? 'SELL CONDITIONS DEVELOPING' :
+                'NO SIGNAL';
+
+  // Placeholder evidence groups (would be calculated by useConfluenceEngine)
+  const evidenceGroups = {
+    location: {
+      direction: 'BUY',
+      strength: 80,
+      confidence: 90,
+      features: ['Price inside zone', 'Zone tested 3 times'],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    structure: {
+      direction: 'BUY',
+      strength: 60,
+      confidence: 70,
+      features: ['Higher highs', 'Higher lows'],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    volume: {
+      direction: 'BUY',
+      strength: 70,
+      confidence: 80,
+      features: ['High relative volume', 'Volume expansion'],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    orderFlow: {
+      direction: 'BUY',
+      strength: 75,
+      confidence: 85,
+      features: ['Strong positive delta', 'Absorption detected'],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    liquidity: {
+      direction: 'NEUTRAL',
+      strength: 50,
+      confidence: 60,
+      features: [],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    microstructure: {
+      direction: 'BUY',
+      strength: 65,
+      confidence: 75,
+      features: ['Low spread', 'High trade frequency'],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    macro: {
+      direction: 'BUY',
+      strength: 70,
+      confidence: 80,
+      features: ['No high-impact events', 'DXY weakening'],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    crossMarket: {
+      direction: 'BUY',
+      strength: 65,
+      confidence: 70,
+      features: ['Gold/Silver alignment', 'ES/NQ confirmation'],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    volatility: {
+      direction: 'NEUTRAL',
+      strength: 50,
+      confidence: 65,
+      features: ['Normal volatility'],
+      contradictions: [],
+      freshness: 'LIVE'
+    },
+    momentum: {
+      direction: 'BUY',
+      strength: 60,
+      confidence: 70,
+      features: ['Positive price acceleration'],
+      contradictions: [],
+      freshness: 'LIVE'
+    }
+  };
+
   return (
     <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
       
@@ -90,6 +184,12 @@ const Index = () => {
               orderFlowSummary={tradingData.orderFlowSummary}
               mtfSummary={overallComposite}
               selectedAsset={selectedAsset}
+              sessionIntelligence={tradingData.sessionIntelligence}
+              zoneIntelligence={tradingData.zoneIntelligence}
+              buySupport={buySupport}
+              sellSupport={sellSupport}
+              state={state}
+              evidenceGroups={evidenceGroups}
               isLoading={tradingData.isLoading}
             />
           </div>

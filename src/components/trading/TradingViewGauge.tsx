@@ -11,6 +11,29 @@ interface TradingViewGaugeProps {
   orderFlowSummary: IndicatorSummary;
   mtfSummary: IndicatorSummary;
   selectedAsset: string;
+  sessionIntelligence: {
+    currentSession: 'GOLD' | 'US500' | 'CLOSED';
+    isSessionActive: boolean;
+    madridTime: string;
+    newYorkTime: string;
+  };
+  zoneIntelligence: {
+    zone: any; // ManualDailyZone | null
+    isInsideZone: boolean;
+    isApproachingZone: boolean;
+    distanceToZone: number;
+  };
+  buySupport: number; // 0-100
+  sellSupport: number; // 0-100
+  state: string; // One of the 10 states
+  evidenceGroups: Record<string, {
+    direction: 'BUY' | 'SELL' | 'NEUTRAL';
+    strength: number; // 0-100
+    confidence: number; // 0-100
+    features: string[];
+    contradictions: string[];
+    freshness: 'LIVE' | 'RECENT' | 'STALE' | 'UNAVAILABLE';
+  }>;
   isLoading?: boolean;
 }
 
@@ -93,6 +116,12 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
   orderFlowSummary,
   mtfSummary,
   selectedAsset,
+  sessionIntelligence,
+  zoneIntelligence,
+  buySupport,
+  sellSupport,
+  state,
+  evidenceGroups,
   isLoading,
 }) => {
   if (isLoading) {
@@ -242,14 +271,6 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
           </div>
         </div>
 
-        <div className="w-full grid grid-cols-5 text-center text-[8px] font-black font-mono tracking-wider mt-5 gap-1">
-          <span className="text-[#ef5350] bg-[#ef5350]/10 py-1 rounded-md border border-[#ef5350]/20">STRONG SELL</span>
-          <span className="text-[#e57373] bg-[#e57373]/10 py-1 rounded-md border border-[#e57373]/20">SELL</span>
-          <span className="text-amber-400 bg-amber-500/10 py-1 rounded-md border border-amber-500/20">NEUTRAL</span>
-          <span className="text-[#4db6ac] bg-[#4db6ac]/10 py-1 rounded-md border border-[#4db6ac]/20">BUY</span>
-          <span className="text-[#26a69a] bg-[#26a69a]/10 py-1 rounded-md border border-[#26a69a]/20">STRONG BUY</span>
-        </div>
-
         <div className={cn("mt-6 px-8 py-3.5 rounded-2xl border backdrop-blur-xl transition-all text-center w-full", colors.bg)}>
           <span 
             className="text-2xl font-black tracking-widest block drop-shadow-md uppercase"
@@ -318,6 +339,56 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
         </div>
       </div>
 
+      {/* New sections for session, zone, and supports */}
+      <div className="mt-4 p-4 bg-white/[0.02] rounded-lg border border-white/[0.04]">
+        <div className="grid grid-cols-2 gap-4 text-sm font-mono">
+          <div>
+            <span className="text-white/50">SESSION:</span>
+            <span className="text-white">{sessionIntelligence.currentSession}</span>
+            {sessionIntelligence.isSessionActive && (
+              <span className="text-xs ml-1 bg-[#26a69a]/20 text-[#26a69a] px-1 rounded">ACTIVE</span>
+            )}
+          </div>
+          <div>
+            <span className="text-white/50">ZONE:</span>
+            <span className="text-white">{zoneIntelligence.isInsideZone ? 'INSIDE' : zoneIntelligence.isApproachingZone ? 'APPROACHING' : 'OUTSIDE'}</span>
+          </div>
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-4 text-lg font-bold">
+          <div className="text-white/50">BUY SUPPORT</span>
+          <span className="text-white">{buySupport}</span>
+        </div>
+        <div className="text-white/50">SELL SUPPORT</span>
+        <span className="text-white">{sellSupport}</span>
+        </div>
+        <div className="mt-2 text-white/50 text-center">STATE: {state}</div>
+      </div>
+
+      {/* Evidence groups summary */}
+      <div className="mt-4 p-4 bg-white/[0.02] rounded-lg border border-white/[0.04]">
+        <div className="text-white/50 font-bold mb-2">EVIDENCE GROUPS</div>
+        <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+          {Object.keys(evidenceGroups).map(group => (
+            <div key={group} className="flex items-center">
+              <span className="text-white/50 w-16">{group.toUpperCase()}</span>
+              <span className={getGroupStatus(evidenceGroups[group])}>●</span>
+              <span className="ml-1 text-white/50">{evidenceGroups[group].strength}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
     </div>
   );
 };
+
+function getGroupStatus(group: any): string {
+  // Returns a Tailwind color class based on group's confidence and freshness
+  const { confidence, freshness } = group;
+  
+  if (freshness === 'UNAVAILABLE') return 'text-white/40';
+  if (freshness === 'STALE') return 'text-amber-400';
+  if (confidence >= 80) return 'text-[#26a69a]';
+  if (confidence >= 60) return 'text-amber-400';
+  return 'text-[#ef5350]';
+}
