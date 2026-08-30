@@ -355,10 +355,10 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
           </div>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-4 text-lg font-bold">
-          <div className="text-white/50">BUY SUPPORT</span>
+          <div className="text-white/50">BUY SUPPORT</div>
           <span className="text-white">{buySupport}</span>
         </div>
-        <div className="text-white/50">SELL SUPPORT</span>
+        <div className="text-white/50">SELL SUPPORT</div>
         <span className="text-white">{sellSupport}</span>
         </div>
         <div className="mt-2 text-white/50 text-center">STATE: {state}</div>
