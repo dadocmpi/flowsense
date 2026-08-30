@@ -16,7 +16,103 @@ import {
   calculateBollingerPosition 
 } from '../utils/indicators';
 
-// ... [previous imports and helper functions remain the same] ...
+// Helper function to safely convert to number
+const safeNum = (val: number, defaultVal: number): number => 
+  Number.isNaN(val) || !Number.isFinite(val) ? defaultVal : val;
+
+// Helper function to calculate percent change
+const safePercentChange = (newVal: number, oldVal: number): number => {
+  if (oldVal === 0) return 0;
+  return ((newVal - oldVal) / oldVal) * 100;
+};
+
+// Helper function to build indicator signals from price history
+const buildIndicatorSignals = (prices: number[], currentPrice: number, precision: number) => {
+  // Oscillators
+  const rsi = calculateRSI(prices, 14);
+  const ema12 = calculateEMA(prices, 12);
+  const ema26 = calculateEMA(prices, 26);
+  const macdVal = ema12 - ema26;
+  const sma20 = calculateSMA(prices, 20);
+  const stdDev = Math.sqrt(prices.slice(-20).reduce((sq, n) => sq + Math.pow(n - sma20, 2), 0) / 20) || 1;
+  const bbUpper = sma20 + stdDev * 2;
+  const bbLower = sma20 - stdDev * 2;
+
+  const oscillators: IndicatorSignal[] = [
+    {
+      name: 'RSI (14)',
+      value: rsi.toFixed(1),
+      action: rsi > 70 ? 'STRONG SELL' : rsi > 60 ? 'SELL' : rsi < 30 ? 'STRONG BUY' : rsi < 40 ? 'BUY' : 'NEUTRAL'
+    },
+    {
+      name: 'MACD (12, 26)',
+      value: macdVal.toFixed(2),
+      action: macdVal > 0 ? 'BUY' : 'SELL'
+    },
+    {
+      name: 'Bollinger Bands',
+      value: currentPrice > bbUpper ? 'Overbought' : currentPrice < bbLower ? 'Oversold' : 'Inside Band',
+      action: currentPrice > bbUpper ? 'SELL' : currentPrice < bbLower ? 'BUY' : 'NEUTRAL'
+    },
+    {
+      name: 'Momentum (10)',
+      value: (currentPrice - (prices[prices.length - 10] || currentPrice)).toFixed(2),
+      action: currentPrice > (prices[prices.length - 10] || currentPrice) ? 'BUY' : 'SELL'
+    }
+  ];
+
+  // Moving Averages
+  const ema10 = calculateEMA(prices, 10);
+  const ema20 = calculateEMA(prices, 20);
+  const ema50 = calculateEMA(prices, 50);
+  const ema200 = calculateEMA(prices, 200);
+  const sma50 = calculateSMA(prices, 50);
+
+  const movingAverages: IndicatorSignal[] = [
+    { name: 'EMA 10', value: ema10.toFixed(precision), action: currentPrice > ema10 ? 'BUY' : 'SELL' },
+    { name: 'EMA 20', value: ema20.toFixed(precision), action: currentPrice > ema20 ? 'BUY' : 'SELL' },
+    { name: 'EMA 50', value: ema50.toFixed(precision), action: currentPrice > ema50 ? 'STRONG BUY' : 'STRONG SELL' },
+    { name: 'SMA 50', value: sma50.toFixed(precision), action: currentPrice > sma50 ? 'BUY' : 'SELL' },
+    { name: 'EMA 200', value: ema200.toFixed(precision), action: currentPrice > ema200 ? 'STRONG BUY' : 'STRONG SELL' },
+  ];
+
+  // Order Flow Indicators: empty for initial load (requires real-time trade data)
+  const orderFlowIndicators: IndicatorSignal[] = [];
+
+  return { oscillators, movingAverages, orderFlowIndicators };
+};
+
+// Helper function to build summary from indicator signals
+const buildSummary = (list: IndicatorSignal[]): IndicatorSummary => {
+  let buy = 0;
+  let neutral = 0;
+  let sell = 0;
+
+  list.forEach(i => {
+    if (i.action.includes('STRONG BUY')) buy += 2;
+    else if (i.action.includes('BUY')) buy += 1;
+    else if (i.action.includes('STRONG SELL')) sell += 2;
+    else if (i.action.includes('SELL')) sell += 1;
+    else neutral += 1;
+  });
+
+  const total = buy + neutral + sell || 1;
+  const score = Math.round((buy / total) * 100);
+
+  let verdict: IndicatorSummary['verdict'] = 'NEUTRAL';
+  if (score >= 75) verdict = 'STRONG BUY';
+  else if (score >= 55) verdict = 'BUY';
+  else if (score <= 25) verdict = 'STRONG SELL';
+  else if (score <= 45) verdict = 'SELL';
+
+  return {
+    buyCount: buy,
+    neutralCount: neutral,
+    sellCount: sell,
+    score,
+    verdict
+  };
+};
 
 export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   const activeAssetRef = useRef<string>(selectedSymbol);
@@ -183,9 +279,6 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             sellersPercent: 50,
             volumeDelta: 0,
             institutionalPressure: 'LOW',
-            bids: [],
-            asks: [],
-            recentTrades: [],
           });
           setIsLoading(false);
         }
@@ -201,10 +294,10 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             oscillators,
             movingAverages,
             orderFlowIndicators,
-            overallSummary,
-            oscillatorsSummary,
-            maSummary,
-            orderFlowSummary,
+            overallSummary: buildSummary([...oscillators, ...movingAverages, ...orderFlowIndicators]),
+            oscillatorsSummary: buildSummary(oscillators),
+            maSummary: buildSummary(movingAverages),
+            orderFlowSummary: buildSummary(orderFlowIndicators),
           }));
           setIsLoading(false);
         }
@@ -219,8 +312,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
         );
         priceHistoryRef.current = fallback;
         const lastPrice = fallback[fallback.length - 1];
-        const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(fallback, lastPrice, precision);
-        const allSignals = [...oscillators, ...movingAverages, ...orderFlowIndicators];
+        const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(fallback, lastPrice, prec);
         if (isMountedRef.current) {
           setState(prev => ({
             ...prev,
@@ -233,7 +325,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             oscillators,
             movingAverages,
             orderFlowIndicators,
-            overallSummary: buildSummary(allSignals),
+            overallSummary: buildSummary([...oscillators, ...movingAverages, ...orderFlowIndicators]),
             oscillatorsSummary: buildSummary(oscillators),
             maSummary: buildSummary(movingAverages),
             orderFlowSummary: buildSummary(orderFlowIndicators),
@@ -308,7 +400,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
             if (prices.length < 2) return;
             
             const { oscillators, movingAverages, orderFlowIndicators } = buildIndicatorSignals(
-              prices, displayPrice, precision
+              prices, displayPrice, prec
             );
             
             const allSignals = [...oscillators, ...movingAverages, ...orderFlowIndicators];
