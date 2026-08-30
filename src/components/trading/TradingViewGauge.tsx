@@ -262,7 +262,7 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
             animate={{ rotate: needleAngle }}
             transition={{ type: 'spring', stiffness: 30, damping: 18, mass: 1.2 }}
           >
-            <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-b-[28px] border-b-amber-400 filter drop-shadow-[0_0_12px_rgba(251,191,36,1)]" />
+            <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-[6px] border-b-[28px] border-b-amber-400 filter drop-shadow-[0_0_12px_rgba(251,191,36,1)]" />
             <div className="w-[2.5px] h-[90px] bg-gradient-to-t from-amber-500/20 via-amber-400/90 to-amber-300" />
           </motion.div>
 
@@ -366,7 +366,7 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
             <span className="text-white">{buySupport}</span>
           </div>
           <div className="flex flex-col">
-            <div className="text-white/50">SELL SUPPORT</span>
+            <div className="text-white/50">SELL SUPPORT</div>
           </div>
         </div>
         <div className="mt-2 text-white/50 text-center">STATE: {state}</div>
