@@ -41,7 +41,7 @@ const VERDICT_COLORS: Record<CompassVerdict, { primary: string; bg: string; glow
   STRONG_BUY: { primary: '#26a69a', bg: 'bg-[#26a69a]/15', glow: 'from-[#26a69a]/30' },
   BUY: { primary: '#4db6ac', bg: 'bg-[#26a69a]/10', glow: 'from-[#4db6ac]/20' },
   NEUTRAL: { primary: '#f59e0b', bg: 'bg-amber-500/10', glow: 'from-amber-500/15' },
-  SELL: { primary: '#e57373', bg: 'bg-[#ef5350]/10', glow: 'from-[#e57373]/20' },
+  SELL: { primary: '#e57373', bg: 'bg-[#ef5350]/10', glow: 'from-[#e57373/20' },
   STRONG_SELL: { primary: '#ef5350', bg: 'bg-[#ef5350]/15', glow: 'from-[#ef5350]/30' },
 };
 
