@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { IndicatorSummary } from '../types/trading';
 
-export type CompassVerdict = 
-  | 'STRONG_BUY' 
-  | 'BUY' 
-  | 'NEUTRAL' 
-  | 'SELL' 
+export type CompassVerdict =
+  | 'STRONG_BUY'
+  | 'BUY'
+  | 'NEUTRAL'
+  | 'SELL'
   | 'STRONG_SELL';
 
 export interface CompassHysteresisState {
@@ -33,7 +33,7 @@ export const useCompassHysteresis = (
     candidateVerdict: null,
     totalIndicators: 0,
     agreementCount: 0,
-    cyclesSinceLastFlip: 0,
+    cyclesSinceLastFlip: 0;
   });
 
   const lastVerdictRef = useRef<CompassVerdict>(state.displayedVerdict);
@@ -58,12 +58,12 @@ export const useCompassHysteresis = (
     // This is a simplified version - in reality, we'd need the individual indicator scores
     const totalIndicators = 4; // oscillators, ma, orderFlow, mtf
     let agreementCount = 0;
-    
+
     // Simplified agreement calculation
     if (summary.buyCount >= summary.sellCount) agreementCount += 2;
     if (summary.sellCount >= summary.buyCount) agreementCount += 2;
     agreementCount = Math.min(agreementCount, totalIndicators);
-    
+
     // Update state with raw values
     setState(prev => ({
       ...prev,
@@ -88,10 +88,10 @@ export const useCompassHysteresis = (
     }
 
     // Check if we have enough confirmation to flip
-    if (confirmationCountRef.current >= confirmationThreshold && 
-        candidateVerdictRef.current !== null && 
+    if (confirmationCountRef.current >= confirmationThreshold &&
+        candidateVerdictRef.current !== null &&
         candidateVerdictRef.current !== lastVerdictRef.current) {
-      
+
       // Flip the displayed verdict
       const newVerdict = candidateVerdictRef.current;
       setState(prev => ({
@@ -101,7 +101,7 @@ export const useCompassHysteresis = (
         confirmationCount: 0,
         candidateVerdict: null,
       }));
-      
+
       lastVerdictRef.current = newVerdict;
       cyclesSinceLastFlipRef.current = 0;
     } else {
@@ -110,9 +110,9 @@ export const useCompassHysteresis = (
         ...prev,
         displayedScore: rawScore,
         confirmationCount: confirmationCountRef.current,
-        candidateVertict: candidateVerdictRef.current,
+        candidateVerdict: candidateVerdictRef.current,
       }));
-      
+
       // Increment cycles since last flip
       if (candidateVerdictRef.current !== lastVerdictRef.current) {
         cyclesSinceLastFlipRef.current += 1;

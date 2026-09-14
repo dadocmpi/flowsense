@@ -88,7 +88,6 @@ export interface SignalFactor {
   correlationGroup: string | null;
   source: string;
   timestamp: number;
-  timestamp: number;
 }
 
 export interface ConfluenceResult {
@@ -246,8 +245,8 @@ export interface MarketContextConfig {
   minZoneWeightPercentage: number;     // Default 50
   persistence: PersistenceConfig;
   weights: IndicatorWeightConfig[];
-  zoneProximityThreshold: number;       // Points away to consider "approaching"
-  zoneEntryThreshold: number;           // Points into zone to consider "entered"
+  zoneProximityThreshold: number;       // Points away to consider \"approaching\"
+  zoneEntryThreshold: number;           // Points into zone to consider \"entered\"
   dataQualityDecay: number;            // How much to reduce per quality issue
   enableMultiTimeframe: boolean;
   enableCorrelationCollapse: boolean;

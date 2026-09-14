@@ -32,16 +32,6 @@ function getCurrentSession(now: Date): SessionInfo {
   const minute = now.getUTCMinutes();
   const totalMinutes = hour * 60 + minute;
 
-  const inAsia: { start: 0, end: 8 },        // 00:00 - 08:00 UTC
-  LONDON: { start: 7, end: 16 },     // 07:00 - 16:00 UTC
-  NEW_YORK: { start: 13, end: 22 },  // 13:00 - 22:00 UTC
-};
-
-function getCurrentSession(now: Date): SessionInfo {
-  const hour = now.getUTCHours();
-  const minute = now.getUTCMinutes();
-  const totalMinutes = hour * 60 + minute;
-
   const inAsia = hour >= SESSION_HOURS_UTC.ASIA.start && hour < SESSION_HOURS_UTC.ASIA.end;
   const inLondon = hour >= SESSION_HOURS_UTC.LONDON.start && hour < SESSION_HOURS_UTC.LONDON.end;
   const inNY = hour >= SESSION_HOURS_UTC.NEW_YORK.start && hour < SESSION_HOURS_UTC.NEW_YORK.end;
