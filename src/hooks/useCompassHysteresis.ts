@@ -1,2 +1,134 @@
 import { useState, useEffect, useRef } from 'react';
-import { IndicatorSummary } from '../types/trading';\n\nexport type CompassVerdict =\n  | 'STRONG_BUY'\n  | 'BUY'\n  | 'NEUTRAL'\n  | 'SELL'\n  | 'STRONG_SELL';\n\nexport interface CompassHysteresisState {\n  displayedScore: number;\n  displayedVerdict: CompassVerdict;\n  rawScore: number;\n  rawVerdict: CompassVerdict;\n  confirmationCount: number;\n  candidateVerdict: CompassVerdict | null;\n  totalIndicators: number;\n  agreementCount: number;\n  cyclesSinceLastFlip: number;\n}\n\nexport const useCompassHysteresis = (\n  summary: IndicatorSummary,\n  confirmationThreshold: number = 3\n): CompassHysteresisState => {\n  const [state, setState] = useState<CompassHysteresisState>({\n    displayedScore: 50,\n    displayedVerdict: 'NEUTRAL',\n    rawScore: 50,\n    rawVerdict: 'NEUTRAL',\n    confirmationCount: 0,\n    candidateVerdict: null,\n    totalIndicators: 0,\n    agreementCount: 0,\n    cyclesSinceLastFlip: 0,\n  });\n\n  const lastVerdictRef = useRef<CompassVerdict>(state.displayedVerdict);\n  const cyclesSinceLastFlipRef = useRef<number>(state.cyclesSinceLastFlip);\n  const confirmationCountRef = useRef<number>(state.confirmationCount);\n  const candidateVerdictRef = useRef<CompassVerdict | null>(state.candidateVerdict);\n\n  // Convert summary to score and verdict\n  const scoreToVerdict = (score: number): CompassVerdict => {\n    if (score >= 75) return 'STRONG_BUY';\n    if (score >= 55) return 'BUY';\n    if (score <= 25) return 'STRONG_SELL';\n    if (score <= 45) return 'SELL';\n    return 'NEUTRAL';\n  };\n\n  const rawScore = summary.score;\n  const rawVerdict = scoreToVerdict(rawScore);\n\n  useEffect(() => {\n    // Calculate agreement count (how many indicators agree with the raw verdict)\n    // This is a simplified version - in reality, we'd need the individual indicator scores\n    const totalIndicators = 4; // oscillators, ma, orderFlow, mtf\n    let agreementCount = 0;\n\n    // Simplified agreement calculation\n    if (summary.buyCount >= summary.sellCount) agreementCount += 2;\n    if (summary.sellCount >= summary.buyCount) agreementCount += 2;\n    agreementCount = Math.min(agreementCount, totalIndicators);\n\n    // Update state with raw values\n    setState(prev => ({\n      ...prev,\n      rawScore,\n      rawVerdict,\n      totalIndicators,\n      agreementCount,\n    }));\n  }, [summary]);\n\n  useEffect(() => {\n    // Hysteresis logic: require confirmation before changing displayed verdict\n    if (rawVerdict !== lastVerdictRef.current) {\n      // New raw verdict detected\n      candidateVerdictRef.current = rawVerdict;\n      confirmationCountRef.current = 1;\n    } else if (rawVerdict === lastVerdictRef.current && candidateVerdictRef.current !== null) {\n      // Same as last verdict, increment confirmation if we had a candidate\n      if (candidateVerdictRef.current === rawVerdict) {\n        confirmationCountRef.current += 1;\n      }\n    }\n\n    // Check if we have enough confirmation to flip\n    if (confirmationCountRef.current >= confirmationThreshold &&\n        candidateVerdictRef.current !== null &&\n        candidateVerdictRef.current !== lastVerdictRef.current) {\n\n      // Flip the displayed verdict\n      const newVerdict = candidateVerdictRef.current;\n      setState(prev => ({\n        ...prev,\n        displayedScore: rawScore,\n        displayedVerdict: newVerdict,\n        confirmationCount: 0,\n        candidateVerdict: null,\n      }));\n\n      lastVerdictRef.current = newVerdict;\n      cyclesSinceLastFlipRef.current = 0;\n    } else {\n      // Update displayed score but keep verdict if not confirmed\n      setState(prev => ({\n        ...prev,\n        displayedScore: rawScore,\n        confirmationCount: confirmationCountRef.current,\n        candidateVerdict: candidateVerdictRef.current,\n      }));\n\n      // Increment cycles since last flip\n      if (candidateVerdictRef.current !== lastVerdictRef.current) {\n        cyclesSinceLastFlipRef.current += 1;\n        setState(prev => ({\n          ...prev,\n          cyclesSinceLastFlip: cyclesSinceLastFlipRef.current,\n        }));\n      }\n    }\n  }, [rawScore, rawVerdict, confirmationThreshold]);\n\n  // Update lastVerdictRef when displayed verdict actually changes\n  useEffect(() => {\n    lastVerdictRef.current = state.displayedVerdict;\n  }, [state.displayedVerdict]);\n\n  return state;\n}
+import { IndicatorSummary } from '../types/trading';
+
+export type CompassVerdict =
+  | 'STRONG_BUY'
+  | 'BUY'
+  | 'NEUTRAL'
+  | 'SELL'
+  | 'STRONG_SELL';
+
+export interface CompassHysteresisState {
+  displayedScore: number;
+  displayedVerdict: CompassVerdict;
+  rawScore: number;
+  rawVerdict: CompassVerdict;
+  confirmationCount: number;
+  candidateVerdict: CompassVerdict | null;
+  totalIndicators: number;
+  agreementCount: number;
+  cyclesSinceLastFlip: number;
+}
+
+export const useCompassHysteresis = (
+  summary: IndicatorSummary,
+  confirmationThreshold: number = 3
+): CompassHysteresisState => {
+  const [state, setState] = useState<CompassHysteresisState>({
+    displayedScore: 50,
+    displayedVerdict: 'NEUTRAL',
+    rawScore: 50,
+    rawVerdict: 'NEUTRAL',
+    confirmationCount: 0,
+    candidateVerdict: null,
+    totalIndicators: 0,
+    agreementCount: 0,
+    cyclesSinceLastFlip: 0,
+  });
+
+  const lastVerdictRef = useRef<CompassVerdict>(state.displayedVerdict);
+  const cyclesSinceLastFlipRef = useRef<number>(state.cyclesSinceLastFlip);
+  const confirmationCountRef = useRef<number>(state.confirmationCount);
+  const candidateVerdictRef = useRef<CompassVerdict | null>(
+    state.candidateVerdict
+  );
+
+  const scoreToVerdict = (score: number): CompassVerdict => {
+    if (score >= 75) return 'STRONG_BUY';
+    if (score >= 55) return 'BUY';
+    if (score <= 25) return 'STRONG_SELL';
+    if (score <= 45) return 'SELL';
+    return 'NEUTRAL';
+  };
+
+  const rawScore = Number.isFinite(summary.score) ? summary.score : 50;
+  const rawVerdict = scoreToVerdict(rawScore);
+
+  useEffect(() => {
+    const totalIndicators = 4;
+    let agreementCount = 0;
+
+    if (summary.buyCount >= summary.sellCount) {
+      agreementCount += 2;
+    }
+
+    if (summary.sellCount >= summary.buyCount) {
+      agreementCount += 2;
+    }
+
+    agreementCount = Math.min(agreementCount, totalIndicators);
+
+    setState((prev) => ({
+      ...prev,
+      rawScore,
+      rawVerdict,
+      totalIndicators,
+      agreementCount,
+    }));
+  }, [summary, rawScore, rawVerdict]);
+
+  useEffect(() => {
+    if (rawVerdict !== lastVerdictRef.current) {
+      if (candidateVerdictRef.current !== rawVerdict) {
+        candidateVerdictRef.current = rawVerdict;
+        confirmationCountRef.current = 1;
+      } else {
+        confirmationCountRef.current += 1;
+      }
+    } else {
+      candidateVerdictRef.current = null;
+      confirmationCountRef.current = 0;
+    }
+
+    const hasEnoughConfirmation =
+      confirmationCountRef.current >= confirmationThreshold &&
+      candidateVerdictRef.current !== null &&
+      candidateVerdictRef.current !== lastVerdictRef.current;
+
+    if (hasEnoughConfirmation) {
+      const newVerdict = candidateVerdictRef.current;
+
+      setState((prev) => ({
+        ...prev,
+        displayedScore: rawScore,
+        displayedVerdict: newVerdict,
+        confirmationCount: 0,
+        candidateVerdict: null,
+        cyclesSinceLastFlip: 0,
+      }));
+
+      lastVerdictRef.current = newVerdict;
+      candidateVerdictRef.current = null;
+      confirmationCountRef.current = 0;
+      cyclesSinceLastFlipRef.current = 0;
+    } else {
+      if (candidateVerdictRef.current !== null) {
+        cyclesSinceLastFlipRef.current += 1;
+      }
+
+      setState((prev) => ({
+        ...prev,
+        displayedScore: rawScore,
+        confirmationCount: confirmationCountRef.current,
+        candidateVerdict: candidateVerdictRef.current,
+        cyclesSinceLastFlip: cyclesSinceLastFlipRef.current,
+      }));
+    }
+  }, [rawScore, rawVerdict, confirmationThreshold]);
+
+  useEffect(() => {
+    lastVerdictRef.current = state.displayedVerdict;
+  }, [state.displayedVerdict]);
+
+  return state;
+};
