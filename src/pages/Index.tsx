@@ -414,7 +414,7 @@ const Index = () => {
 
       </header>
 
-      <main className="flex-grow p-8 max-w-[1600px] w-full mx-auto flex flex-col space-y-8">
+      <main className="flex-grow p-8 max-w-[1920px] w-full mx-auto flex flex-col space-y-8">
         
         <AssetSummaryCard
           data={tradingData}
@@ -461,7 +461,7 @@ const Index = () => {
       
       {/* Fundamental Intelligence Panel */}
       <div className="bg-[#0b0c10] border-t border-white/[0.04] px-8 py-6">
-        <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6">
           
           {/* Economic Calendar */}
           <div className="bg-[#07080a] rounded-2xl border border-white/[0.06] p-4">
