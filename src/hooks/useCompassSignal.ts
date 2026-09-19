@@ -4,4 +4,330 @@ import { useMultiTimeframe } from '../hooks/useMultiTimeframe';
 import { useMarketContextEngine } from '../hooks/useMarketContextEngine';
 import { useMacroContext } from '../hooks/useMacroContext';
 import { useFundamentalIntelligence, useFundamentalBias, usePositionSizing } from '../hooks/useFundamentalIntelligence';
-import { IndicatorSummary } from '../types/trading';\nimport {\n  FactorContribution,\n  LiveAnalysisState,\n  OfficialCompassState,\n  CompassDirection,\n  DataLabel,\n  CompassEngineConfig,\n  DEFAULT_COMPASS_CONFIG,\n  computeLiveAnalysis,\n  publishOfficialSignal,\n  addToHistory,\n  secondsUntilNextMinute,\n  minuteKeyFromTimestamp,\n  formatCompassDirection,\n  directionColor,\n  dataLabelColor,\n} from '../lib/compassEngine';\n\nexport interface CompassEngineHookResult {\n  official: OfficialCompassState | null;\n  live: LiveAnalysisState | null;\n  history: SignalHistoryEntry[];\n  directionLabel: string;\n  directionColor: string;\n  dataLabel: DataLabel;\n  secondsUntilNextUpdate: number;\n  minutesSinceLastSignal: number;\n  config: CompassEngineConfig;\n  refresh: () => void;\n  setConfig: (partial: Partial<CompassEngineConfig>) => void;\n}\n\nexport interface SignalHistoryEntry {\n  minuteKey: string;\n  direction: CompassDirection;\n  score: number;\n  confidence: number;\n  price: number;\n  marketRegime: string;\n  dataQuality: number;\n  dataLabel: DataLabel;\n  timestamp: number;\n  factorSummary: string[];\n}\n\nexport const useCompassSignal = (): CompassEngineHookResult => {\n  const [official, setOfficial] = useState<OfficialCompassState | null>(null);\n  const [live, setLive] = useState<LiveAnalysisState | null>(null);\n  const [history, setHistory] = useState<SignalHistoryEntry[]>([]);\n  const [config, setConfig] = useState<CompassEngineConfig>(DEFAULT_COMPASS_CONFIG);\n  const [secondsUntilNextUpdate, setSecondsUntilNextUpdate] = useState(secondsUntilNextMinute());\n\n  const tradingData = useRefinedTradingData();\n  const mtfResult = useMultiTimeframe('PAXGUSDT', tradingData.price);\n  const marketContext = useMarketContextEngine(tradingData);\n  const macroContext = useMacroContext(tradingData.price, marketContext.ema200Value, { macroUpdateIntervalMs: 30000 });\n  const fundamentalIntelligence = useFundamentalIntelligence(tradingData.price, 60000);\n\n  // Refs for storing latest values\n  const liveRef = useRef<LiveAnalysisState | null>(null);\n  const officialRef = useRef<OfficialCompassState | null>(null);\n  const historyRef = useRef<SignalHistoryEntry[]>([]);\n  const lastMinuteKeyRef = useRef<string | null>(null);\n  const pendingPublishRef = useRef<boolean>(false);\n\n  // Load history from localStorage on mount\n  useEffect(() => {\n    try {\n      const saved = localStorage.getItem('compass_history');\n      if (saved) {\n        const parsed = JSON.parse(saved);\n        if (Array.isArray(parsed)) {\n          historyRef.current = parsed;\n          setHistory(parsed);\n        }\n      }\n    } catch (e) {\n      console.warn('Failed to load compass history from localStorage:', e);\n    }\n  }, []);\n\n  // Save history to localStorage whenever it changes\n  useEffect(() => {\n    try {\n      localStorage.setItem('compass_history', JSON.stringify(historyRef.current));\n    } catch (e) {\n      console.warn('Failed to save compass history to localStorage:', e);\n    }\n  }, [historyRef.current]);\n\n  // Compute live analysis whenever core data changes\n  useEffect(() => {\n    if (!tradingData.price || tradingData.price <= 0) {\n      liveRef.current = null;\n      return;\n    }\n\n    // Build factor contributions from all available sources\n    const factors: FactorContribution[] = [];\n\n    // 1. Market Context Engine factors\n    if (marketContext.uiSummary) {\n      const buyCount = marketContext.uiSummary.buyCount || 0;\n      const sellCount = marketContext.uiSummary.sellCount || 0;\n      const total = buyCount + sellCount || 1;\n      const score = marketContext.uiSummary.score || 50;\n\n      factors.push({\n        category: 'ZONE_CLUSTER',\n        name: 'MARKET_CONTEXT',\n        direction: score >= 60 ? 'BULLISH' : score <= 40 ? 'BEARISH' : 'NEUTRAL',\n        weight: Math.min(100, Math.round((total > 0 ? buyCount / total : 0) * 100)),\n        value: `${buyCount} buy / ${sellCount} sell`,\n        confidence: marketContext.dataQuality?.overall || 50,\n      });\n    }\n\n    // 2. Multi-timeframe alignment\n    if (mtfResult) {\n      const buyCount = mtfResult.timeframes.filter(t => t.direction === 'BUY').length;\n      const sellCount = mtfResult.timeframes.filter(t => t.direction === 'SELL').length;\n      const total = mtfResult.timeframes.length;\n\n      if (total > 0) {\n        const bullishPct = buyCount / total;\n        const bearishPct = sellCount / total;\n\n        factors.push({\n          category: 'STRUCTURE',\n          name: 'MTF_ALIGNMENT',\n          direction: bullishPct > bearishPct ? 'BULLISH' : bearishPct > bullishPct ? 'BEARISH' : 'NEUTRAL',\n          weight: Math.round((total > 0 ? Math.max(buyCount, sellCount) / total : 0) * 100),\n          value: `${buyCount} BUY / ${sellCount} SELL / ${total - buyCount - sellCount} NEUTRAL`,\n          confidence: mtfResult.weightedScore > 0 ? 80 : 60,\n        });\n      }\n    }\n\n    // 3. Fundamental intelligence factors\n    if (fundamentalIntelligence) {\n      const { riskSentiment, goldVolatility } = fundamentalIntelligence;\n\n      if (goldVolatility === 'EXTREME') {\n        factors.push({\n          category: 'VOLATILITY',\n          name: 'GOLD_VOLATILITY',\n          direction: 'BEARISH',\n          weight: 10,\n          value: 'EXTREME',\n          confidence: 70,\n        });\n      } else if (goldVolatility === 'HIGH') {\n        factors.push({\n          category: 'VOLATILITY',\n          name: 'GOLD_VOLATILITY',\n          direction: 'BEARISH',\n          weight: 8,\n          value: 'HIGH',\n          confidence: 70,\n        });\n      }\n\n      if (riskSentiment === 'RISK_ON') {\n        factors.push({\n          category: 'FUNDAMENTAL',\n          name: 'RISK_SENTIMENT',\n          direction: 'BULLISH',\n          weight: 15,\n          value: riskSentiment,\n          confidence: 80,\n        });\n      } else if (riskSentiment === 'RISK_OFF') {\n        factors.push({\n          category: 'FUNDAMENTAL',\n          name: 'RISK_SENTIMENT',\n          direction: 'BEARISH',\n          weight: 15,\n          value: riskSentiment,\n          confidence: 80,\n        });\n      }\n    }\n\n    // 4. Macro context factors\n    if (macroContext) {\n      const { bias, dxyTrend, yieldsTrend, riskRegime } = macroContext;\n\n      if (bias === 'BULLISH') {\n        factors.push({\n          category: 'MACRO',\n          name: 'MACRO_BIAS',\n          direction: 'BULLISH',\n          weight: 10,\n          value: `${riskRegime} / ${dxyTrend} DXY / ${yieldsTrend} yields`,\n          confidence: 75,\n        });\n      } else if (bias === 'BEARISH') {\n        factors.push({\n          category: 'MACRO',\n          name: 'MACRO_BIAS',\n          direction: 'BEARISH',\n          weight: 10,\n          value: `${riskRegime} / ${dxyTrend} DXY / ${yieldsTrend} yields`,\n          confidence: 75,\n        });\n      }\n    }\n\n    // Compute live analysis\n    const timestamp = Date.now();\n    const minuteKey = minuteKeyFromTimestamp(timestamp);\n\n    const liveState = computeLiveAnalysis({\n      factors,\n      price: tradingData.price,\n      dataQuality: tradingData.dataQuality?.overall || 50,\n      dataLabel: tradingData.dataQuality?.freshness || 'DELAYED',\n      marketRegime: marketContext.uiSummary?.state || 'UNKNOWN',\n      timestamp,\n      minuteKey,\n    }, config);\n\n    liveRef.current = liveState;\n    setLive(liveState);\n  }, [tradingData.price, tradingData.dataQuality, marketContext.uiSummary, mtfResult, fundamentalIntelligence, macroContext, config]);\n\n  // Timer-based minute boundary check\n  useEffect(() => {\n    const checkMinuteBoundary = () => {\n      if (!liveRef.current) return;\n\n      const currentMinuteKey = liveRef.current.minuteKey;\n      const lastMinuteKey = lastMinuteKeyRef.current;\n\n      // Check if minute has changed\n      if (currentMinuteKey && currentMinuteKey !== lastMinuteKey) {\n        // Prevent duplicate publishes within the same minute\n        if (pendingPublishRef.current) return;\n\n        pendingPublishRef.current = true;\n\n        // Publish official signal\n        const officialState = publishOfficialSignal(\n          liveRef.current,\n          officialRef.current,\n          config\n        );\n\n        if (officialState) {\n          officialRef.current = officialState;\n          setOfficial(officialState);\n          historyRef.current = addToHistory(historyRef.current, officialState);\n          setHistory([...historyRef.current]);\n        }\n\n        // Reset pending flag after a short delay to allow for minute boundary\n        setTimeout(() => {\n          pendingPublishRef.current = false;\n        }, 1000);\n\n        // Update last minute key\n        lastMinuteKeyRef.current = currentMinuteKey;\n      }\n    };\n\n    // Check every second\n    checkMinuteBoundary();\n    const interval = setInterval(checkMinuteBoundary, 1000);\n    return () => clearInterval(interval);\n  }, []);\n\n  // Update countdown to next update\n  useEffect(() => {\n    const updateCountdown = () => {\n      setSecondsUntilNextUpdate(secondsUntilNextMinute());\n    };\n    updateCountdown();\n    const interval = setInterval(updateCountdown, 1000);\n    return () => clearInterval(interval);\n  }, []);\n\n  // Derived UI values\n  const directionLabel = officialRef.current?.direction\n    ? formatCompassDirection(officialRef.current.direction)\n    : liveRef.current?.rawDirection\n      ? formatCompassDirection(liveRef.current.rawDirection)\n      : 'NEUTRAL';\n\n  const directionColorValue = officialRef.current?.direction\n    ? directionColor(officialRef.current.direction)\n    : liveRef.current?.rawDirection\n      ? directionColor(liveRef.current.rawDirection)\n      : '#f59e0b';\n\n  const dataLabel: DataLabel = officialRef.current?.dataLabel || liveRef.current?.dataLabel || 'DELAYED';\n\n  const minutesSinceLastSignal = officialRef.current\n    ? Math.round((Date.now() - new Date(officialRef.current.timestamp).getTime()) / 60000)\n    : 0;\n\n  const refresh = useCallback(() => {\n    // Clear refs to force recomputation\n    liveRef.current = null;\n    officialRef.current = null;\n    lastMinuteKeyRef.current = null;\n    pendingPublishRef.current = false;\n  }, []);\n\n  const setConfigAction = useCallback((partial: Partial<CompassEngineConfig>) => {\n    setConfig(prev => ({ ...prev, ...partial }));\n  }, []);\n\n  return {\n    official: officialRef.current,\n    live: liveRef.current,\n    history: historyRef.current,\n    directionLabel,\n    directionColor: directionColorValue,\n    dataLabel,\n    secondsUntilNextUpdate,\n    minutesSinceLastSignal,\n    config,\n    refresh,\n    setConfig: setConfigAction,\n  };\n};
+import { IndicatorSummary } from '../types/trading';
+import {
+  FactorContribution,
+  LiveAnalysisState,
+  OfficialCompassState,
+  CompassDirection,
+  DataLabel,
+  CompassEngineConfig,
+  DEFAULT_COMPASS_CONFIG,
+  computeLiveAnalysis,
+  publishOfficialSignal,
+  addToHistory,
+  secondsUntilNextMinute,
+  minuteKeyFromTimestamp,
+  formatCompassDirection,
+  directionColor,
+  dataLabelColor,
+} from '../lib/compassEngine';
+
+export interface CompassEngineHookResult {
+  official: OfficialCompassState | null;
+  live: LiveAnalysisState | null;
+  history: SignalHistoryEntry[];
+  directionLabel: string;
+  directionColor: string;
+  dataLabel: DataLabel;
+  secondsUntilNextUpdate: number;
+  minutesSinceLastSignal: number;
+  config: CompassEngineConfig;
+  refresh: () => void;
+  setConfig: (partial: Partial<CompassEngineConfig>) => void;
+}
+
+export interface SignalHistoryEntry {
+  minuteKey: string;
+  direction: CompassDirection;
+  score: number;
+  confidence: number;
+  price: number;
+  marketRegime: string;
+  dataQuality: number;
+  dataLabel: DataLabel;
+  timestamp: number;
+  factorSummary: string[];
+}
+
+export const useCompassSignal = (): CompassEngineHookResult => {
+  const [official, setOfficial] = useState<OfficialCompassState | null>(null);
+  const [live, setLive] = useState<LiveAnalysisState | null>(null);
+  const [history, setHistory] = useState<SignalHistoryEntry[]>([]);
+  const [config, setConfig] = useState<CompassEngineConfig>(DEFAULT_COMPASS_CONFIG);
+  const [secondsUntilNextUpdate, setSecondsUntilNextUpdate] = useState(secondsUntilNextMinute());
+
+  const tradingData = useRefinedTradingData();
+  const mtfResult = useMultiTimeframe('PAXGUSDT', tradingData.price);
+  const marketContext = useMarketContextEngine(tradingData);
+  const macroContext = useMacroContext(tradingData.price, marketContext.ema200Value, { macroUpdateIntervalMs: 30000 });
+  const fundamentalIntelligence = useFundamentalIntelligence(tradingData.price, 60000);
+
+  // Refs for storing latest values
+  const liveRef = useRef<LiveAnalysisState | null>(null);
+  const officialRef = useRef<OfficialCompassState | null>(null);
+  const historyRef = useRef<SignalHistoryEntry[]>([]);
+  const lastMinuteKeyRef = useRef<string | null>(null);
+  const pendingPublishRef = useRef<boolean>(false);
+
+  // Load history from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('compass_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          historyRef.current = parsed;
+          setHistory(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load compass history from localStorage:', e);
+    }
+  }, []);
+
+  // Save history to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('compass_history', JSON.stringify(historyRef.current));
+    } catch (e) {
+      console.warn('Failed to save compass history to localStorage:', e);
+    }
+  }, [historyRef.current]);
+
+  // Compute live analysis whenever core data changes
+  useEffect(() => {
+    if (!tradingData.price || tradingData.price <= 0) {
+      liveRef.current = null;
+      return;
+    }
+
+    // Build factor contributions from all available sources
+    const factors: FactorContribution[] = [];
+
+    // 1. Market Context Engine factors
+    if (marketContext.uiSummary) {
+      const buyCount = marketContext.uiSummary.buyCount || 0;
+      const sellCount = marketContext.uiSummary.sellCount || 0;
+      const total = buyCount + sellCount || 1;
+      const score = marketContext.uiSummary.score || 50;
+
+      factors.push({
+        category: 'ZONE_CLUSTER',
+        name: 'MARKET_CONTEXT',
+        direction: score >= 60 ? 'BULLISH' : score <= 40 ? 'BEARISH' : 'NEUTRAL',
+        weight: Math.min(100, Math.round((total > 0 ? buyCount / total : 0) * 100)),
+        value: `${buyCount} buy / ${sellCount} sell`,
+        confidence: marketContext.dataQuality?.overall || 50,
+      });
+    }
+
+    // 2. Multi-timeframe alignment
+    if (mtfResult) {
+      const buyCount = mtfResult.timeframes.filter(t => t.direction === 'BUY').length;
+      const sellCount = mtfResult.timeframes.filter(t => t.direction === 'SELL').length;
+      const total = mtfResult.timeframes.length;
+
+      if (total > 0) {
+        const bullishPct = buyCount / total;
+        const bearishPct = sellCount / total;
+
+        factors.push({
+          category: 'STRUCTURE',
+          name: 'MTF_ALIGNMENT',
+          direction: bullishPct > bearishPct ? 'BULLISH' : bearishPct > bearishPct ? 'BEARISH' : 'NEUTRAL',
+          weight: Math.round((total > 0 ? Math.max(buyCount, sellCount) / total : 0) * 100),
+          value: `${buyCount} BUY / ${sellCount} SELL / ${total - buyCount - sellCount} NEUTRAL`,
+          confidence: mtfResult.weightedScore > 0 ? 80 : 60,
+        });
+      }
+    }
+
+    // 3. Fundamental intelligence factors
+    if (fundamentalIntelligence) {
+      const { riskSentiment, goldVolatility } = fundamentalIntelligence;
+
+      if (goldVolatility === 'EXTREME') {
+        factors.push({
+          category: 'VOLATILITY',
+          name: 'GOLD_VOLATILITY',
+          direction: 'BEARISH',
+          weight: 10,
+          value: 'EXTREME',
+          confidence: 70,
+        });
+      } else if (goldVolatility === 'HIGH') {
+        factors.push({
+          category: 'VOLATILITY',
+          name: 'GOLD_VOLATILITY',
+          direction: 'BEARISH',
+          weight: 8,
+          value: 'HIGH',
+          confidence: 70,
+        });
+      }
+
+      if (riskSentiment === 'RISK_ON') {
+        factors.push({
+          category: 'FUNDAMENTAL',
+          name: 'RISK_SENTIMENT',
+          direction: 'BULLISH',
+          weight: 15,
+          value: riskSentiment,
+          confidence: 80,
+        });
+      } else if (riskSentiment === 'RISK_OFF') {
+        factors.push({
+          category: 'FUNDAMENTAL',
+          name: 'RISK_SENTIMENT',
+          direction: 'BEARISH',
+          weight: 15,
+          value: riskSentiment,
+          confidence: 80,
+        });
+      }
+    }
+
+    // 4. Macro context factors
+    if (macroContext) {
+      const { bias, dxyTrend, yieldsTrend, riskRegime } = macroContext;
+
+      if (bias === 'BULLISH') {
+        factors.push({
+          category: 'MACRO',
+          name: 'MACRO_BIAS',
+          direction: 'BULLISH',
+          weight: 10,
+          value: `${riskRegime} / ${dxyTrend} DXY / ${yieldsTrend} yields`,
+          confidence: 75,
+        });
+      } else if (bias === 'BEARISH') {
+        factors.push({
+          category: 'MACRO',
+          name: 'MACRO_BIAS',
+          direction: 'BEARISH',
+          weight: 10,
+          value: `${riskRegime} / ${dxyTrend} DXY / ${yieldsTrend} yields`,
+          confidence: 75,
+        });
+      }
+    }
+
+    // Compute live analysis
+    const timestamp = Date.now();
+    const minuteKey = minuteKeyFromTimestamp(timestamp);
+
+    const liveState = computeLiveAnalysis({
+      factors,
+      price: tradingData.price,
+      dataQuality: tradingData.dataQuality?.overall || 50,
+      dataLabel: tradingData.dataQuality?.freshness || 'DELAYED',
+      marketRegime: marketContext.uiSummary?.state || 'UNKNOWN',
+      timestamp,
+      minuteKey,
+    }, config);
+
+    liveRef.current = liveState;
+    setLive(liveState);
+  }, [tradingData.price, tradingData.dataQuality, marketContext.uiSummary, mtfResult, fundamentalIntelligence, macroContext, config]);
+
+  // Timer-based minute boundary check
+  useEffect(() => {
+    const checkMinuteBoundary = () => {
+      if (!liveRef.current) return;
+
+      const currentMinuteKey = liveRef.current.minuteKey;
+      const lastMinuteKey = lastMinuteKeyRef.current;
+
+      // Check if minute has changed
+      if (currentMinuteKey && currentMinuteKey !== lastMinuteKey) {
+        // Prevent duplicate publishes within the same minute
+        if (pendingPublishRef.current) return;
+
+        pendingPublishRef.current = true;
+
+        // Publish official signal
+        const officialState = publishOfficialSignal(
+          liveRef.current,
+          officialRef.current,
+          config
+        );
+
+        if (officialState) {
+          officialRef.current = officialState;
+          setOfficial(officialState);
+          historyRef.current = addToHistory(historyRef.current, officialState);
+          setHistory([...historyRef.current]);
+        }
+
+        // Reset pending flag after a short delay to allow for minute boundary
+        setTimeout(() => {
+          pendingPublishRef.current = false;
+        }, 1000);
+
+        // Update last minute key
+        lastMinuteKeyRef.current = currentMinuteKey;
+      }
+    };
+
+    // Check every second
+    checkMinuteBoundary();
+    const interval = setInterval(checkMinuteBoundary, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Update countdown to next update
+  useEffect(() => {
+    const updateCountdown = () => {
+      setSecondsUntilNextUpdate(secondsUntilNextMinute());
+    };
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Derived UI values
+  const directionLabel = officialRef.current?.direction
+    ? formatCompassDirection(officialRef.current.direction)
+    : liveRef.current?.rawDirection
+      ? formatCompassDirection(liveRef.current.rawDirection)
+      : 'NEUTRAL';
+
+  const directionColorValue = officialRef.current?.direction
+    ? directionColor(officialRef.current.direction)
+    : liveRef.current?.rawDirection
+      ? directionColor(liveRef.current.rawDirection)
+      : '#f59e0b';
+
+  const dataLabel: DataLabel = officialRef.current?.dataLabel || liveRef.current?.dataLabel || 'DELAYED';
+
+  const minutesSinceLastSignal = officialRef.current
+    ? Math.round((Date.now() - new Date(officialRef.current.timestamp).getTime()) / 60000)
+    : 0;
+
+  const refresh = useCallback(() => {
+    // Clear refs to force recomputation
+    liveRef.current = null;
+    officialRef.current = null;
+    lastMinuteKeyRef.current = null;
+    pendingPublishRef.current = false;
+  }, []);
+
+  const setConfigAction = useCallback((partial: Partial<CompassEngineConfig>) => {
+    setConfig(prev => ({ ...prev, ...partial }));
+  }, []);
+
+  return {
+    official: officialRef.current,
+    live: liveRef.current,
+    history: historyRef.current,
+    directionLabel,
+    directionColor: directionColorValue,
+    dataLabel,
+    secondsUntilNextUpdate,
+    minutesSinceLastSignal,
+    config,
+    refresh,
+    setConfig: setConfigAction,
+  };
+};
