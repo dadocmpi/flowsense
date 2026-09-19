@@ -191,6 +191,7 @@ const Index = () => {
                     </div>
                   </div>
                 </div>
+              </div>
             )}
 
             {activeTab === 'macro' && (
