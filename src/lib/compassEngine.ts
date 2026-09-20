@@ -13,6 +13,8 @@ import {
   DataLabel,
 } from '../types/compassEngine';
 
+export { DEFAULT_COMPASS_CONFIG };
+
 export function minuteKeyFromTimestamp(ts: number): string {
   const d = new Date(ts);
   const yyyy = d.getFullYear();
