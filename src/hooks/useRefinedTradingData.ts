@@ -254,14 +254,14 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
     if (isLoading) return;
 
     const connectWebSocket = () => {
-      const streams = [
-        `${binanceSymbol.toLowerCase()}@ticker`,
-        `${binanceSymbol.toLowerCase()}@depth10@100ms`,
-        `${binanceSymbol.toLowerCase()}@aggTrade`,
-      ].join('/');
-
-      const ws = new WebSocket(`wss://stream.binance.com:9443/ws/${streams}`);
-      wsRef.current = ws;
+          const streams = [
+            `${binanceSymbol.toLowerCase()}@ticker`,
+            `${binanceSymbol.toLowerCase()}@depth10@100ms`,
+            `${binanceSymbol.toLowerCase()}@aggTrade`,
+          ].join('/');
+    
+          const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+          wsRef.current = ws;
 
       ws.onopen = () => {
         setState(prev => ({ ...prev, isLive: true }));
