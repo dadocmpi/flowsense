@@ -1,0 +1,220 @@
+// ============================================
+// COMPASS ENGINE — PURE FUNCTIONS
+// ============================================
+
+import {
+  CompassEngineConfig,
+  DEFAULT_COMPASS_CONFIG,
+  FactorContribution,
+  LiveAnalysisState,
+  OfficialCompassState,
+  SignalHistoryEntry,
+  CompassDirection,
+  DataLabel,
+} from '../types/compassEngine';
+
+export { DEFAULT_COMPASS_CONFIG };
+
+export function minuteKeyFromTimestamp(ts: number): string {
+  const d = new Date(ts);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+export function scoreToDirection(score: number, config: CompassEngineConfig = DEFAULT_COMPASS_CONFIG): CompassDirection {
+  if (score >= config.strongBuyScore) return 'STRONG_BUY';
+  if (score >= config.buyScore) return 'BUY';
+  if (score <= config.strongSellScore) return 'STRONG_SELL';
+  if (score <= config.sellScore) return 'SELL';
+  return 'NEUTRAL';
+}
+
+export function computeLiveAnalysis(
+  params: {
+    factors: FactorContribution[];
+    price: number;
+    dataQuality: number;
+    dataLabel: DataLabel;
+    marketRegime: string;
+    timestamp: number;
+    minuteKey: string;
+  },
+  config: CompassEngineConfig = DEFAULT_COMPASS_CONFIG
+): LiveAnalysisState {
+  const { factors, price, dataQuality, dataLabel, marketRegime, timestamp, minuteKey } = params;
+
+  let buyWeight = 0;
+  let sellWeight = 0;
+  let neutralWeight = 0;
+  let unavailableWeight = 0;
+
+  factors.forEach(f => {
+    switch (f.direction) {
+      case 'BULLISH': buyWeight += f.weight; break;
+      case 'BEARISH': sellWeight += f.weight; break;
+      case 'NEUTRAL': neutralWeight += f.weight; break;
+      case 'UNAVAILABLE': unavailableWeight += f.weight; break;
+    }
+  });
+
+  const totalWeight = buyWeight + sellWeight + neutralWeight + unavailableWeight || 1;
+  const rawScore = Math.round(((buyWeight - sellWeight) / totalWeight) * 100 + 50);
+  const rawDirection = scoreToDirection(rawScore, config);
+
+  const availableFactors = factors.filter(f => f.direction !== 'UNAVAILABLE').length;
+  const factorAgreement = factors.length > 0
+    ? Math.min(100, Math.round((availableFactors / factors.length) * 100))
+    : 0;
+
+  const isStale = Date.now() - timestamp > config.maxDataAgeMs;
+
+  return {
+    minuteKey,
+    rawScore,
+    rawDirection,
+    factorAgreement,
+    totalFactors: factors.length,
+    availableFactors,
+    marketRegime,
+    dataQuality,
+    dataLabel,
+    factors,
+    timestamp,
+    price,
+    isStale,
+  };
+}
+
+export function publishOfficialSignal(
+  live: LiveAnalysisState,
+  previousOfficial: OfficialCompassState | null,
+  config: CompassEngineConfig = DEFAULT_COMPASS_CONFIG
+): OfficialCompassState | null {
+  if (!live.minuteKey) return null;
+
+  // If we already published for this minute, don't republish
+  if (previousOfficial && previousOfficial.minuteKey === live.minuteKey) {
+    return null;
+  }
+
+  // Anti-noise rule: require meaningful score difference or minimum factor agreement
+  const hasEnoughFactors = live.availableFactors >= config.minValidFactors;
+  const hasMinConfidence = live.dataQuality >= config.minConfidence;
+  const hasMinAgreement = live.factorAgreement >= config.minFactorAgreement;
+
+  if (!hasEnoughFactors || !hasMinConfidence || !hasMinAgreement) {
+    // If we have a previous official, keep it but mark stale
+    if (previousOfficial) {
+      return {
+        ...previousOfficial,
+        isStale: true,
+        reason: 'Insufficient valid factors — previous signal retained',
+      };
+    }
+    return null;
+  }
+
+  // Apply anti-noise: only change if score difference exceeds threshold
+  let direction = live.rawDirection;
+  let reason = 'New minute snapshot — standard recalculation';
+
+  if (previousOfficial) {
+    const scoreDiff = Math.abs(live.rawScore - previousOfficial.score);
+    if (scoreDiff < config.directionChangeThreshold && live.rawDirection === previousOfficial.direction) {
+      direction = previousOfficial.direction;
+      reason = `Score change ${scoreDiff.toFixed(0)} pts below threshold ${config.directionChangeThreshold} — direction retained`;
+    } else if (scoreDiff >= config.directionChangeThreshold && live.rawDirection !== previousOfficial.direction) {
+      reason = `Score change ${scoreDiff.toFixed(0)} pts exceeds threshold — direction changed from ${previousOfficial.direction} to ${direction}`;
+    } else if (live.rawDirection !== previousOfficial.direction) {
+      reason = `Direction changed from ${previousOfficial.direction} to ${direction}`;
+    }
+  }
+
+  const factorSummary = live.factors
+    .filter(f => f.direction !== 'UNAVAILABLE')
+    .slice(0, 5)
+    .map(f => `${f.name}: ${f.direction} (${f.weight}%)`);
+
+  return {
+    minuteKey: live.minuteKey,
+    direction,
+    score: live.rawScore,
+    confidence: Math.min(100, Math.round(live.dataQuality * (live.factorAgreement / 100))),
+    factorSummary,
+    timestamp: live.timestamp,
+    price: live.price,
+    marketRegime: live.marketRegime,
+    dataQuality: live.dataQuality,
+    dataLabel: live.dataLabel,
+    reason,
+    isStale: live.isStale,
+  };
+}
+
+export function addToHistory(
+  history: SignalHistoryEntry[],
+  signal: OfficialCompassState,
+  maxEntries: number = 100
+): SignalHistoryEntry[] {
+  const entry: SignalHistoryEntry = {
+    minuteKey: signal.minuteKey,
+    direction: signal.direction,
+    score: signal.score,
+    confidence: signal.confidence,
+    price: signal.price,
+    marketRegime: signal.marketRegime,
+    dataQuality: signal.dataQuality,
+    dataLabel: signal.dataLabel,
+    timestamp: signal.timestamp,
+    factorSummary: signal.factorSummary,
+  };
+
+  // Don't duplicate the same minute
+  if (history.length > 0 && history[history.length - 1].minuteKey === entry.minuteKey) {
+    return history;
+  }
+
+  const updated = [...history, entry];
+  return updated.slice(-maxEntries);
+}
+
+export function getNextMinuteBoundary(): Date {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes() + 1, 0, 0);
+}
+
+export function secondsUntilNextMinute(): number {
+  const now = new Date();
+  const next = getNextMinuteBoundary();
+  return Math.max(0, Math.ceil((next.getTime() - now.getTime()) / 1000));
+}
+
+export function formatCompassDirection(d: CompassDirection): string {
+  return d.replace('_', ' ');
+}
+
+export function directionColor(d: CompassDirection): string {
+  switch (d) {
+    case 'STRONG_BUY': return '#26a69a';
+    case 'BUY': return '#4db6ac';
+    case 'NEUTRAL': return '#f59e0b';
+    case 'SELL': return '#e57373';
+    case 'STRONG_SELL': return '#ef5350';
+    default: return '#f59e0b';
+  }
+}
+
+export function dataLabelColor(label: DataLabel): string {
+  switch (label) {
+    case 'LIVE': return 'text-green-400';
+    case 'DELAYED': return 'text-amber-400';
+    case 'CACHED': return 'text-blue-400';
+    case 'SIMULATED': return 'text-purple-400';
+    case 'UNAVAILABLE': return 'text-red-500';
+    default: return 'text-white';
+  }
+}
