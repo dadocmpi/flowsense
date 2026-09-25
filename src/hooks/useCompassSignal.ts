@@ -4,6 +4,7 @@ import { useMultiTimeframe } from '../hooks/useMultiTimeframe';
 import { useMarketContextEngine } from '../hooks/useMarketContextEngine';
 import { useMacroContext } from '../hooks/useMacroContext';
 import { useFundamentalIntelligence, useFundamentalBias, usePositionSizing } from '../hooks/useFundamentalIntelligence';
+import { useSrReversal } from '../hooks/useSrReversal';
 import { IndicatorSummary } from '../types/trading';
 import {
   FactorContribution,
@@ -22,6 +23,7 @@ import {
   directionColor,
   dataLabelColor,
 } from '../lib/compassEngine';
+import { ReversalSignal, SRLevel } from '../types/srReversal';
 
 export interface CompassEngineHookResult {
   official: OfficialCompassState | null;
@@ -35,6 +37,9 @@ export interface CompassEngineHookResult {
   config: CompassEngineConfig;
   refresh: () => void;
   setConfig: (partial: Partial<CompassEngineConfig>) => void;
+  // New fields for SR/R
+  reversalSignal: ReversalSignal | null;
+  srLevels: SRLevel[];
 }
 
 export interface SignalHistoryEntry {
@@ -56,12 +61,15 @@ export const useCompassSignal = (): CompassEngineHookResult => {
   const [history, setHistory] = useState<SignalHistoryEntry[]>([]);
   const [config, setConfig] = useState<CompassEngineConfig>(DEFAULT_COMPASS_CONFIG);
   const [secondsUntilNextUpdate, setSecondsUntilNextUpdate] = useState(secondsUntilNextMinute());
+  const [reversalSignal, setReversalSignal] = useState<ReversalSignal | null>(null);
+  const [srLevels, setSrLevels] = useState<SRLevel[]>([]);
 
   const tradingData = useRefinedTradingData();
   const mtfResult = useMultiTimeframe('PAXGUSDT', tradingData.price);
   const marketContext = useMarketContextEngine(tradingData);
   const macroContext = useMacroContext(tradingData.price, marketContext.ema200Value, { macroUpdateIntervalMs: 30000 });
   const fundamentalIntelligence = useFundamentalIntelligence(tradingData.price, 60000);
+  const srReversal = useSrReversal();
 
   // Refs for storing latest values
   const liveRef = useRef<LiveAnalysisState | null>(null);
@@ -99,6 +107,8 @@ export const useCompassSignal = (): CompassEngineHookResult => {
   useEffect(() => {
     if (!tradingData.price || tradingData.price <= 0) {
       liveRef.current = null;
+      setSrLevels([]);
+      setReversalSignal(null);
       return;
     }
 
@@ -213,6 +223,13 @@ export const useCompassSignal = (): CompassEngineHookResult => {
       }
     }
 
+    // 5. SR/R factors
+    factors.push(...srReversal.factors);
+
+    // Update SR levels and reversal signal state
+    setSrLevels(srReversal.srLevels);
+    setReversalSignal(srReversal.reversalSignal);
+
     // Compute live analysis
     const timestamp = Date.now();
     const minuteKey = minuteKeyFromTimestamp(timestamp);
@@ -229,7 +246,7 @@ export const useCompassSignal = (): CompassEngineHookResult => {
 
     liveRef.current = liveState;
     setLive(liveState);
-  }, [tradingData.price, tradingData.dataQuality, marketContext.uiSummary, mtfResult, fundamentalIntelligence, macroContext, config]);
+  }, [tradingData.price, tradingData.dataQuality, marketContext.uiSummary, mtfResult, fundamentalIntelligence, macroContext, config, srReversal]);
 
   // Timer-based minute boundary check
   useEffect(() => {
@@ -311,6 +328,9 @@ export const useCompassSignal = (): CompassEngineHookResult => {
     officialRef.current = null;
     lastMinuteKeyRef.current = null;
     pendingPublishRef.current = false;
+    // Also reset SR/R state
+    setSrLevels([]);
+    setReversalSignal(null);
   }, []);
 
   const setConfigAction = useCallback((partial: Partial<CompassEngineConfig>) => {
@@ -329,5 +349,7 @@ export const useCompassSignal = (): CompassEngineHookResult => {
     config,
     refresh,
     setConfig: setConfigAction,
+    reversalSignal,
+    srLevels
   };
 };

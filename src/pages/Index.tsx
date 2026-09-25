@@ -3,6 +3,7 @@ import { useCompassSignal } from '../hooks/useCompassSignal';
 import { CompassDisplay } from '../components/compass/CompassDisplay';
 import { MarketSummary } from '../components/compass/MarketSummary';
 import { ActionPlanningPanel } from '../components/compass/ActionPlanningPanel';
+import { ReversalPanel } from '../components/compass/ReversalPanel';
 import { SUPPORTED_ASSETS } from '../types/trading';
 import { cn } from '@/lib/utils';
 
@@ -93,7 +94,6 @@ const Index = () => {
               price={compass.live?.price || 0}
               timestamp={compass.live?.timestamp || Date.now()}
             />
-
             {/* Action Planning */}
             <ActionPlanningPanel
               direction={compass.official?.direction || 'NEUTRAL'}
@@ -101,6 +101,12 @@ const Index = () => {
               confidence={compass.official?.confidence || 50}
               marketRegime={compass.official?.marketRegime || 'UNKNOWN'}
               dataQuality={compass.official?.dataQuality || 50}
+            />
+            {/* Reversal Panel */}
+            <ReversalPanel
+              reversalSignal={compass.reversalSignal}
+              srLevels={compass.srLevels}
+              price={compass.live?.price || 0}
             />
           </div>
         </div>
@@ -167,11 +173,11 @@ const Index = () => {
                 <h3 className="text-white font-bold mb-4">Technical Details</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <span className="text-white/50 text-xs font-black uppercase">Market State</span>
+                    <span className="text-white/50 text-xs font-bold uppercase">Market State</span>
                     <div className="text-white font-mono mt-2">{compass.official?.marketRegime || 'UNKNOWN'}</div>
                   </div>
                   <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <span className="text-white/50 text-xs font-black uppercase">Data Quality</span>
+                    <span className="text-white/50 text-xs font-bold uppercase">Data Quality</span>
                     <div className={cn(
                       "font-mono mt-2",
                       compass.official?.dataQuality >= 80 ? "text-green-400" :
@@ -181,11 +187,11 @@ const Index = () => {
                     </div>
                   </div>
                   <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <span className="text-white/50 text-xs font-black uppercase">Factor Agreement</span>
+                    <span className="text-white/50 text-xs font-bold uppercase">Factor Agreement</span>
                     <div className="text-white font-mono mt-2">{compass.live?.factorAgreement || 0}%</div>
                   </div>
                   <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <span className="text-white/50 text-xs font-black uppercase">Available Factors</span>
+                    <span className="text-white/50 text-xs font-bold uppercase">Available Factors</span>
                     <div className="text-white font-mono mt-2">
                       {compass.live?.availableFactors || 0} / {compass.live?.totalFactors || 0}
                     </div>
@@ -198,7 +204,7 @@ const Index = () => {
               <div className="space-y-4">
                 <h3 className="text-white font-bold mb-4">Macro & Fundamental Context</h3>
                 <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                  <span className="text-white/50 text-xs font-black uppercase">Data Source</span>
+                  <span className="text-white/50 text-xs font-bold uppercase">Data Source</span>
                   <div className="text-white font-mono mt-2">
                     {compass.dataLabel === 'LIVE' ? 'Live WebSocket' :
                      compass.dataLabel === 'DELAYED' ? 'Delayed REST API' :
@@ -206,7 +212,7 @@ const Index = () => {
                   </div>
                 </div>
                 <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                  <span className="text-white/50 text-xs font-black uppercase">Signal Validity</span>
+                  <span className="text-white/50 text-xs font-bold uppercase">Signal Validity</span>
                   <div className="text-white font-mono mt-2">
                     {compass.official?.isStale ? '⚠ Stale — verify data freshness' : '✓ Valid'}
                   </div>
