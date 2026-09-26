@@ -42,21 +42,12 @@ export interface AssetConfig {
 }
 
 export const SUPPORTED_ASSETS: AssetConfig[] = [
-  { 
-    symbol: 'GC1!', 
-    name: 'Gold Futures (Continuous)', 
-    exchange: 'COMEX / CME', 
+  {
+    symbol: 'GC1!',
+    name: 'Gold Futures (Continuous)',
+    exchange: 'COMEX / CME',
     precision: 2,
     contractSize: '100 troy oz',
-    tickSize: 0.10,
-    binanceSymbol: 'PAXGUSDT', // Proxy for gold (preserves existing functionality)
-  },
-  { 
-    symbol: 'MGC1!', 
-    name: 'Micro Gold Futures (Continuous)', 
-    exchange: 'COMEX / CME', 
-    precision: 2,
-    contractSize: '10 troy oz',
     tickSize: 0.10,
     binanceSymbol: 'PAXGUSDT', // Proxy for gold (preserves existing functionality)
   },
@@ -67,20 +58,11 @@ export const SUPPORTED_ASSETS: AssetConfig[] = [
     precision: 2,
     contractSize: '50 USD',
     tickSize: 0.25,
-    binanceSymbol: undefined, // No real ES/MES data from Binance - will show UNAVAILABLE
-  },
-  {
-    symbol: 'MES1!',
-    name: 'Micro E-mini S&P 500 Futures (Continuous)',
-    exchange: 'CME',
-    precision: 2,
-    contractSize: '5 USD',
-    tickSize: 0.25,
-    binanceSymbol: undefined, // No real ES/MES data from Binance - will show UNAVAILABLE
+    binanceSymbol: 'BTCUSDT', // Proxy for SP500 (not ideal but available) - keeping for real-time data
   },
 ];
 
-// Additional supported symbols for real data
+// Additional supported symbols for real data (not used in futures-only mode)
 export interface SupportedSymbolConfig {
   symbol: string;
   displayName: string;
@@ -89,11 +71,7 @@ export interface SupportedSymbolConfig {
   category: 'CRYPTO' | 'FOREX' | 'COMMODITIES' | 'INDEX';
 }
 
-export const SUPPORTED_SYMBOLS: SupportedSymbolConfig[] = [
-  { symbol: 'XAU/USD', displayName: 'Gold', binanceSymbol: 'PAXGUSDT', precision: 2, category: 'COMMODITIES' },
-  { symbol: 'BTC/USDT', displayName: 'Bitcoin', binanceSymbol: 'BTCUSDT', precision: 2, category: 'CRYPTO' },
-  { symbol: 'ETH/USDT', displayName: 'Ethereum', binanceSymbol: 'ETHUSDT', precision: 2, category: 'CRYPTO' },
-];
+export const SUPPORTED_SYMBOLS: SupportedSymbolConfig[] = [];
 
 export interface IndicatorSignal {
   name: string;
@@ -155,12 +133,12 @@ export interface TwelveDataState {
   datetime: string;
   isLive: boolean;
   isMarketOpen: boolean;
-  
+
   // Indicators
   oscillators: IndicatorSignal[];
   movingAverages: IndicatorSignal[];
   orderFlowIndicators: IndicatorSignal[];
-  
+
   // Order Flow
   buyersPercent: number;
   sellersPercent: number;
@@ -169,7 +147,7 @@ export interface TwelveDataState {
   bids: OrderBookLevel[];
   asks: OrderBookLevel[];
   recentTrades: TradeFeedItem[];
-  
+
   // Summaries
   overallSummary: IndicatorSummary;
   oscillatorsSummary: IndicatorSummary;

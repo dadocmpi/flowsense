@@ -8,17 +8,15 @@ import { SUPPORTED_ASSETS } from '../types/trading';
 import { cn } from '@/lib/utils';
 
 const Index = () => {
-  const [selectedAsset, setSelectedAsset] = useState('MGC1!');
+  const [selectedAsset, setSelectedAsset] = useState('GC1!');
   const [activeTab, setActiveTab] = useState<'factors' | 'technical' | 'macro' | 'history'>('factors');
 
   const compass = useCompassSignal();
 
   const activeConfig = SUPPORTED_ASSETS.find(asset => asset.symbol === selectedAsset) || SUPPORTED_ASSETS[0];
   const displayNameMap: Record<string, string> = {
-    'MGC1!': 'GOLD',
     'GC1!': 'GOLD',
-    'ES1!': 'SP500',
-    'MES1!': 'SP500 MICRO'
+    'ES1!': 'SP500'
   };
 
   return (
@@ -54,11 +52,7 @@ const Index = () => {
               compass.dataLabel === 'UNAVAILABLE' ? "text-red-500" :
               "text-white/60"
             )}>
-              {selectedAsset === 'ES1!' || selectedAsset === 'MES1!'
-                ? compass.dataLabel === 'UNAVAILABLE'
-                  ? "S&P 500 FUTURES DATA UNAVAILABLE"
-                  : compass.dataLabel
-                : compass.dataLabel}
+              {compass.dataLabel}
             </span>
           </div>
           <div className="flex items-center space-x-2 text-xs font-mono">
