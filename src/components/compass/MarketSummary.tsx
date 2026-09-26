@@ -7,6 +7,8 @@ interface MarketSummaryProps {
   dataQuality: number;
   dataLabel: 'LIVE' | 'DELAYED' | 'CACHED' | 'SIMULATED' | 'UNAVAILABLE';
   factorAgreement: number;
+  availableFactors: number;
+  totalFactors: number;
   price: number;
   timestamp: number;
 }
@@ -16,6 +18,8 @@ export const MarketSummary: React.FC<MarketSummaryProps> = ({
   dataQuality,
   dataLabel,
   factorAgreement,
+  availableFactors,
+  totalFactors,
   price,
   timestamp,
 }) => {
@@ -77,7 +81,7 @@ export const MarketSummary: React.FC<MarketSummaryProps> = ({
           </div>
           <div>
             <span className="text-white/50">Factors:</span>
-            <span className="font-mono text-white">6/6</span>
+            <span className="font-mono text-white">{availableFactors}/{totalFactors}</span>
           </div>
         </div>
       </div>

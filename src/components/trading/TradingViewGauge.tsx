@@ -149,7 +149,10 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
   
   const colors = VERDICT_COLORS[hysteresis.displayedVerdict];
   
-  const targetAngle = -90 + ((hysteresis.displayedScore + 100) / 200) * 180;
+  // Ticks span -180..0 degrees, so the needle (which points up at rotate 0)
+  // maps a 0..100 score onto -90..90. The old -100..100 mapping put a neutral
+  // score of 50 at 45 degrees instead of 0.
+  const targetAngle = -90 + (hysteresis.displayedScore / 100) * 180;
   const [needleAngle, setNeedleAngle] = useState(targetAngle);
   
   useEffect(() => {

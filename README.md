@@ -1,68 +1,65 @@
 # FlowSense
 
-Trading analysis dashboard. Market data comes from **Twelve Data** through a
-server-side proxy; no data is fabricated anywhere in the client.
+Trading analysis dashboard. Market data comes from **Binance public market
+data** — no API key, no proxy, and no fabricated values anywhere.
 
-## Data source: Twelve Data (REST only)
+## Scope: crypto only, for now
 
-The free plan is REST-only and polling-based. There is **no WebSocket, no order
-book, no order flow, and no tape** — those concepts do not exist in this app.
-Everything is derived from real candles plus indicators computed locally.
+The app deliberately covers a small set of Binance USDT spot pairs. That is the
+one market we can source honestly end to end: Binance's public API gives real
+candles, a real order book and a real tick-by-tick trade tape, all without
+credentials.
 
-What the free plan covers: US stocks, forex, and crypto in real time. Commodities
-(`XAU/USD`) and indices (`SPX`) require the Grow plan or above. Assets that need
-a paid plan are flagged in the UI with a `· PAID PLAN` badge and are defined by
-`requiresPaidPlan` in `src/types/trading.ts`. `EUR/USD` is the default selection
-so a free key works out of the box.
+Stocks, forex and indices are a later addition. They are not offered today
+because we have no source for them that also provides genuine order flow, and
+showing those markets with modelled flow would mean faking it.
 
-Credit budget: 8 credits/minute and 800/day. `src/lib/creditBudget.ts` tracks a
-rolling local budget so the app degrades instead of burning the daily allowance.
+## Data source: Binance public API
+
+Two public, unauthenticated feeds are used, both with
+`access-control-allow-origin: *` so the browser talks to them directly:
+
+| Feed | Endpoint | Used for |
+| --- | --- | --- |
+| REST klines | `/api/v3/klines` | 300 × 5m candles, plus the real per-candle taker-buy split |
+| REST 24h ticker | `/api/v3/ticker/24hr` | price, change, high/low, volume |
+| WebSocket `@ticker` | combined stream | live price in between REST refreshes |
+| WebSocket `@depth10@100ms` | combined stream | top-10 order book, refreshed 10×/s |
+| WebSocket `@aggTrade` | combined stream | aggregated trade tape (the tick-by-tick flow) |
+
+Binance runs several regional domains and blocks some of them from some
+locations (HTTP 451). `src/lib/binanceClient.ts` tries the official hosts in
+order — `data-api.binance.vision`, `api.binance.com`, `api.binance.us` — and
+remembers whichever answers, so a geo-block on one domain is not fatal. The same
+fallback list exists for WebSocket hosts. If every host is blocked the app shows
+a `GEO_BLOCKED` error instead of inventing data.
+
+Everything derived is arithmetic over a real feed:
+
+- Indicators (SMA/EMA/RSI/MACD/Bollinger/ATR/VWAP/volume profile) are computed
+  locally from real candles in `src/lib/indicators.ts`.
+- Buy/sell pressure comes from the `m` flag on each `aggTrade` — Binance sets it
+  true when the buyer was the maker, so the aggressor side is known, not guessed.
+- Cumulative delta comes from the kline taker-buy field (index 9), a real
+  aggressor split, not an estimate.
 
 ## Setup
 
-1. Get a key at <https://twelvedata.com/>.
-2. Create `.env.local` in the project root:
+```
+npm install && npm run dev   # → http://localhost:8080/
+```
 
-   ```
-   TWELVEDATA_API_KEY=your_key_here
-   ```
-
-   The variable has no `VITE_` prefix on purpose — it must never be bundled into
-   the browser. `.env*` is gitignored.
-
-3. `npm install && npm run dev` → <http://localhost:8080/>
-
-## The proxy
-
-The browser only ever talks to `/api/twelvedata`. The key stays server-side.
-
-| Environment | Implementation |
-| --- | --- |
-| `vite dev` | `vite-plugins/twelvedata-proxy.ts` middleware |
-| Vercel | `api/twelvedata.ts` serverless function |
-
-Both share the same core logic in `api/_twelvedata.ts`, which allow-lists
-endpoints (`time_series`, `quote`, `price`, `exchange_rate`), allow-lists query
-parameters, validates symbols, caps `outputsize`, caches responses briefly, and
-times out after 12s. `vercel.json` excludes `/api/*` from the SPA rewrite so the
-function is reachable in production.
-
-Client-side errors are surfaced as honest states rather than fake numbers:
-`MISSING_API_KEY`, `PLAN_LIMIT`, `RATE_LIMIT`, `SYMBOL_NOT_FOUND`, `NETWORK`,
-`UPSTREAM`.
+No key, no `.env`, no server-side component is required.
 
 ## Layout
 
 ```
-api/_twelvedata.ts             proxy core (shared)
-api/twelvedata.ts              Vercel entrypoint
-vite-plugins/twelvedata-proxy  dev-server middleware
-src/lib/twelveDataClient.ts    fetch + error mapping
-src/lib/creditBudget.ts        rate-limit budget
-src/lib/indicators.ts          SMA/EMA/RSI/MACD/Bollinger/ATR/VWAP/volume profile
+src/lib/binanceClient.ts       REST + WebSocket client, host fallback, error mapping
+src/lib/indicators.ts          pure indicator math, no I/O
 src/lib/marketAnalysis.ts      candle aggregation, derived ranges, indicator set
-src/hooks/useMarketData.ts     polling hook (the single data entry point)
+src/hooks/useMarketData.ts     the single data entry point (REST + stream)
 src/hooks/useCompassSignal.ts  orchestrates the real hooks
+src/components/trading/RealtimeOrderFlow.tsx   order book, tape, buy/sell split
 ```
 
 ## Commands
@@ -70,10 +67,14 @@ src/hooks/useCompassSignal.ts  orchestrates the real hooks
 ```
 npm run dev        # dev server on :8080
 npm run build      # production build
-npm run typecheck  # tsc --noEmit
 npm run lint
 ```
 
-Note: `npm run typecheck` reports pre-existing errors in `src/components/ui/*`
-(missing `@radix-ui/react-dialog` / `cmdk` declarations) that predate this work.
-The application code itself is clean.
+For type checking, target the app project explicitly. The root `tsconfig.json`
+is solution-style (`files: []`), so `npm run typecheck` / bare `tsc --noEmit`
+checks nothing. Vendored `src/components/ui/*` has pre-existing missing-module
+errors that predate this work; filter them out:
+
+```
+npx tsc -p tsconfig.app.json --noEmit 2>&1 | grep -v "^src/components/ui/"
+```

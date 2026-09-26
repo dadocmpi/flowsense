@@ -55,18 +55,12 @@ export const useCompassHysteresis = (
   const rawVerdict = scoreToVerdict(rawScore);
 
   useEffect(() => {
-    const totalIndicators = 4;
-    let agreementCount = 0;
-
-    if (summary.buyCount >= summary.sellCount) {
-      agreementCount += 2;
-    }
-
-    if (summary.sellCount >= summary.buyCount) {
-      agreementCount += 2;
-    }
-
-    agreementCount = Math.min(agreementCount, totalIndicators);
+    // Real counts from the indicator summary. This previously hardcoded
+    // totalIndicators = 4 and awarded 2 "agreements" whenever one side merely
+    // tied or exceeded the other, so a market split 1 buy / 1 sell / 8 neutral
+    // still reported a confident 4/4 agreement.
+    const totalIndicators = summary.buyCount + summary.sellCount + summary.neutralCount;
+    const agreementCount = Math.max(summary.buyCount, summary.sellCount);
 
     setState((prev) => ({
       ...prev,

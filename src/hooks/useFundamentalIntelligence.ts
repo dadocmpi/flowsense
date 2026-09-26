@@ -7,8 +7,8 @@ import { atr } from '../lib/indicators';
 // ============================================
 // Everything here is derived from the clock and from real candle data.
 // Cross-market feeds (DXY, VIX, yields) and the economic calendar are NOT
-// available through the current Twelve Data plan, so they are reported as
-// unavailable instead of being simulated.
+// part of the current scope, so they are reported as unavailable instead of
+// being simulated.
 
 export interface SessionProfile {
   name: 'ASIA' | 'LONDON' | 'NEW_YORK' | 'OVERLAP_LN' | 'OVERLAP_NY' | 'CLOSED';

@@ -146,11 +146,11 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
           </div>
           <div className="grid grid-cols-2 gap-2 text-white/70">
             <div className="flex justify-between">
-              <span className="text-white/30">BUY PRESSURE</span>
+              <span className="text-white/30">BULL SCORE</span>
               <span className="text-[#26a69a] font-black">{Math.max(0, score - 50) * 2}%</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-white/30">SELL PRESSURE</span>
+              <span className="text-white/30">BEAR SCORE</span>
               <span className="text-[#ef5350] font-black">{Math.max(0, 50 - score) * 2}%</span>
             </div>
           </div>

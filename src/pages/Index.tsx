@@ -6,24 +6,22 @@ import { ActionPlanningPanel } from '../components/compass/ActionPlanningPanel';
 import { ReversalPanel } from '../components/compass/ReversalPanel';
 import { AssetSummaryCard } from '../components/trading/AssetSummaryCard';
 import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
-import { SUPPORTED_ASSETS } from '../types/trading';
+import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
+import { DEFAULT_SYMBOL, SUPPORTED_ASSETS } from '../types/trading';
 import { cn } from '@/lib/utils';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
 
 const ERROR_TITLES: Record<string, string> = {
-  MISSING_API_KEY: 'API key not configured',
-  INVALID_API_KEY: 'API key rejected',
-  PLAN_LIMIT: 'Symbol not included in your plan',
-  RATE_LIMIT: 'Rate limit reached',
+  GEO_BLOCKED: 'Binance unavailable in this region',
+  RATE_LIMIT: 'Binance rate limit reached',
   SYMBOL_NOT_FOUND: 'Symbol unavailable',
   NETWORK: 'Network error',
-  UPSTREAM: 'Data provider error',
-  BUDGET_EXHAUSTED: 'Credit budget reached',
+  UPSTREAM: 'Exchange error',
   UNKNOWN: 'Unexpected error',
 };
 
 const Index = () => {
-  const [selectedAsset, setSelectedAsset] = useState('EUR/USD');
+  const [selectedAsset, setSelectedAsset] = useState(DEFAULT_SYMBOL);
   const [activeTab, setActiveTab] = useState<'factors' | 'technical' | 'context' | 'history'>('factors');
 
   const compass = useCompassSignal(selectedAsset);
@@ -57,7 +55,6 @@ const Index = () => {
                 selectedAsset === asset.symbol ? 'text-black/60' : 'text-white/30'
               )}>
                 {asset.category}
-                {asset.requiresPaidPlan && ' · PAID PLAN'}
               </span>
             </button>
           ))}
@@ -76,7 +73,7 @@ const Index = () => {
             </span>
           </div>
           <div className="flex items-center gap-2 text-xs font-mono">
-            <span className="text-white/50">REFRESH IN:</span>
+            <span className="text-white/50">CANDLES IN:</span>
             <span className="text-white/90">{compass.nextRefreshIn}s</span>
           </div>
           <div className="flex items-center gap-2 text-xs font-mono">
@@ -132,6 +129,8 @@ const Index = () => {
               dataQuality={compass.dataQuality.overall}
               dataLabel={compass.dataLabel}
               factorAgreement={compass.live?.factorAgreement || 0}
+              availableFactors={compass.live?.availableFactors || 0}
+              totalFactors={compass.live?.totalFactors || 0}
               price={compass.price}
               timestamp={compass.live?.timestamp || Date.now()}
             />
@@ -152,6 +151,13 @@ const Index = () => {
 
         {/* Asset Snapshot */}
         <AssetSummaryCard data={compass.marketData} dataQuality={compass.dataQuality} />
+
+        {/* Real order flow straight from the exchange */}
+        <RealtimeOrderFlow
+          orderFlow={compass.orderFlow}
+          precision={compass.precision}
+          quote={compass.marketData.currency}
+        />
 
         {/* Expandable Details Sections */}
         <div className="bg-[#0b0c10] rounded-2xl border border-white/[0.08] overflow-hidden">
@@ -223,7 +229,7 @@ const Index = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
                     <span className="text-white/50 text-xs font-bold uppercase">Data Source</span>
-                    <div className="text-white font-mono mt-2">Twelve Data (REST polling)</div>
+                    <div className="text-white font-mono mt-2">Binance (public REST + WebSocket)</div>
                   </div>
                   <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
                     <span className="text-white/50 text-xs font-bold uppercase">Data Quality</span>
@@ -254,12 +260,19 @@ const Index = () => {
                   <div className="text-white font-mono mt-2">{compass.assetName} ({selectedAsset})</div>
                 </div>
 
+                <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
+                  <span className="text-white/50 text-xs font-bold uppercase">Order flow</span>
+                  <div className="text-white font-mono mt-2">
+                    {compass.orderFlow.isLive ? 'LIVE' : compass.orderFlow.streamStatus} · book {compass.orderFlow.bids.length}×{compass.orderFlow.asks.length} · {compass.orderFlow.recentTrades.length} trades
+                  </div>
+                </div>
+
                 <div className="p-4 bg-amber-500/5 rounded-xl border border-amber-500/20">
-                  <span className="text-amber-400 text-xs font-bold uppercase">Not available on this data plan</span>
+                  <span className="text-amber-400 text-xs font-bold uppercase">Scope: crypto only, for now</span>
                   <ul className="text-white/70 text-sm mt-2 space-y-1 list-disc list-inside">
-                    <li>Order book depth and buy/sell tape (Twelve Data does not expose these for stocks, forex or indices)</li>
-                    <li>Real-time WebSocket streaming (REST polling only)</li>
-                    <li>Cross-market feeds such as DXY, VIX and yields</li>
+                    <li>Only Binance USDT pairs are offered, because these are the instruments we can source honestly end to end</li>
+                    <li>Stocks, forex and indices are a later addition — they need a data source that also provides real order flow</li>
+                    <li>Cross-market feeds such as DXY, VIX and yields are not part of this scope</li>
                   </ul>
                 </div>
               </div>

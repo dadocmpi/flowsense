@@ -75,8 +75,13 @@ export function computeLiveAnalysis(
   const rawDirection = scoreToDirection(rawScore, config);
 
   const availableFactors = factors.filter(f => f.direction !== 'UNAVAILABLE').length;
-  const factorAgreement = factors.length > 0
-    ? Math.min(100, Math.round((availableFactors / factors.length) * 100))
+
+  // Agreement measures how much the factors that took a side actually agree,
+  // weighted by their contribution. It is NOT the share of factors that
+  // reported data — a set of factors that all disagree must not read as 100%.
+  const directionalWeight = buyWeight + sellWeight;
+  const factorAgreement = directionalWeight > 0
+    ? Math.min(100, Math.round((Math.max(buyWeight, sellWeight) / directionalWeight) * 100))
     : 0;
 
   const isStale = Date.now() - timestamp > config.maxDataAgeMs;
@@ -152,6 +157,8 @@ export function publishOfficialSignal(
     minuteKey: live.minuteKey,
     direction,
     score: live.rawScore,
+    // Confidence blends data quality with how one-sided the factors are, so a
+    // contested reading cannot present as fully confident.
     confidence: Math.min(100, Math.round(live.dataQuality * (live.factorAgreement / 100))),
     factorSummary,
     timestamp: live.timestamp,
