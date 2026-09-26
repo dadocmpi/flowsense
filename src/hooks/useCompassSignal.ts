@@ -7,7 +7,7 @@ import { useFundamentalIntelligence } from './useFundamentalIntelligence';
 import { useSrReversal } from './useSrReversal';
 import { findAssetConfig } from '../types/trading';
 import type { Candle } from '../lib/indicators';
-import type { MarketDataError, MarketDataState, DataQualityScore } from '../types/trading';
+import type { MarketDataError, MarketDataState, DataQualityScore, OrderFlowState } from '../types/trading';
 import {
   FactorContribution,
   LiveAnalysisState,
@@ -42,6 +42,7 @@ export interface CompassEngineHookResult {
   srLevels: SRLevel[];
   // Market data passthrough
   marketData: MarketDataState;
+  orderFlow: OrderFlowState;
   candles: Candle[];
   price: number;
   precision: number;
@@ -79,7 +80,7 @@ function dataLabelFromQuality(quality: DataQualityScore): DataLabel {
   }
 }
 
-export const useCompassSignal = (symbol = 'XAU/USD'): CompassEngineHookResult => {
+export const useCompassSignal = (symbol = 'BTC/USDT'): CompassEngineHookResult => {
   const [official, setOfficial] = useState<OfficialCompassState | null>(null);
   const [live, setLive] = useState<LiveAnalysisState | null>(null);
   const [history, setHistory] = useState<SignalHistoryEntry[]>([]);
@@ -89,10 +90,10 @@ export const useCompassSignal = (symbol = 'XAU/USD'): CompassEngineHookResult =>
   const assetConfig = findAssetConfig(symbol);
 
   const marketData = useMarketData(symbol);
-  const { data, dataQuality, error, isLoading, lastUpdated, nextRefreshIn } = marketData;
+  const { data, orderFlow, dataQuality, error, isLoading, lastUpdated, nextRefreshIn } = marketData;
 
   const mtfResult = useMultiTimeframe(data.candles, '5min');
-  const marketContext = useMarketContextEngine(data);
+  const marketContext = useMarketContextEngine(data, orderFlow);
   const macroContext = useMacroContext(data.candles);
   const fundamentalIntelligence = useFundamentalIntelligence(data.candles, data.price, 60000);
   const srReversal = useSrReversal(data.candles, data.price, dataQuality.overall, {
@@ -214,32 +215,49 @@ export const useCompassSignal = (symbol = 'XAU/USD'): CompassEngineHookResult =>
       }
     }
 
-    // 5. Macro context factors
+    // 5. Higher-timeframe trend bias (price vs EMA200, from real candles).
+    // No cross-market feed is configured, so this is a trend read only.
     if (macroContext) {
-      const { bias, dxyTrend, yieldsTrend, riskRegime } = macroContext;
+      const { bias, htfTrendBias, riskRegime } = macroContext;
 
       if (bias === 'BULLISH' || bias === 'STRONG_BULLISH') {
         factors.push({
           category: 'MACRO',
-          name: 'MACRO_BIAS',
+          name: 'HTF_TREND',
           direction: 'BULLISH',
           weight: 10,
-          value: `${riskRegime} / ${dxyTrend} DXY / ${yieldsTrend} yields`,
+          value: `${htfTrendBias} vs EMA200`,
           confidence: 75,
         });
       } else if (bias === 'BEARISH' || bias === 'STRONG_BEARISH') {
         factors.push({
           category: 'MACRO',
-          name: 'MACRO_BIAS',
+          name: 'HTF_TREND',
           direction: 'BEARISH',
           weight: 10,
-          value: `${riskRegime} / ${dxyTrend} DXY / ${yieldsTrend} yields`,
+          value: `${htfTrendBias} vs EMA200`,
           confidence: 75,
         });
       }
     }
 
-    // 6. SR/R factors
+    // 6. Live order flow — executed aggressor delta from the real trade tape.
+    if (orderFlow && orderFlow.recentTrades.length > 0) {
+      const sum = orderFlow.buyerVolume + orderFlow.sellerVolume;
+      if (sum > 0) {
+        const deltaRatio = (orderFlow.buyerVolume - orderFlow.sellerVolume) / sum;
+        factors.push({
+          category: 'ORDER_FLOW',
+          name: 'AGGRESSOR_DELTA',
+          direction: deltaRatio > 0.1 ? 'BULLISH' : deltaRatio < -0.1 ? 'BEARISH' : 'NEUTRAL',
+          weight: Math.min(100, Math.round(Math.abs(deltaRatio) * 150)),
+          value: `${(deltaRatio * 100).toFixed(1)}% ${deltaRatio >= 0 ? 'buy' : 'sell'}-initiated`,
+          confidence: 70,
+        });
+      }
+    }
+
+    // 7. SR/R factors
     factors.push(...srReversal.factors);
 
     const timestamp = Date.now();
@@ -265,6 +283,7 @@ export const useCompassSignal = (symbol = 'XAU/USD'): CompassEngineHookResult =>
     mtfResult,
     fundamentalIntelligence,
     macroContext,
+    orderFlow,
     config,
     srReversal.factors,
   ]);
@@ -354,6 +373,7 @@ export const useCompassSignal = (symbol = 'XAU/USD'): CompassEngineHookResult =>
     reversalSignal: srReversal.reversalSignal,
     srLevels: srReversal.srLevels,
     marketData: data,
+    orderFlow,
     candles: data.candles,
     price: data.price,
     precision: assetConfig.precision,
@@ -378,6 +398,7 @@ export const useCompassSignal = (symbol = 'XAU/USD'): CompassEngineHookResult =>
     srReversal.reversalSignal,
     srReversal.srLevels,
     data,
+    orderFlow,
     data.candles,
     data.price,
     assetConfig.precision,

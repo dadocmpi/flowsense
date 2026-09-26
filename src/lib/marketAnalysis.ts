@@ -1,7 +1,7 @@
 // ============================================
 // MARKET ANALYSIS — DERIVED FROM REAL CANDLES
 // ============================================
-// Everything here is computed from Twelve Data OHLC candles. No randomness.
+// Everything here is computed from real OHLC candles. No randomness.
 
 import {
   Candle,
@@ -60,6 +60,12 @@ export function aggregateCandles(candles: Candle[], bucketMinutes: number): Cand
     existing.low = Math.min(existing.low, candle.low);
     existing.close = candle.close;
     existing.volume += candle.volume;
+
+    // Keep the real aggressor split when aggregating, otherwise higher
+    // timeframes would silently lose buy-initiated volume.
+    if (candle.takerBuyVolume !== undefined || existing.takerBuyVolume !== undefined) {
+      existing.takerBuyVolume = (existing.takerBuyVolume ?? 0) + (candle.takerBuyVolume ?? 0);
+    }
   }
 
   return [...buckets.entries()]

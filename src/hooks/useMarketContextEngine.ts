@@ -25,6 +25,7 @@ import {
 } from '../types/marketContext';
 import {
   MarketDataState,
+  OrderFlowState,
 } from '../types/trading';
 
 // ============================================
@@ -95,7 +96,7 @@ const initialState: EngineState = {
       multiTimeframeValid: true,
       lastUpdateTime: Date.now(),
       freshness: 'LIVE',
-      source: 'TWELVE_DATA',
+      source: 'BINANCE',
     },
   },
   isInitialized: false,
@@ -109,6 +110,7 @@ const initialState: EngineState = {
 
 export const useMarketContextEngine = (
   marketData: MarketDataState,
+  orderFlow: OrderFlowState | null = null,
   config: MarketContextConfig = DEFAULT_CONTEXT_CONFIG
 ) => {
   const [engineState, setEngineState] = useState<EngineState>(initialState);
@@ -123,7 +125,7 @@ export const useMarketContextEngine = (
   // ---- Load Manual Zone from localStorage ----
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
-    const saved = localStorage.getItem(`tradingConfig_MGC1!`);
+    const saved = localStorage.getItem(`tradingConfig_manualZone`);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -163,7 +165,7 @@ export const useMarketContextEngine = (
       multiTimeframeValid: data.candles.length >= 100,
       lastUpdateTime: Date.now(),
       freshness: data.price > 0 ? 'LIVE' : 'DISCONNECTED',
-      source: data.price > 0 ? 'TWELVE_DATA' : 'UNAVAILABLE',
+      source: data.price > 0 ? 'BINANCE' : 'UNAVAILABLE',
     };
 
     let overall = 100;
@@ -373,6 +375,10 @@ export const useMarketContextEngine = (
 
     if (priceHistory.length < 5) return zones;
 
+    // Thresholds are percentages of price, so the same config works for BTC
+    // near $84,000 and XRP near $1.50 alike.
+    const proximity = (price * config.zoneProximityThreshold) / 100;
+
     // 1. FVG (Fair Value Gap) Detection
     if (priceHistory.length >= 3) {
       for (let i = 2; i < Math.min(priceHistory.length, 30); i++) {
@@ -388,7 +394,7 @@ export const useMarketContextEngine = (
           const zoneMax = next;
           const midpoint = (zoneMin + zoneMax) / 2;
           
-          if (Math.abs(price - midpoint) < config.zoneProximityThreshold * 3) {
+          if (Math.abs(price - midpoint) < proximity * 3) {
             zones.push({
               id: `fvg-bull-${i}`,
               type: 'FVG',
@@ -416,7 +422,7 @@ export const useMarketContextEngine = (
           const zoneMax = prev;
           const midpoint = (zoneMin + zoneMax) / 2;
           
-          if (Math.abs(price - midpoint) < config.zoneProximityThreshold * 3) {
+          if (Math.abs(price - midpoint) < proximity * 3) {
             zones.push({
               id: `fvg-bear-${i}`,
               type: 'FVG',
@@ -447,7 +453,7 @@ export const useMarketContextEngine = (
       for (let i = 1; i < recent.length - 2; i++) {
         if (recent[i] < recent[i - 1] && recent[i + 1] > recent[i] && recent[i + 2] > recent[i + 1]) {
           const midpoint = (recent[i] + recent[i - 1]) / 2;
-          if (Math.abs(price - midpoint) < config.zoneProximityThreshold * 2) {
+          if (Math.abs(price - midpoint) < proximity * 2) {
             zones.push({
               id: `ob-bull-${i}`,
               type: 'ORDER_BLOCK',
@@ -472,7 +478,7 @@ export const useMarketContextEngine = (
         
         if (recent[i] > recent[i - 1] && recent[i + 1] < recent[i] && recent[i + 2] < recent[i + 1]) {
           const midpoint = (recent[i] + recent[i - 1]) / 2;
-          if (Math.abs(price - midpoint) < config.zoneProximityThreshold * 2) {
+          if (Math.abs(price - midpoint) < proximity * 2) {
             zones.push({
               id: `ob-bear-${i}`,
               type: 'ORDER_BLOCK',
@@ -505,7 +511,7 @@ export const useMarketContextEngine = (
       const range = max - min;
       
       if (range > 0) {
-        if (Math.abs(price - max) < config.zoneProximityThreshold * 2) {
+        if (Math.abs(price - max) < proximity * 2) {
           zones.push({
             id: `swing-h-${now}`,
             type: 'SWING',
@@ -527,7 +533,7 @@ export const useMarketContextEngine = (
           });
         }
         
-        if (Math.abs(price - min) < config.zoneProximityThreshold * 2) {
+        if (Math.abs(price - min) < proximity * 2) {
           zones.push({
             id: `swing-l-${now}`,
             type: 'SWING',
@@ -590,13 +596,15 @@ export const useMarketContextEngine = (
     
     const clusters: ZoneCluster[] = [];
     const used = new Set<string>();
-    const clusterThreshold = 15; // points — for XAUUSD
+    // Percent of the zone midpoint, not an absolute number of points.
+    const clusterThresholdPct = 0.75;
     
     const sorted = [...zones].sort((a, b) => a.midpoint - b.midpoint);
     
     for (const zone of sorted) {
       if (used.has(zone.id)) continue;
       
+      const clusterThreshold = (zone.midpoint * clusterThresholdPct) / 100;
       const overlapping = zones.filter(z => {
         if (used.has(z.id)) return false;
         const overlap = !(z.priceMax < zone.priceMin - clusterThreshold || 
@@ -707,7 +715,8 @@ export const useMarketContextEngine = (
     ema200: number | null,
     ema50: number | null,
     ema20: number | null,
-    dataQualityScore: DataQualityScore
+    dataQualityScore: DataQualityScore,
+    liveOrderFlow: OrderFlowState | null
   ): SignalFactor[] => {
     const factors: SignalFactor[] = [];
     const now = Date.now();
@@ -716,7 +725,8 @@ export const useMarketContextEngine = (
     if (manualZone && manualZone.zoneMin > 0 && manualZone.zoneMax > 0) {
       const inZone = price >= manualZone.zoneMin && price <= manualZone.zoneMax;
       const approaching = !inZone && 
-        Math.abs(price - (manualZone.zoneMin + manualZone.zoneMax) / 2) < config.zoneProximityThreshold;
+        Math.abs(price - (manualZone.zoneMin + manualZone.zoneMax) / 2) <
+          (price * config.zoneProximityThreshold) / 100;
       
       factors.push({
         name: 'MANUAL_ZONE',
@@ -781,9 +791,9 @@ export const useMarketContextEngine = (
       });
     }
     
-    // ---- VOLUME FACTORS ----
-    // Twelve Data has no order book or tape, so volume factors come from
-    // candle volume only (never from a fabricated buy/sell split).
+    // ---- VOLUME / ORDER FLOW FACTORS ----
+    // Candle volume is always available; the live order book and trade tape
+    // add real aggressor flow on top when the stream is connected.
     const recentCandles = data.candles.slice(-20);
     if (recentCandles.length >= 5) {
       const volumes = recentCandles.map(c => c.volume);
@@ -804,20 +814,63 @@ export const useMarketContextEngine = (
           timestamp: now,
         });
       }
+    }
 
+    // Real aggressor delta from the trade tape. A positive delta means buyers
+    // are lifting offers — actual executed flow, not a modelled split.
+    if (liveOrderFlow && liveOrderFlow.recentTrades.length > 0) {
+      const sum = liveOrderFlow.buyerVolume + liveOrderFlow.sellerVolume;
+      if (sum > 0) {
+        const deltaRatio = (liveOrderFlow.buyerVolume - liveOrderFlow.sellerVolume) / sum;
+
+        factors.push({
+          name: 'VOLUME_DELTA',
+          value: `Δ ${(deltaRatio * 100).toFixed(1)}% of tape`,
+          action: deltaRatio > 0.15 ? 'BUY' : deltaRatio < -0.15 ? 'SELL' : 'HOLD',
+          weight: config.weights.find(w => w.name === 'VOLUME_DELTA')?.baseWeight || 6,
+          isCorrelated: false,
+          correlationGroup: null,
+          source: 'Executed aggressor delta from Binance trade tape',
+          timestamp: now,
+        });
+      }
+
+      // Book imbalance: how much resting size sits on the bid vs the ask.
+      const bidDepth = liveOrderFlow.bids.reduce((acc, b) => acc + b.size, 0);
+      const askDepth = liveOrderFlow.asks.reduce((acc, a) => acc + a.size, 0);
+      const depth = bidDepth + askDepth;
+
+      if (depth > 0) {
+        const imbalance = (bidDepth - askDepth) / depth;
+        factors.push({
+          name: 'BOOK_IMBALANCE',
+          value: `${(imbalance * 100).toFixed(1)}% bid-heavy`,
+          action: imbalance > 0.2 ? 'BUY' : imbalance < -0.2 ? 'SELL' : 'HOLD',
+          weight: config.weights.find(w => w.name === 'BOOK_IMBALANCE')?.baseWeight || 5,
+          isCorrelated: false,
+          correlationGroup: null,
+          source: 'Live Binance order book depth (top 10)',
+          timestamp: now,
+        });
+      }
+    }
+
+    // Price position within the recent range — a structure read, independent
+    // of flow, so it stays even when the stream is down.
+    if (recentCandles.length >= 5) {
       const rangeHigh = Math.max(...recentCandles.map(c => c.high));
       const rangeLow = Math.min(...recentCandles.map(c => c.low));
       const range = rangeHigh - rangeLow;
       if (range > 0) {
         const position = (price - rangeLow) / range;
         factors.push({
-          name: 'VOLUME_DELTA',
-          value: `position ${(position * 100).toFixed(0)}% of range`,
+          name: 'RANGE_POSITION',
+          value: `${(position * 100).toFixed(0)}% of range`,
           action: position > 0.65 ? 'BUY' : position < 0.35 ? 'SELL' : 'HOLD',
-          weight: config.weights.find(w => w.name === 'VOLUME_DELTA')?.baseWeight || 6,
+          weight: config.weights.find(w => w.name === 'RANGE_POSITION')?.baseWeight || 5,
           isCorrelated: false,
           correlationGroup: null,
-          source: 'Price position within recent range',
+          source: 'Price position within the last 20 candles',
           timestamp: now,
         });
       }
@@ -1061,15 +1114,18 @@ export const useMarketContextEngine = (
                      gate0Trend === 'NEUTRAL';
     }
     
-    if (!inZone && distToZone > config.zoneProximityThreshold * 2) {
+    const proximity = (price * config.zoneProximityThreshold) / 100;
+    const entry = (price * config.zoneEntryThreshold) / 100;
+
+    if (!inZone && distToZone > proximity * 2) {
       return 'WAITING';
     }
-    
-    if (!inZone && distToZone > config.zoneEntryThreshold) {
+
+    if (!inZone && distToZone > entry) {
       return 'APPROACHING_ZONE';
     }
-    
-    if (!inZone && distToZone <= config.zoneEntryThreshold) {
+
+    if (!inZone && distToZone <= entry) {
       return 'ENTERING_ZONE';
     }
     
@@ -1197,7 +1253,8 @@ export const useMarketContextEngine = (
       ema200,
       ema50,
       ema20,
-      dataQuality
+      dataQuality,
+      orderFlow
     );
     
     // ---- STEP 10: CALCULATE CONFLUENCE ----
@@ -1477,7 +1534,7 @@ export const useMarketContextEngine = (
         manualZone: updatedZone,
       }));
       
-      localStorage.setItem(`tradingConfig_MGC1!`, JSON.stringify({
+      localStorage.setItem(`tradingConfig_manualZone`, JSON.stringify({
         direction: updatedZone.direction,
         startTime: updatedZone.startTime,
         endTime: updatedZone.endTime,

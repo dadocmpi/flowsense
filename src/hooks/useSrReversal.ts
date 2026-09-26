@@ -128,8 +128,8 @@ function toLevel(seed: LevelSeed, price: number, dataQuality: number): SRLevel {
 
 /**
  * Builds support/resistance levels and a reversal watch signal from real
- * candles. Twelve Data provides no order book or tape, so confirmation uses
- * traded volume only.
+ * candles. Confirmation uses traded volume; the live order book and tape are
+ * surfaced separately in the order flow panel.
  */
 export const useSrReversal = (
   candles: Candle[],

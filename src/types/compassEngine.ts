@@ -70,7 +70,9 @@ export const DEFAULT_COMPASS_CONFIG: CompassEngineConfig = {
   scoreThreshold: 50,
   directionChangeThreshold: 15,
   maxDataAgeMs: 60000,
-  minFactorAgreement: 2,
+  // Percentage of weighted directional agreement required to publish. This is
+  // an anti-noise gate: a near-tie reading should not flip the official signal.
+  minFactorAgreement: 55,
   strongBuyScore: 75,
   buyScore: 55,
   sellScore: 45,

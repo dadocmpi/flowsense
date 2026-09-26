@@ -10,6 +10,9 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+  // Base-asset volume initiated by buyers (Binance kline field 9). Populated by
+  // the Binance client; it is a real aggressor split, not an estimate.
+  takerBuyVolume?: number;
 }
 
 export interface MacdResult {

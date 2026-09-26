@@ -101,9 +101,9 @@ export interface ConfluenceResult {
 }
 
 // ---- Data Quality ----
-// Twelve Data (REST) has no order book or tape, so quality is assessed from
-// price, candles, indicators, volume and multi-timeframe coverage only.
-export type DataSource = 'TWELVE_DATA' | 'UNAVAILABLE';
+// Binance public streams provide a real order book and trade tape, so quality
+// reflects those feeds in addition to price, candles, indicators and volume.
+export type DataSource = 'BINANCE' | 'UNAVAILABLE';
 export type DataFreshness = 'LIVE' | 'STALE' | 'DELAYED' | 'DISCONNECTED';
 
 export interface DataQualityMetrics {
@@ -240,8 +240,10 @@ export interface MarketContextConfig {
   minZoneWeightPercentage: number;     // Default 50
   persistence: PersistenceConfig;
   weights: IndicatorWeightConfig[];
-  zoneProximityThreshold: number;       // Points away to consider \"approaching\"
-  zoneEntryThreshold: number;           // Points into zone to consider \"entered\"
+  /** Percent of price away from a zone to consider it "approaching". */
+  zoneProximityThreshold: number;
+  /** Percent of price into a zone to consider it "entered". */
+  zoneEntryThreshold: number;
   dataQualityDecay: number;            // How much to reduce per quality issue
   enableMultiTimeframe: boolean;
   enableCorrelationCollapse: boolean;
@@ -271,6 +273,8 @@ export const DEFAULT_CONTEXT_CONFIG: MarketContextConfig = {
     // Volume
     { name: 'VOLUME', category: 'VOLUME', baseWeight: 6, minWeight: 3, maxWeight: 10, isEnabled: true, correlationGroup: null },
     { name: 'VOLUME_DELTA', category: 'VOLUME', baseWeight: 6, minWeight: 3, maxWeight: 10, isEnabled: true, correlationGroup: null },
+    { name: 'BOOK_IMBALANCE', category: 'VOLUME', baseWeight: 5, minWeight: 2, maxWeight: 9, isEnabled: true, correlationGroup: null },
+    { name: 'RANGE_POSITION', category: 'STRUCTURE', baseWeight: 5, minWeight: 2, maxWeight: 9, isEnabled: true, correlationGroup: null },
     // EMA
     { name: 'EMA_200', category: 'EMA', baseWeight: 12, minWeight: 8, maxWeight: 18, isEnabled: true, correlationGroup: 'EMA_CLOUD' },
     { name: 'EMA_50', category: 'EMA', baseWeight: 6, minWeight: 3, maxWeight: 10, isEnabled: true, correlationGroup: 'EMA_CLOUD' },
@@ -281,8 +285,13 @@ export const DEFAULT_CONTEXT_CONFIG: MarketContextConfig = {
     { name: 'MACD', category: 'OSCILLATOR', baseWeight: 4, minWeight: 2, maxWeight: 8, isEnabled: true, correlationGroup: null },
     { name: 'MOMENTUM', category: 'OSCILLATOR', baseWeight: 3, minWeight: 1, maxWeight: 6, isEnabled: true, correlationGroup: null },
   ],
-  zoneProximityThreshold: 50,      // 50 points for XAUUSD
-  zoneEntryThreshold: 10,          // 10 points into zone
+  // Percentages, not absolute points. The old values (50 / 10 "points") were
+  // calibrated for gold near $2000, where 50 points is ~2.5% of price. Applied
+  // to a crypto pair the same numbers are meaningless: 50 points on XRP at
+  // $1.50 would be 3300% of price, so every zone would read as "approaching"
+  // and the zone gate would never discriminate.
+  zoneProximityThreshold: 2.5,
+  zoneEntryThreshold: 0.5,
   dataQualityDecay: 15,           // 15% reduction per major issue
   enableMultiTimeframe: true,
   enableCorrelationCollapse: true,

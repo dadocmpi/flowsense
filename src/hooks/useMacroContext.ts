@@ -46,7 +46,19 @@ function getCurrentSession(now: Date): SessionInfo {
   else if (current === 'NEW_YORK') next = 'ASIA';
   else next = 'ASIA';
 
-  return { current, next, minutesUntilNext: 0, isOverlap };
+  // Minutes until the next session opens, computed from the real clock.
+  // This used to be a hardcoded 0, which read as "a session starts now"
+  // no matter the actual time.
+  let minutesUntilNext = 0;
+  if (next) {
+    const startHour = SESSION_HOURS_UTC[next].start;
+    let delta = startHour - hour;
+    if (delta <= 0) delta += 24;
+    const minutesIntoHour = now.getUTCMinutes();
+    minutesUntilNext = delta * 60 - minutesIntoHour;
+  }
+
+  return { current, next, minutesUntilNext, isOverlap };
 }
 
 function scoreToBias(score: number): MacroBias {

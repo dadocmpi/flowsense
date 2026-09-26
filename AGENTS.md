@@ -3,57 +3,63 @@
 ## What this app is
 
 FlowSense: a React + TypeScript + Vite trading analysis dashboard. All market
-data comes from Twelve Data via a server-side proxy. Nothing is simulated.
+data comes from Binance's public market-data API (REST + WebSocket). Nothing is
+simulated.
 
 ## Hard rules
 
-- **Never fabricate market data.** No random walks, no synthetic order flow,
-  no placeholder prices that look real. If data is unavailable, show an honest
+- **Never fabricate market data.** No random walks, no synthetic order flow, no
+  placeholder prices that look real. If data is unavailable, show an honest
   unavailable state (`--`, `DATA: UNAVAILABLE`) and an error kind.
-- **The API key never reaches the browser.** `TWELVEDATA_API_KEY` has no `VITE_`
-  prefix and is read only inside `api/_twelvedata.ts`. Verify with
-  `grep -c "apikey" dist/assets/*.js` → must be 0.
-- **Twelve Data has no order book, tape, or order flow.** Do not reintroduce
-  concepts like buy/sell pressure, delta, absorption, or tape confirmation.
-  Anything flow-like must be derived from candle volume and labelled as volume.
+- **Only ship markets we can source honestly.** The app is crypto-only (Binance
+  USDT spot pairs) on purpose. Do not add forex, indices or stocks unless the
+  data source also provides real order flow for them.
+- **No API key exists.** Binance's public endpoints are unauthenticated and
+  CORS-open. Never add a key, a proxy, or a `VITE_*` secret. Verify the bundle
+  stays credential-free: `grep -c "apikey" dist/assets/*.js` → must be 0.
+- **Order flow must be real.** Every bid, ask, trade and buy/sell percentage must
+  come from a Binance response. Do not reintroduce hardcoded values such as a
+  fixed 50/50 buyer/seller split or a constant `volumeDelta` — an earlier version
+  did exactly that, and it was a lie in the UI.
 
 ## Architecture
 
 ```
-api/_twelvedata.ts             proxy core, shared by both environments
-api/twelvedata.ts              Vercel serverless entrypoint
-vite-plugins/twelvedata-proxy  dev middleware at /api/twelvedata
-src/lib/twelveDataClient.ts    browser fetch + TwelveDataError mapping
-src/lib/creditBudget.ts        free-plan budget (8/min, 800/day)
+src/lib/binanceClient.ts       REST + WebSocket client, host fallback, error mapping
 src/lib/indicators.ts          pure indicator math, no I/O
 src/lib/marketAnalysis.ts      aggregation, derived ranges, buildIndicators/buildSummary
-src/hooks/useMarketData.ts     the single polling data entry point
+src/hooks/useMarketData.ts     the single data entry point (REST + live stream)
+src/hooks/useMarketContextEngine.ts   context engine; consumes real order flow
+src/components/trading/RealtimeOrderFlow.tsx  book depth, tape, buy/sell split
 ```
 
-Proxy validation order: endpoint allow-list → param validation → API key check →
-cache → upstream. Params are validated before the key so junk requests fail fast
-and cheap.
+Host fallback order (REST and WS alike): `data-api.binance.vision` →
+`api.binance.com` / `stream.binance.com:9443` → `api.binance.us` /
+`stream.binance.us:9443`. Some regions get HTTP 451 on the main domains; the
+client remembers the first host that answers. `data-api.binance.vision` and
+`data-stream.binance.vision` are the official public market-data mirrors and are
+the most reliable choice.
 
-## Free vs paid plan
+## Real aggressor flow
 
-Free tier covers US stocks, forex, and crypto. `XAU/USD` and `SPX` need Grow or
-above; they carry `requiresPaidPlan: true` in `src/types/trading.ts` and render a
-`· PAID PLAN` badge. `EUR/USD` is the default so a free key works immediately.
+- `aggTrade.m === true` means the **buyer was the maker**, so the seller
+  aggressed → `SELL`. This is the exchange's own flag, not an inference.
+- Kline field 9 is taker-buy base volume, a genuine per-candle aggressor split.
+  `aggregateCandles` sums it so higher timeframes keep the split.
 
 ## Commands
 
 ```
 npm run dev        # :8080
 npm run build
-npx tsc -p tsconfig.app.json --noEmit
+npx tsc -p tsconfig.app.json --noEmit 2>&1 | grep -v "^src/components/ui/"
 ```
 
-Known: `src/components/ui/*` has pre-existing errors (`cmdk`,
-`@radix-ui/react-dialog` are not in `package.json`). Those files are vendored
-shadcn components and are not touched. Filter them when checking types:
-`npx tsc -p tsconfig.app.json --noEmit 2>&1 | grep -v "src/components/ui/"`
-
-`npm run lint` is broken upstream (`typescript-eslint` not installed).
+The root `tsconfig.json` is solution-style (`files: []`), so `npm run typecheck`
+and a bare `tsc --noEmit` check nothing at all. Always pass
+`-p tsconfig.app.json`. `src/components/ui/*` carries pre-existing missing-module
+errors (`cmdk`, several `@radix-ui/*` packages) and is not ours to fix, hence the
+grep. `npm run lint` is broken upstream (`typescript-eslint` not installed).
 
 ## Testing indicator math
 
