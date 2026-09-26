@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import type { Candle } from '../lib/indicators';
 import { 
   MarketContextDecision,
   MarketState,
@@ -17,14 +18,13 @@ import {
   ZoneConfluence,
   ZoneType,
   ZoneStrength,
+  ZoneStatus,
   MarketStructure,
   SignalAction,
   DEFAULT_WEIGHT_TIERS,
 } from '../types/marketContext';
-import { 
-  TwelveDataState,
-  OrderBookLevel,
-  TradeFeedItem,
+import {
+  MarketDataState,
 } from '../types/trading';
 
 // ============================================
@@ -85,21 +85,17 @@ const initialState: EngineState = {
   ema20Value: null,
   dataQuality: {
     overall: 100,
-    orderBookWeight: 20,
-    tapeWeight: 15,
-    volumeWeight: 15,
-    tradesWeight: 10,
     indicatorsWeight: 40,
+    volumeWeight: 15,
     metrics: {
-      orderBookComplete: true,
-      tapeAvailable: true,
+      priceAvailable: true,
+      candlesValid: true,
       volumeAvailable: true,
-      tradesAvailable: true,
       indicatorsValid: true,
-      websocketConnected: true,
+      multiTimeframeValid: true,
       lastUpdateTime: Date.now(),
-      latencyMs: 0,
       freshness: 'LIVE',
+      source: 'TWELVE_DATA',
     },
   },
   isInitialized: false,
@@ -112,7 +108,7 @@ const initialState: EngineState = {
 };
 
 export const useMarketContextEngine = (
-  marketData: TwelveDataState,
+  marketData: MarketDataState,
   config: MarketContextConfig = DEFAULT_CONTEXT_CONFIG
 ) => {
   const [engineState, setEngineState] = useState<EngineState>(initialState);
@@ -158,43 +154,30 @@ export const useMarketContextEngine = (
   // ============================================
   // STEP 1: DATA QUALITY ASSESSMENT
   // ============================================
-  const assessDataQuality = useCallback((data: TwelveDataState): DataQualityScore => {
+  const assessDataQuality = useCallback((data: MarketDataState): DataQualityScore => {
     const metrics: DataQualityMetrics = {
-      orderBookComplete: data.bids.length >= 3 && data.asks.length >= 3 && 
-                         data.bids.every(b => b.size > 0) && data.asks.every(a => a.size > 0),
-      tapeAvailable: data.recentTrades.length > 0,
-      volumeAvailable: data.volumeDelta !== undefined && data.volumeDelta !== null,
-      tradesAvailable: data.recentTrades.length > 0,
+      priceAvailable: data.price > 0,
+      candlesValid: data.candles.length >= 50,
+      volumeAvailable: data.candles.some(c => c.volume > 0),
       indicatorsValid: data.oscillators.length >= 2 && data.movingAverages.length >= 3,
-      websocketConnected: data.isLive,
+      multiTimeframeValid: data.candles.length >= 100,
       lastUpdateTime: Date.now(),
-      latencyMs: 0,
-      freshness: data.isLive ? 'LIVE' : 'DELAYED',
+      freshness: data.price > 0 ? 'LIVE' : 'DISCONNECTED',
+      source: data.price > 0 ? 'TWELVE_DATA' : 'UNAVAILABLE',
     };
 
     let overall = 100;
-    
-    // CRITICAL: missing order book is severe
-    if (!metrics.orderBookComplete) overall -= 20;
-    if (!metrics.tapeAvailable) overall -= 15;
+
+    if (!metrics.priceAvailable) overall -= 50;
+    if (!metrics.candlesValid) overall -= 20;
     if (!metrics.volumeAvailable) overall -= 10;
-    if (!metrics.tradesAvailable) overall -= 10;
     if (!metrics.indicatorsValid) overall -= 15;
-    if (!metrics.websocketConnected) overall -= 25;
-    
-    // Bonus for full data
-    if (metrics.orderBookComplete && metrics.tapeAvailable && 
-        metrics.volumeAvailable && metrics.indicatorsValid) {
-      overall = Math.min(100, overall + 5);
-    }
+    if (!metrics.multiTimeframeValid) overall -= 10;
 
     return {
       overall: Math.max(0, overall),
-      orderBookWeight: metrics.orderBookComplete ? 20 : 0,
-      tapeWeight: metrics.tapeAvailable ? 15 : 0,
-      volumeWeight: metrics.volumeAvailable ? 15 : 0,
-      tradesWeight: metrics.tradesAvailable ? 10 : 0,
       indicatorsWeight: metrics.indicatorsValid ? 40 : 0,
+      volumeWeight: metrics.volumeAvailable ? 15 : 0,
       metrics,
     };
   }, []);
@@ -383,8 +366,7 @@ export const useMarketContextEngine = (
   const detectZones = useCallback((
     price: number,
     priceHistory: number[],
-    orderBook: { bids: OrderBookLevel[]; asks: OrderBookLevel[] },
-    trades: TradeFeedItem[]
+    candles: Candle[]
   ): InstitutionalZone[] => {
     const zones: InstitutionalZone[] = [];
     const now = Date.now();
@@ -421,7 +403,6 @@ export const useMarketContextEngine = (
               status: 'ACTIVE',
               timeframe: 'LTF',
               touches: 0,
-              absorptionEvents: 0,
               invalidationPrice: zoneMin - (zoneMax - zoneMin) * 0.5,
               volumeAtFormation: null,
               isClustered: false,
@@ -450,7 +431,6 @@ export const useMarketContextEngine = (
               status: 'ACTIVE',
               timeframe: 'LTF',
               touches: 0,
-              absorptionEvents: 0,
               invalidationPrice: zoneMax + (zoneMax - zoneMin) * 0.5,
               volumeAtFormation: null,
               isClustered: false,
@@ -482,7 +462,6 @@ export const useMarketContextEngine = (
               status: 'ACTIVE',
               timeframe: 'MTF',
               touches: 0,
-              absorptionEvents: 0,
               invalidationPrice: recent[i] - (recent[i - 1] - recent[i]) * 0.5,
               volumeAtFormation: null,
               isClustered: false,
@@ -508,7 +487,6 @@ export const useMarketContextEngine = (
               status: 'ACTIVE',
               timeframe: 'MTF',
               touches: 0,
-              absorptionEvents: 0,
               invalidationPrice: recent[i] + (recent[i] - recent[i - 1]) * 0.5,
               volumeAtFormation: null,
               isClustered: false,
@@ -516,44 +494,6 @@ export const useMarketContextEngine = (
             });
           }
         }
-      }
-    }
-
-    // 3. POC (Point of Control) from order book
-    if (orderBook.bids.length > 0 && orderBook.asks.length > 0) {
-      let maxTotal = 0;
-      let pocPrice = 0;
-      
-      [...orderBook.bids, ...orderBook.asks].forEach(level => {
-        const total = level.price * level.size;
-        if (total > maxTotal) {
-          maxTotal = total;
-          pocPrice = level.price;
-        }
-      });
-      
-      if (pocPrice > 0) {
-        const spread = Math.abs(orderBook.asks[0]?.price - orderBook.bids[0]?.price) || (pocPrice * 0.001);
-        zones.push({
-          id: `poc-${now}`,
-          type: 'POC',
-          priceMin: pocPrice - spread * 0.5,
-          priceMax: pocPrice + spread * 0.5,
-          midpoint: pocPrice,
-          strength: 'MEDIUM',
-          confluences: [{ type: 'POC', strength: 'MEDIUM', timeframe: 'MTF' }],
-          source: 'Order Book Liquidity',
-          createdAt: now,
-          updatedAt: now,
-          status: 'ACTIVE',
-          timeframe: 'MTF',
-          touches: 1,
-          absorptionEvents: 0,
-          invalidationPrice: pocPrice - spread * 2,
-          volumeAtFormation: maxTotal,
-          isClustered: false,
-          clusterId: null,
-        });
       }
     }
 
@@ -580,7 +520,6 @@ export const useMarketContextEngine = (
             status: 'ACTIVE',
             timeframe: 'HTF',
             touches: 0,
-            absorptionEvents: 0,
             invalidationPrice: max + range * 0.05,
             volumeAtFormation: null,
             isClustered: false,
@@ -603,7 +542,6 @@ export const useMarketContextEngine = (
             status: 'ACTIVE',
             timeframe: 'HTF',
             touches: 0,
-            absorptionEvents: 0,
             invalidationPrice: min - range * 0.05,
             volumeAtFormation: null,
             isClustered: false,
@@ -611,37 +549,6 @@ export const useMarketContextEngine = (
           });
         }
       }
-    }
-
-    // 5. Liquidity zones
-    if (orderBook.bids.length > 0 && orderBook.asks.length > 0) {
-      const allLevels = [...orderBook.bids, ...orderBook.asks];
-      const avgSize = allLevels.reduce((sum, l) => sum + l.size, 0) / allLevels.length;
-      
-      allLevels.forEach((level, idx) => {
-        if (level.size > avgSize * 3 && Math.abs(price - level.price) < config.zoneProximityThreshold * 2) {
-          zones.push({
-            id: `liq-${idx}-${now}`,
-            type: 'LIQUIDITY',
-            priceMin: level.price - (level.price * 0.0005),
-            priceMax: level.price + (level.price * 0.0005),
-            midpoint: level.price,
-            strength: 'HIGH',
-            confluences: [{ type: 'LIQUIDITY', strength: 'HIGH', timeframe: 'LTF' }],
-            source: 'Order Book Liquidity Pool',
-            createdAt: now,
-            updatedAt: now,
-            status: 'ACTIVE',
-            timeframe: 'LTF',
-            touches: 0,
-            absorptionEvents: 0,
-            invalidationPrice: level.price * 1.01,
-            volumeAtFormation: level.size,
-            isClustered: false,
-            clusterId: null,
-          });
-        }
-      });
     }
 
     return zones;
@@ -792,7 +699,7 @@ export const useMarketContextEngine = (
   // STEP 9: BUILD SIGNAL FACTORS (with correlation collapse)
   // ============================================
   const buildSignalFactors = useCallback((
-    data: TwelveDataState,
+    data: MarketDataState,
     structure: MarketStructureData,
     clusters: ZoneCluster[],
     manualZone: ManualDailyZone | null,
@@ -874,56 +781,48 @@ export const useMarketContextEngine = (
       });
     }
     
-    // ---- ORDER FLOW FACTORS ----
-    if (data.buyersPercent > 0 && data.buyersPercent < 100) {
-      const flowAction = data.buyersPercent > 60 ? 'BUY' : 
-                        data.buyersPercent < 40 ? 'SELL' : 'HOLD';
-      
-      factors.push({
-        name: 'ORDER_FLOW',
-        value: `${data.buyersPercent}% buyers / Δ${data.volumeDelta}`,
-        action: flowAction,
-        weight: config.weights.find(w => w.name === 'DELTA')?.baseWeight || 10,
-        isCorrelated: false,
-        correlationGroup: 'FLOW',
-        source: 'Volume Delta Analysis',
-        timestamp: now,
-      });
+    // ---- VOLUME FACTORS ----
+    // Twelve Data has no order book or tape, so volume factors come from
+    // candle volume only (never from a fabricated buy/sell split).
+    const recentCandles = data.candles.slice(-20);
+    if (recentCandles.length >= 5) {
+      const volumes = recentCandles.map(c => c.volume);
+      const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+      const lastCandle = recentCandles[recentCandles.length - 1];
+      const volumeRatio = avgVolume > 0 ? lastCandle.volume / avgVolume : 0;
+
+      if (volumeRatio > 0) {
+        const priceRising = lastCandle.close >= lastCandle.open;
+        factors.push({
+          name: 'VOLUME',
+          value: `${volumeRatio.toFixed(2)}x avg`,
+          action: volumeRatio > 1.5 ? (priceRising ? 'BUY' : 'SELL') : 'HOLD',
+          weight: config.weights.find(w => w.name === 'VOLUME')?.baseWeight || 6,
+          isCorrelated: false,
+          correlationGroup: null,
+          source: 'Candle volume vs 20-period average',
+          timestamp: now,
+        });
+      }
+
+      const rangeHigh = Math.max(...recentCandles.map(c => c.high));
+      const rangeLow = Math.min(...recentCandles.map(c => c.low));
+      const range = rangeHigh - rangeLow;
+      if (range > 0) {
+        const position = (price - rangeLow) / range;
+        factors.push({
+          name: 'VOLUME_DELTA',
+          value: `position ${(position * 100).toFixed(0)}% of range`,
+          action: position > 0.65 ? 'BUY' : position < 0.35 ? 'SELL' : 'HOLD',
+          weight: config.weights.find(w => w.name === 'VOLUME_DELTA')?.baseWeight || 6,
+          isCorrelated: false,
+          correlationGroup: null,
+          source: 'Price position within recent range',
+          timestamp: now,
+        });
+      }
     }
-    
-    if (data.recentTrades.length > 0) {
-      const buyTrades = data.recentTrades.filter(t => t.type === 'BUY').length;
-      const sellTrades = data.recentTrades.filter(t => t.type === 'SELL').length;
-      const total = buyTrades + sellTrades || 1;
-      const buyRatio = buyTrades / total;
-      
-      factors.push({
-        name: 'TAPE',
-        value: `${buyTrades} B / ${sellTrades} S`,
-        action: buyRatio > 0.6 ? 'BUY' : buyRatio < 0.4 ? 'SELL' : 'HOLD',
-        weight: config.weights.find(w => w.name === 'TAPE')?.baseWeight || 8,
-        isCorrelated: true,
-        correlationGroup: 'FLOW',
-        source: 'Trade Tape Analysis',
-        timestamp: now,
-      });
-    }
-    
-    if (data.institutionalPressure !== 'LOW') {
-      factors.push({
-        name: 'INST_PRESSURE',
-        value: data.institutionalPressure,
-        action: data.institutionalPressure === 'HIGH' || data.institutionalPressure === 'EXTREME'
-          ? (data.volumeDelta > 0 ? 'BUY' : 'SELL')
-          : 'HOLD',
-        weight: config.weights.find(w => w.name === 'ABSORPTION')?.baseWeight || 8,
-        isCorrelated: true,
-        correlationGroup: 'FLOW',
-        source: 'Institutional Flow Detection',
-        timestamp: now,
-      });
-    }
-    
+
     // ---- EMA FACTORS (CORRELATION-COLLAPSED) ----
     if (data.movingAverages.length > 0) {
       const emas = data.movingAverages.filter(ma => ma.name.includes('EMA'));
@@ -1251,8 +1150,7 @@ export const useMarketContextEngine = (
     const rawZones = detectZones(
       price,
       priceHistoryRef.current,
-      { bids: marketData.bids, asks: marketData.asks },
-      marketData.recentTrades
+      marketData.candles
     );
     
     const allZones = [...rawZones];
@@ -1271,7 +1169,6 @@ export const useMarketContextEngine = (
         status: 'ACTIVE',
         timeframe: 'HTF',
         touches: 0,
-        absorptionEvents: 0,
         invalidationPrice: updatedManualZone.direction === 'BUY' 
           ? updatedManualZone.zoneMin - 50
           : updatedManualZone.zoneMax + 50,
@@ -1307,9 +1204,11 @@ export const useMarketContextEngine = (
     const confluence = calculateConfluence(factors);
     
     // ---- STEP 11: REACTION QUALITY ----
-    const volumeHist = volumeHistoryRef.current.slice(-30);
+    const volumeHist = marketData.candles.slice(-30).map(c => c.volume);
+    const lastCandle = marketData.candles[marketData.candles.length - 1];
+    const reactionMagnitude = lastCandle ? lastCandle.high - lastCandle.low : 0;
     const reactionQuality = evaluateReactionQuality(
-      price, primary, marketData.volumeDelta, volumeHist
+      price, primary, reactionMagnitude, volumeHist
     );
     
     // ---- STEP 12: PERSISTENCE TRACKING ----
@@ -1322,7 +1221,7 @@ export const useMarketContextEngine = (
     const persistenceWindow = 
       provisionalState === 'CONFIRMATION' || provisionalState === 'HIGH_CONFLUENCE'
         ? config.persistence.zoneWindow
-        : config.persistence.orderFlowWindow;
+        : config.persistence.volumeWindow;
     
     const persistenceResult = updatePersistence(
       provisionalState, 
@@ -1468,7 +1367,7 @@ export const useMarketContextEngine = (
     if (marketData.price > 0) {
       updateEngine();
     }
-  }, [marketData.price, marketData.volumeDelta, marketData.buyersPercent, updateEngine]);
+  }, [marketData.price, marketData.candles, updateEngine]);
 
   const getUICompatibleSummary = useCallback(() => {
     const decision = engineState.decision;
@@ -1518,9 +1417,9 @@ export const useMarketContextEngine = (
       verdict = 'BUY';
     } else if (decision.confluence.conflictSeverity === 'CRITICAL') {
       verdict = 'CONFLICT';
-    } else if (buyScore > sellScore * 1.3 && decision.state !== 'WAITING') {
+    } else if (buyScore > sellScore * 1.3) {
       verdict = 'WEAK BUY';
-    } else if (sellScore > buyScore * 1.3 && decision.state !== 'WAITING') {
+    } else if (sellScore > buyScore * 1.3) {
       verdict = 'WEAK SELL';
     } else {
       verdict = 'NEUTRAL';

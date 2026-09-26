@@ -19,7 +19,8 @@ export const ActionPlanningPanel: React.FC<ActionPlanningPanelProps> = ({
 }) => {
   const isBullish = direction === 'STRONG_BUY' || direction === 'BUY';
   const isBearish = direction === 'STRONG_SELL' || direction === 'SELL';
-  const isNeutral = direction === 'NEUTRAL';
+
+  const hasPrice = price > 0;
 
   // Simple entry/invalidation logic based on direction
   const entryZone = isBullish
@@ -46,11 +47,13 @@ export const ActionPlanningPanel: React.FC<ActionPlanningPanelProps> = ({
     ? price * 0.99
     : price * 1.005;
 
-  const risk = Math.abs(price - stopLoss) / price * 100;
-  const reward = Math.abs(target - price) / price * 100;
+  const risk = hasPrice ? (Math.abs(price - stopLoss) / price) * 100 : 0;
+  const reward = hasPrice ? (Math.abs(target - price) / price) * 100 : 0;
   const rr = risk > 0 ? (reward / risk).toFixed(2) : 'N/A';
+  const rrValue = rr === 'N/A' ? 0 : Number.parseFloat(rr);
 
-  const formatPrice = (p: number) => p.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatPrice = (value: number) =>
+    hasPrice ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'N/A';
 
   return (
     <div className="bg-[#0b0c10] rounded-2xl border border-white/[0.08] p-6">
@@ -80,16 +83,16 @@ export const ActionPlanningPanel: React.FC<ActionPlanningPanelProps> = ({
         </div>
         <div>
           <span className="text-white/50">Risk:</span>
-          <span className="font-mono text-white block mt-1">{risk.toFixed(2)}%</span>
+          <span className="font-mono text-white block mt-1">{hasPrice ? `${risk.toFixed(2)}%` : 'N/A'}</span>
         </div>
         <div>
           <span className="text-white/50">Reward:</span>
-          <span className="font-mono text-white block mt-1">{reward.toFixed(2)}%</span>
+          <span className="font-mono text-white block mt-1">{hasPrice ? `${reward.toFixed(2)}%` : 'N/A'}</span>
         </div>
         <div>
           <span className="text-white/50">R:R:</span>
-          <span className={cn("font-mono font-bold block mt-1", parseFloat(rr) >= 2 ? "text-green-400" : parseFloat(rr) >= 1 ? "text-amber-400" : "text-red-500")}>
-            1:{rr}
+          <span className={cn("font-mono font-bold block mt-1", rrValue >= 2 ? "text-green-400" : rrValue >= 1 ? "text-amber-400" : "text-red-500")}>
+            {rr === 'N/A' ? 'N/A' : `1:${rr}`}
           </span>
         </div>
         <div>

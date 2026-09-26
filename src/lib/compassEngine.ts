@@ -14,6 +14,15 @@ import {
 } from '../types/compassEngine';
 
 export { DEFAULT_COMPASS_CONFIG };
+export type {
+  CompassDirection,
+  DataLabel,
+  FactorContribution,
+  LiveAnalysisState,
+  OfficialCompassState,
+  CompassEngineConfig,
+  SignalHistoryEntry,
+};
 
 export function minuteKeyFromTimestamp(ts: number): string {
   const d = new Date(ts);

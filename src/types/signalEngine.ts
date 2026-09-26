@@ -40,7 +40,7 @@ export interface MacroContext {
 }
 
 export interface IndicatorWeightConfig {
-  indicatorName: string;
+  name: string;
   category: 'STRUCTURE' | 'ZONE' | 'ORDER_FLOW' | 'ORDER_BOOK' | 'VOLUME' | 'EMA' | 'OSCILLATOR';
   baseWeight: number;
   minWeight: number;
@@ -66,23 +66,11 @@ export const DEFAULT_WEIGHT_TIERS: Record<string, WeightTierConfig> = {
 };
 
 export interface PersistenceConfig {
-  deltaWindow: number;       // Ticks for delta confirmation
-  tapeWindow: number;         // Ticks for tape confirmation
-  orderFlowWindow: number;    // Ticks for order flow confirmation
+  volumeWindow: number;       // Ticks for volume confirmation
   structureWindow: number;    // Ticks for structure confirmation (longer)
   zoneWindow: number;         // Ticks for zone entry confirmation
   invalidationWindow: number; // Ticks before invalidating confirmed signal
-  minReactionSize: number;    // Minimum delta/volume for valid reaction
-}
-
-export interface IndicatorWeightConfig {
-  indicatorName: string;
-  category: 'STRUCTURE' | 'ZONE' | 'ORDER_FLOW' | 'ORDER_BOOK' | 'VOLUME' | 'EMA' | 'OSCILLATOR';
-  baseWeight: number;
-  minWeight: number;
-  maxWeight: number;
-  isEnabled: boolean;
-  correlationGroup: string | null;
+  minReactionSize: number;    // Minimum volume for a valid reaction
 }
 
 export interface SignalEngineConfig {
@@ -104,9 +92,7 @@ export const DEFAULT_SIGNAL_CONFIG: SignalEngineConfig = {
   quietZoneBeforeEventMin: 30,
   quietZoneAfterEventMin: 15,
   persistence: {
-    deltaWindow: 3,
-    tapeWindow: 3,
-    orderFlowWindow: 3,
+    volumeWindow: 3,
     structureWindow: 5,
     zoneWindow: 2,
     invalidationWindow: 5,
@@ -121,12 +107,6 @@ export const DEFAULT_SIGNAL_CONFIG: SignalEngineConfig = {
     { name: 'ORDER_BLOCK', category: 'ZONE', baseWeight: 12, minWeight: 8, maxWeight: 18, isEnabled: true, correlationGroup: 'ZONE_CLUSTER' },
     { name: 'POC', category: 'ZONE', baseWeight: 10, minWeight: 6, maxWeight: 15, isEnabled: true, correlationGroup: 'ZONE_CLUSTER' },
     { name: 'MANUAL_ZONE', category: 'ZONE', baseWeight: 15, minWeight: 10, maxWeight: 20, isEnabled: true, correlationGroup: 'ZONE_CLUSTER' },
-    // Order Flow
-    { name: 'DELTA', category: 'ORDER_FLOW', baseWeight: 10, minWeight: 5, maxWeight: 15, isEnabled: true, correlationGroup: 'FLOW' },
-    { name: 'TAPE', category: 'ORDER_FLOW', baseWeight: 8, minWeight: 4, maxWeight: 12, isEnabled: true, correlationGroup: 'FLOW' },
-    { name: 'ABSORPTION', category: 'ORDER_FLOW', baseWeight: 8, minWeight: 4, maxWeight: 12, isEnabled: true, correlationGroup: 'FLOW' },
-    // Order Book
-    { name: 'BOOK_IMBALANCE', category: 'ORDER_BOOK', baseWeight: 8, minWeight: 4, maxWeight: 12, isEnabled: true, correlationGroup: 'BOOK' },
     // Volume
     { name: 'VOLUME', category: 'VOLUME', baseWeight: 6, minWeight: 3, maxWeight: 10, isEnabled: true, correlationGroup: null },
     { name: 'VOLUME_DELTA', category: 'VOLUME', baseWeight: 6, minWeight: 3, maxWeight: 10, isEnabled: true, correlationGroup: null },

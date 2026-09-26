@@ -1,3 +1,5 @@
+import type { FactorContribution } from './compassEngine';
+
 // ============================================
 // SUPPORT/RESISTANCE/REVERSAL TYPES
 // ============================================
@@ -66,13 +68,11 @@ export interface ReversalSignal {
   previousDirection: string; // e.g., 'BULLISH', 'BEARISH'
   currentDirection: string; // e.g., 'BULLISH', 'BEARISH'
   directionChangeReason: string;
-  orderFlowConfirmation: {
+  volumeConfirmation: {
     available: boolean;
-    bullishPressure: number; // 0-100
-    bearishPressure: number; // 0-100
-    delta: number; // if available
-    absorption: boolean; // if available
-    exhaustion: boolean; // if available
+    volumeRatio: number; // recent volume vs average; 0 when unavailable
+    risingVolume: boolean; // volume expanding into the level
+    exhaustion: boolean; // volume contracting after an extended move
   };
   timeframeAgreement: {
     aligned: string[]; // timeframes that agree with the reversal

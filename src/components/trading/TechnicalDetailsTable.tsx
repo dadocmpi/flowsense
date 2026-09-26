@@ -5,14 +5,50 @@ import { cn } from '@/lib/utils';
 interface TechnicalDetailsTableProps {
   oscillators: IndicatorSignal[];
   movingAverages: IndicatorSignal[];
-  orderFlowIndicators: IndicatorSignal[];
+  volumeIndicators: IndicatorSignal[];
   isLoading?: boolean;
 }
+
+function actionColor(action: IndicatorSignal['action']): string {
+  if (action.includes('BUY')) return 'text-green-400';
+  if (action.includes('SELL')) return 'text-red-500';
+  return 'text-amber-400';
+}
+
+const IndicatorGroup: React.FC<{ title: string; indicators: IndicatorSignal[]; emptyText: string }> = ({
+  title,
+  indicators,
+  emptyText,
+}) => (
+  <div>
+    <h3 className="text-white font-bold mb-3 flex items-center">
+      <span className="w-4 h-4 bg-amber-400 rounded mr-2" />
+      {title}
+    </h3>
+    <div className="space-y-2">
+      {indicators.length > 0 ? (
+        indicators.map(indicator => (
+          <div key={indicator.name} className="flex items-center justify-between text-sm">
+            <span className="flex-1 text-white/70" title={indicator.description}>
+              {indicator.name}
+            </span>
+            <span className="w-28 text-right font-mono text-white/90">{indicator.value}</span>
+            <span className={cn('w-24 text-center font-bold text-sm', actionColor(indicator.action))}>
+              {indicator.action}
+            </span>
+          </div>
+        ))
+      ) : (
+        <div className="text-center text-white/50 italic py-4">{emptyText}</div>
+      )}
+    </div>
+  </div>
+);
 
 export const TechnicalDetailsTable: React.FC<TechnicalDetailsTableProps> = ({
   oscillators,
   movingAverages,
-  orderFlowIndicators,
+  volumeIndicators,
   isLoading,
 }) => {
   if (isLoading) {
@@ -31,80 +67,13 @@ export const TechnicalDetailsTable: React.FC<TechnicalDetailsTableProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Oscillators */}
-      <div>
-        <h3 className="text-white font-bold mb-3 flex items-center">
-          <span className="w-4 h-4 bg-amber-400 rounded mr-2"></span>
-          Oscillators
-        </h3>
-        <div className="space-y-2">
-          {oscillators.map(indicator => (
-            <div key={indicator.name} className="flex items-center justify-between text-sm">
-              <span className="flex-1 text-white/70">{indicator.name}</span>
-              <span className="w-20 text-right font-mono text-white/90">{indicator.value}</span>
-              <span className="w-20 text-center 
-                {indicator.action.includes('BUY') ? 'text-green-400' : 
-                 indicator.action.includes('SELL') ? 'text-red-500' : 
-                 'text-amber-400'} font-bold text-sm"
-              >
-                {indicator.action}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-      
-      {/* Moving Averages */}
-      <div>
-        <h3 className="text-white font-bold mb-3 flex items-center">
-          <span className="w-4 h-4 bg-amber-400 rounded mr-2"></span>
-          Moving Averages
-        </h3>
-        <div className="space-y-2">
-          {movingAverages.map(indicator => (
-            <div key={indicator.name} className="flex items-center justify-between text-sm">
-              <span className="flex-1 text-white/70">{indicator.name}</span>
-              <span className="w-20 text-right font-mono text-white/90">{indicator.value}</span>
-              <span className="w-20 text-center 
-                {indicator.action.includes('BUY') ? 'text-green-400' : 
-                 indicator.action.includes('SELL') ? 'text-red-500' : 
-                 'text-amber-400'} font-bold text-sm"
-              >
-                {indicator.action}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-      
-      {/* Order Flow Indicators */}
-      <div>
-        <h3 className="text-white font-bold mb-3 flex items-center">
-          <span className="w-4 h-4 bg-amber-400 rounded mr-2"></span>
-          Order Flow Indicators
-        </h3>
-        <div className="space-y-2">
-          {orderFlowIndicators.length > 0 ? (
-            orderFlowIndicators.map(indicator => (
-              <div key={indicator.name} className="flex items-center justify-between text-sm">
-                <span className="flex-1 text-white/70">{indicator.name}</span>
-                <span className="w-20 text-right font-mono text-white/90">{indicator.value}</span>
-                <span className="w-20 text-center 
-                  {indicator.action.includes('BUY') ? 'text-green-400' : 
-                   indicator.action.includes('SELL') ? 'text-red-500' : 
-                   'text-amber-400'} font-bold text-sm"
-                >
-                  {indicator.action}
-                </span>
-              </div>
-            ))
-          ) : (
-            <div className="text-center text-white/50 italic py-4">
-              No order flow data available
-            </div>
-          )}
-        </div>
-      </div>
+      <IndicatorGroup title="Oscillators" indicators={oscillators} emptyText="Not enough candles for oscillators" />
+      <IndicatorGroup title="Moving Averages" indicators={movingAverages} emptyText="Not enough candles for moving averages" />
+      <IndicatorGroup
+        title="Volume & Volatility"
+        indicators={volumeIndicators}
+        emptyText="Volume data unavailable for this instrument"
+      />
     </div>
   );
 };

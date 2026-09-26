@@ -1,78 +1,78 @@
 // ============================================
-// TRADING TYPES - ORIGINAL + EXPANDED
+// TRADING TYPES — TWELVE DATA (REST) MODEL
 // ============================================
+// Data comes from Twelve Data over REST polling through the server-side proxy.
+// Twelve Data does not expose order book / tape for these instruments, so this
+// model deliberately has NO bids, asks, recent trades or buy/sell pressure.
+// Anything resembling order flow would be fabricated, and is not represented.
+
+import type { Candle } from '../lib/indicators';
+
+export type { Candle };
 
 export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
 
-export interface UserZoneConfig {
-  enabled: boolean;
-  direction: 'BUY' | 'SELL';
-  zoneName: string;
-  minPrice: number;
-  maxPrice: number;
-  stopLoss: number;
-  takeProfit: number;
-  startTime: string; // "09:00"
-  endTime: string;   // "11:30"
-  notes?: string;
-}
-
-export interface SniperDecision {
-  status: 'ENTER_NOW' | 'ZONE_ARMED' | 'WAITING_FLOW' | 'OUT_OF_ZONE' | 'OUT_OF_TIME' | 'DISABLED';
-  action: 'BUY' | 'SELL' | 'HOLD';
-  urgency: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'STANDBY';
-  headline: string;
-  subtext: string;
-  confluencesMet: string[];
-  missingFactors: string[];
-  zoneProgress: number; // 0 to 100% position inside zone
-  isInsideZone: boolean;
-  isInsideTimeWindow: boolean;
-  flowConfirmed: boolean;
-}
+export type AssetCategory = 'COMMODITY' | 'INDEX' | 'FOREX' | 'STOCK' | 'CRYPTO';
 
 export interface AssetConfig {
   symbol: string;
   name: string;
   exchange: string;
   precision: number;
-  contractSize: string;
-  tickSize: number;
-  binanceSymbol?: string; // For real data mapping - null/undefined means no real data available
+  category: AssetCategory;
+  // Twelve Data free plan covers US stocks, forex and crypto in real time.
+  // Commodities and indices require the Grow plan or above.
+  requiresPaidPlan: boolean;
 }
 
 export const SUPPORTED_ASSETS: AssetConfig[] = [
   {
-    symbol: 'GC1!',
-    name: 'Gold Futures (Continuous)',
-    exchange: 'COMEX / CME',
+    symbol: 'XAU/USD',
+    name: 'Gold Spot / US Dollar',
+    exchange: 'FOREX',
     precision: 2,
-    contractSize: '100 troy oz',
-    tickSize: 0.10,
-    binanceSymbol: 'PAXGUSDT', // Proxy for gold (preserves existing functionality)
+    category: 'COMMODITY',
+    requiresPaidPlan: true,
   },
   {
-    symbol: 'ES1!',
-    name: 'E-mini S&P 500 Futures (Continuous)',
-    exchange: 'CME',
+    symbol: 'SPX',
+    name: 'S&P 500 Index',
+    exchange: 'INDEX',
     precision: 2,
-    contractSize: '50 USD',
-    tickSize: 0.25,
-    binanceSymbol: 'BTCUSDT', // Proxy for SP500 (not ideal but available) - keeping for real-time data
+    category: 'INDEX',
+    requiresPaidPlan: true,
+  },
+  {
+    symbol: 'EUR/USD',
+    name: 'Euro / US Dollar',
+    exchange: 'FOREX',
+    precision: 5,
+    category: 'FOREX',
+    requiresPaidPlan: false,
+  },
+  {
+    symbol: 'AAPL',
+    name: 'Apple Inc.',
+    exchange: 'NASDAQ',
+    precision: 2,
+    category: 'STOCK',
+    requiresPaidPlan: false,
+  },
+  {
+    symbol: 'BTC/USD',
+    name: 'Bitcoin / US Dollar',
+    exchange: 'CRYPTO',
+    precision: 2,
+    category: 'CRYPTO',
+    requiresPaidPlan: false,
   },
 ];
 
-// Additional supported symbols for real data (not used in futures-only mode)
-export interface SupportedSymbolConfig {
-  symbol: string;
-  displayName: string;
-  binanceSymbol: string;
-  precision: number;
-  category: 'CRYPTO' | 'FOREX' | 'COMMODITIES' | 'INDEX';
+export function findAssetConfig(symbol: string): AssetConfig {
+  return SUPPORTED_ASSETS.find(asset => asset.symbol === symbol) || SUPPORTED_ASSETS[0];
 }
 
-export const SUPPORTED_SYMBOLS: SupportedSymbolConfig[] = [];
-
+// ---- Indicators ----
 export interface IndicatorSignal {
   name: string;
   value: string;
@@ -88,41 +88,23 @@ export interface IndicatorSummary {
   verdict: 'STRONG SELL' | 'SELL' | 'NEUTRAL' | 'BUY' | 'STRONG BUY';
 }
 
-export interface OrderBookLevel {
-  price: number;
-  size: number;
-  cumulativeSize: number;
-  percentage: number;
+// ---- Session / range aggregates derived from real candles ----
+export interface PriceRange {
+  high: number;
+  low: number;
+  open: number;
+  close: number;
+  startTime: number;
 }
 
-// Real order book level with total value
-export interface RealOrderBookLevel {
-  price: number;
-  size: number;
-  total: number; // price * size
-  percentage: number;
-}
-
-export interface TradeFeedItem {
-  id: string;
-  price: number;
-  size: number;
-  time: string;
-  type: 'BUY' | 'SELL';
-  aggressor: 'BUY_AGGR' | 'SELL_AGGR';
-}
-
-// Legacy type for live trades (keeping for compatibility)
-export interface LiveTrade {
-  id: string | number;
-  price: number;
-  size: number;
-  time: string;
-  isBuyerMaker: boolean;
-}
-
-export interface TwelveDataState {
+// ---- Market data snapshot ----
+export interface MarketDataState {
   symbol: string;
+  name: string;
+  exchange: string;
+  currency: string;
+  precision: number;
+
   price: number;
   change: number;
   percentChange: number;
@@ -130,50 +112,68 @@ export interface TwelveDataState {
   low: number;
   open: number;
   previousClose: number;
+  volume: number;
+  averageVolume: number;
   datetime: string;
-  isLive: boolean;
   isMarketOpen: boolean;
 
-  // Indicators
+  candles: Candle[];
+
   oscillators: IndicatorSignal[];
   movingAverages: IndicatorSignal[];
-  orderFlowIndicators: IndicatorSignal[];
+  volumeIndicators: IndicatorSignal[];
 
-  // Order Flow
-  buyersPercent: number;
-  sellersPercent: number;
-  volumeDelta: number;
-  institutionalPressure: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
-  bids: OrderBookLevel[];
-  asks: OrderBookLevel[];
-  recentTrades: TradeFeedItem[];
-
-  // Summaries
   overallSummary: IndicatorSummary;
   oscillatorsSummary: IndicatorSummary;
   maSummary: IndicatorSummary;
-  orderFlowSummary: IndicatorSummary;
+  volumeSummary: IndicatorSummary;
+
+  atr: number | null;
+  vwap: number | null;
+  pointOfControl: number | null;
+
+  session: PriceRange | null;
+  previousDay: PriceRange | null;
+  weekly: PriceRange | null;
+  openingRange: PriceRange | null;
 }
 
-// Additional state for real trading data
-export interface RealTradingState {
-  symbol: string;
-  price: number;
-  priceChange24h: number;
-  high24h: number;
-  low24h: number;
-  volume24h: number;
-  bids: RealOrderBookLevel[];
-  asks: RealOrderBookLevel[];
-  recentTrades: LiveTrade[];
-  buyerVolume: number;
-  sellerVolume: number;
-  volumeDelta: number;
-  oscillators: IndicatorSignal[];
-  movingAverages: IndicatorSignal[];
-  orderFlowIndicators: IndicatorSignal[];
-  overallSummary: IndicatorSummary;
-  oscillatorsSummary: IndicatorSummary;
-  maSummary: IndicatorSummary;
-  orderFlowSummary: IndicatorSummary;
+export interface DataQualityScore {
+  overall: number; // 0-100
+  metrics: {
+    priceAvailable: boolean;
+    candlesValid: boolean;
+    indicatorsValid: boolean;
+    volumeAvailable: boolean;
+    multiTimeframeValid: boolean;
+    lastUpdateTime: number;
+    freshness: 'LIVE' | 'DELAYED' | 'STALE' | 'DISCONNECTED';
+    source: 'TWELVE_DATA' | 'UNAVAILABLE';
+  };
+}
+
+export type MarketDataErrorKind =
+  | 'MISSING_API_KEY'
+  | 'INVALID_API_KEY'
+  | 'PLAN_LIMIT'
+  | 'RATE_LIMIT'
+  | 'SYMBOL_NOT_FOUND'
+  | 'NETWORK'
+  | 'UPSTREAM'
+  | 'BUDGET_EXHAUSTED'
+  | 'UNKNOWN';
+
+export interface MarketDataError {
+  kind: MarketDataErrorKind;
+  message: string;
+}
+
+export interface MarketDataResult {
+  data: MarketDataState;
+  dataQuality: DataQualityScore;
+  isLoading: boolean;
+  error: MarketDataError | null;
+  lastUpdated: number | null;
+  nextRefreshIn: number;
+  refresh: () => void;
 }
