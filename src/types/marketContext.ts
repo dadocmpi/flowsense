@@ -54,7 +54,6 @@ export interface InstitutionalZone {
   status: ZoneStatus;
   timeframe: TrendLine;
   touches: number;         // How many times price interacted
-  absorptionEvents: number; // Times zone absorbed major orders
   invalidationPrice: number; // Price that breaks this zone
   volumeAtFormation: number | null;
   isClustered: boolean;
@@ -102,34 +101,32 @@ export interface ConfluenceResult {
 }
 
 // ---- Data Quality ----
-export type DataSource = 'BINANCE' | 'MOCK' | 'UNAVAILABLE';
+// Twelve Data (REST) has no order book or tape, so quality is assessed from
+// price, candles, indicators, volume and multi-timeframe coverage only.
+export type DataSource = 'TWELVE_DATA' | 'UNAVAILABLE';
 export type DataFreshness = 'LIVE' | 'STALE' | 'DELAYED' | 'DISCONNECTED';
 
 export interface DataQualityMetrics {
-  orderBookComplete: boolean;
-  tapeAvailable: boolean;
+  priceAvailable: boolean;
+  candlesValid: boolean;
   volumeAvailable: boolean;
-  tradesAvailable: boolean;
   indicatorsValid: boolean;
-  websocketConnected: boolean;
+  multiTimeframeValid: boolean;
   lastUpdateTime: number;
-  latencyMs: number;
   freshness: DataFreshness;
+  source: DataSource;
 }
 
 export interface DataQualityScore {
   overall: number;           // 0-100
-  orderBookWeight: number;   // How much we rely on it
-  tapeWeight: number;
+  indicatorsWeight: number;  // How much we rely on indicators
   volumeWeight: number;
-  tradesWeight: number;
-  indicatorsWeight: number;
   metrics: DataQualityMetrics;
 }
 
 // ---- Persistence / Anti-Flicker ----
 export interface PersistenceWindow {
-  dataType: 'DELTA' | 'TAPE' | 'ORDER_FLOW' | 'STRUCTURE' | 'ZONE';
+  dataType: 'VOLUME' | 'STRUCTURE' | 'ZONE';
   requiredTicks: number;       // N consecutive ticks
   requiredSeconds: number;    // OR N seconds sustained
   currentTicks: number;
@@ -138,13 +135,11 @@ export interface PersistenceWindow {
 }
 
 export interface PersistenceConfig {
-  deltaWindow: number;       // Ticks for delta confirmation
-  tapeWindow: number;         // Ticks for tape confirmation
-  orderFlowWindow: number;    // Ticks for order flow confirmation
+  volumeWindow: number;       // Ticks for volume confirmation
   structureWindow: number;    // Ticks for structure confirmation (longer)
   zoneWindow: number;         // Ticks for zone entry confirmation
   invalidationWindow: number; // Ticks before invalidating confirmed signal
-  minReactionSize: number;    // Minimum delta/volume for valid reaction
+  minReactionSize: number;    // Minimum volume for a valid reaction
 }
 
 // ---- State Machine ----
@@ -212,7 +207,7 @@ export interface MarketContextDecision {
 
 // ---- Weighted Scoring Configuration ----
 export interface IndicatorWeightConfig {
-  indicatorName: string;
+  name: string;
   category: 'STRUCTURE' | 'ZONE' | 'ORDER_FLOW' | 'ORDER_BOOK' | 'VOLUME' | 'EMA' | 'OSCILLATOR';
   baseWeight: number;
   minWeight: number;
@@ -258,9 +253,7 @@ export const DEFAULT_CONTEXT_CONFIG: MarketContextConfig = {
   minConfluenceThreshold: 80,
   minZoneWeightPercentage: 50,
   persistence: {
-    deltaWindow: 3,
-    tapeWindow: 3,
-    orderFlowWindow: 3,
+    volumeWindow: 3,
     structureWindow: 5,
     zoneWindow: 2,
     invalidationWindow: 5,
@@ -275,12 +268,6 @@ export const DEFAULT_CONTEXT_CONFIG: MarketContextConfig = {
     { name: 'ORDER_BLOCK', category: 'ZONE', baseWeight: 12, minWeight: 8, maxWeight: 18, isEnabled: true, correlationGroup: 'ZONE_CLUSTER' },
     { name: 'POC', category: 'ZONE', baseWeight: 10, minWeight: 6, maxWeight: 15, isEnabled: true, correlationGroup: 'ZONE_CLUSTER' },
     { name: 'MANUAL_ZONE', category: 'ZONE', baseWeight: 15, minWeight: 10, maxWeight: 20, isEnabled: true, correlationGroup: 'ZONE_CLUSTER' },
-    // Order Flow
-    { name: 'DELTA', category: 'ORDER_FLOW', baseWeight: 10, minWeight: 5, maxWeight: 15, isEnabled: true, correlationGroup: 'FLOW' },
-    { name: 'TAPE', category: 'ORDER_FLOW', baseWeight: 8, minWeight: 4, maxWeight: 12, isEnabled: true, correlationGroup: 'FLOW' },
-    { name: 'ABSORPTION', category: 'ORDER_FLOW', baseWeight: 8, minWeight: 4, maxWeight: 12, isEnabled: true, correlationGroup: 'FLOW' },
-    // Order Book
-    { name: 'BOOK_IMBALANCE', category: 'ORDER_BOOK', baseWeight: 8, minWeight: 4, maxWeight: 12, isEnabled: true, correlationGroup: 'BOOK' },
     // Volume
     { name: 'VOLUME', category: 'VOLUME', baseWeight: 6, minWeight: 3, maxWeight: 10, isEnabled: true, correlationGroup: null },
     { name: 'VOLUME_DELTA', category: 'VOLUME', baseWeight: 6, minWeight: 3, maxWeight: 10, isEnabled: true, correlationGroup: null },

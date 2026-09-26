@@ -8,7 +8,7 @@ interface TradingViewGaugeProps {
   overallSummary: IndicatorSummary;
   oscillatorsSummary: IndicatorSummary;
   maSummary: IndicatorSummary;
-  orderFlowSummary: IndicatorSummary;
+  volumeSummary: IndicatorSummary;
   mtfSummary: IndicatorSummary;
   selectedAsset: string;
   sessionIntelligence: {
@@ -56,32 +56,32 @@ function summaryToVerdict(v: string): CompassVerdict {
 export function buildOverallComposite(
   osc: IndicatorSummary,
   ma: IndicatorSummary,
-  of: IndicatorSummary,
+  vol: IndicatorSummary,
   mtf: IndicatorSummary
 ): IndicatorSummary {
   const weights = {
     oscillators: 0.30,
     movingAverages: 0.20,
-    orderFlow: 0.15,
+    volume: 0.15,
     mtf: 0.35,
   };
   
-  const totalW = weights.oscillators + weights.movingAverages + weights.orderFlow + weights.mtf;
+  const totalW = weights.oscillators + weights.movingAverages + weights.volume + weights.mtf;
   
   const buy =
     osc.buyCount * weights.oscillators +
     ma.buyCount * weights.movingAverages +
-    of.buyCount * weights.orderFlow +
+    vol.buyCount * weights.volume +
     mtf.buyCount * weights.mtf;
   const sell =
     osc.sellCount * weights.oscillators +
     ma.sellCount * weights.movingAverages +
-    of.sellCount * weights.orderFlow +
+    vol.sellCount * weights.volume +
     mtf.sellCount * weights.mtf;
   const neutral =
     osc.neutralCount * weights.oscillators +
     ma.neutralCount * weights.movingAverages +
-    of.neutralCount * weights.orderFlow +
+    vol.neutralCount * weights.volume +
     mtf.neutralCount * weights.mtf;
   
   const score = Math.max(
@@ -89,7 +89,7 @@ export function buildOverallComposite(
     Math.min(95, Math.round(
       (osc.score * weights.oscillators +
        ma.score * weights.movingAverages +
-       of.score * weights.orderFlow +
+       vol.score * weights.volume +
        mtf.score * weights.mtf) / totalW
     ))
   );
@@ -113,7 +113,7 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
   overallSummary,
   oscillatorsSummary,
   maSummary,
-  orderFlowSummary,
+  volumeSummary,
   mtfSummary,
   selectedAsset,
   sessionIntelligence,
@@ -136,12 +136,12 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
     );
   }
 
-  const [activeTab, setActiveTab] = useState<'overall' | 'oscillators' | 'ma' | 'orderflow' | 'mtf'>('overall');
+  const [activeTab, setActiveTab] = useState<'overall' | 'oscillators' | 'ma' | 'volume' | 'mtf'>('overall');
   
   const currentSummary = 
     activeTab === 'oscillators' ? oscillatorsSummary :
     activeTab === 'ma' ? maSummary :
-    activeTab === 'orderflow' ? orderFlowSummary :
+    activeTab === 'volume' ? volumeSummary :
     activeTab === 'mtf' ? mtfSummary :
     overallSummary;
   
@@ -210,7 +210,7 @@ export const TradingViewGauge: React.FC<TradingViewGaugeProps> = ({
             { id: 'overall', label: 'OVERALL' },
             { id: 'oscillators', label: 'OSCILLATORS' },
             { id: 'ma', label: 'MOVING AVG' },
-            { id: 'orderflow', label: 'FLOW' },
+            { id: 'volume', label: 'VOLUME' },
             { id: 'mtf', label: 'MTF' },
           ].map(tab => (
             <button

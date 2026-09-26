@@ -1,365 +1,233 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useRefinedTradingData } from './useRefinedTradingData';
-import { useMultiTimeframe } from './useMultiTimeframe';
-import { useMarketContextEngine } from './useMarketContextEngine';
-import { 
-  SRLevel, 
-  ReversalState, 
-  ReversalSignal, 
-  SRReversalFactors,
-  SRDirection,
-  SRType
-} from '../types/srReversal';
+import { useMemo } from 'react';
+import type { Candle } from '../lib/indicators';
+import { pointOfControl, volumeProfile } from '../lib/indicators';
+import { SRLevel, ReversalSignal, SRReversalFactors } from '../types/srReversal';
 import { FactorContribution } from '../types/compassEngine';
+import type { MultiTimeframeResult } from './useMultiTimeframe';
 
-export const useSrReversal = (): SRReversalFactors => {
-  const tradingData = useRefinedTradingData();
-  const mtfResult = useMultiTimeframe('PAXGUSDT', tradingData.price); // symbol might need to be dynamic
-  const marketContext = useMarketContextEngine(tradingData);
+const TOUCH_THRESHOLD_PCT = 0.001; // 0.1% of price
 
-  const [srLevels, setSrLevels] = useState<SRLevel[]>([]);
-  const [reversalSignal, setReversalSignal] = useState<ReversalSignal | null>(null);
+/**
+ * Volume-based confirmation. Uses the last few candles against the window
+ * average: expanding volume into a level suggests participation, contracting
+ * volume after an extended move suggests exhaustion.
+ */
+function buildVolumeConfirmation(candles: Candle[]): ReversalSignal['volumeConfirmation'] {
+  const volumes = candles.map(c => c.volume).filter(v => Number.isFinite(v) && v > 0);
+  if (volumes.length < 6) {
+    return { available: false, volumeRatio: 0, risingVolume: false, exhaustion: false };
+  }
 
-  // Memoized computation of SR levels and reversal signal
-  const srReversalData = useMemo(() => {
-    if (!tradingData.price || tradingData.price <= 0) {
-      return {
-        factors: [],
-        reversalSignal: null,
-        srLevels: []
-      };
+  const recent = volumes.slice(-3);
+  const baseline = volumes.slice(0, -3);
+  const avg = baseline.reduce((sum, v) => sum + v, 0) / baseline.length;
+  if (avg <= 0) {
+    return { available: false, volumeRatio: 0, risingVolume: false, exhaustion: false };
+  }
+
+  const recentAvg = recent.reduce((sum, v) => sum + v, 0) / recent.length;
+  const volumeRatio = recentAvg / avg;
+  const risingVolume = recent[2] > recent[1] && recent[1] > recent[0];
+
+  // Exhaustion needs both contracting volume and a move already in progress.
+  const firstClose = candles[candles.length - 6].close;
+  const lastClose = candles[candles.length - 1].close;
+  const movePct = firstClose > 0 ? Math.abs((lastClose - firstClose) / firstClose) * 100 : 0;
+
+  return {
+    available: true,
+    volumeRatio: Number(volumeRatio.toFixed(2)),
+    risingVolume,
+    exhaustion: volumeRatio < 0.7 && movePct > 0.5,
+  };
+}
+
+interface LevelSeed {
+  type: SRLevel['type'];
+  direction: SRLevel['direction'];
+  price: number;
+  strength: number;
+  timeframe: string;
+  confidence: number;
+}
+
+function buildLevelSeeds(candles: Candle[], ranges: { session?: { high: number; low: number } | null; previousDay?: { high: number; low: number } | null; weekly?: { high: number; low: number } | null; openingRange?: { high: number; low: number } | null }, price: number): LevelSeed[] {
+  const seeds: LevelSeed[] = [];
+  const push = (seed: LevelSeed) => {
+    if (Number.isFinite(seed.price) && seed.price > 0) seeds.push(seed);
+  };
+
+  if (ranges.session) {
+    push({ type: 'PREV_SESSION_HIGH', direction: 'RESISTANCE', price: ranges.session.high, strength: 70, timeframe: '1d', confidence: 65 });
+    push({ type: 'PREV_SESSION_LOW', direction: 'SUPPORT', price: ranges.session.low, strength: 70, timeframe: '1d', confidence: 65 });
+  }
+  if (ranges.previousDay) {
+    push({ type: 'PREV_DAY_HIGH', direction: 'RESISTANCE', price: ranges.previousDay.high, strength: 80, timeframe: '1d', confidence: 75 });
+    push({ type: 'PREV_DAY_LOW', direction: 'SUPPORT', price: ranges.previousDay.low, strength: 80, timeframe: '1d', confidence: 75 });
+  }
+  if (ranges.weekly) {
+    push({ type: 'WEEKLY_HIGH', direction: 'RESISTANCE', price: ranges.weekly.high, strength: 85, timeframe: '1w', confidence: 80 });
+    push({ type: 'WEEKLY_LOW', direction: 'SUPPORT', price: ranges.weekly.low, strength: 85, timeframe: '1w', confidence: 80 });
+  }
+  if (ranges.openingRange) {
+    push({ type: 'OPENING_RANGE_HIGH', direction: 'RESISTANCE', price: ranges.openingRange.high, strength: 55, timeframe: '15m', confidence: 55 });
+    push({ type: 'OPENING_RANGE_LOW', direction: 'SUPPORT', price: ranges.openingRange.low, strength: 55, timeframe: '15m', confidence: 55 });
+  }
+
+  // Swing highs/lows from real candle wicks over the fetched window.
+  const window = candles.slice(-100);
+  if (window.length >= 20) {
+    const swingHigh = Math.max(...window.map(c => c.high));
+    const swingLow = Math.min(...window.map(c => c.low));
+    push({ type: 'SWING_HIGH', direction: 'RESISTANCE', price: swingHigh, strength: 65, timeframe: '4h', confidence: 60 });
+    push({ type: 'SWING_LOW', direction: 'SUPPORT', price: swingLow, strength: 65, timeframe: '4h', confidence: 60 });
+  }
+
+  // High-volume area from the real volume profile.
+  const poc = pointOfControl(volumeProfile(candles.slice(-200), 40));
+  if (poc) {
+    push({
+      type: 'HIGH_VOLUME_AREA',
+      direction: poc.price > price ? 'RESISTANCE' : 'SUPPORT',
+      price: poc.price,
+      strength: 75,
+      timeframe: '4h',
+      confidence: 70,
+    });
+  }
+
+  return seeds;
+}
+
+function toLevel(seed: LevelSeed, price: number, dataQuality: number): SRLevel {
+  const threshold = price * TOUCH_THRESHOLD_PCT;
+  const distance = Math.abs(price - seed.price);
+
+  const zoneState: SRLevel['zoneState'] = distance <= threshold ? 'TOUCHING' : 'APPROACHING';
+  const pricePosition: SRLevel['pricePosition'] =
+    price > seed.price ? 'ABOVE' : price < seed.price ? 'BELOW' : 'INSIDE';
+
+  return {
+    id: `${seed.type}_${seed.price.toFixed(4)}`,
+    type: seed.type,
+    direction: seed.direction,
+    priceLow: seed.price,
+    priceHigh: seed.price,
+    strength: seed.strength,
+    timeframe: seed.timeframe,
+    testCount: 0,
+    freshness: 100,
+    distanceFromPrice: distance,
+    pricePosition,
+    zoneState,
+    invalidationLevel: seed.direction === 'SUPPORT' ? seed.price * 0.995 : seed.price * 1.005,
+    confidence: seed.confidence,
+    dataQuality,
+  };
+}
+
+/**
+ * Builds support/resistance levels and a reversal watch signal from real
+ * candles. Twelve Data provides no order book or tape, so confirmation uses
+ * traded volume only.
+ */
+export const useSrReversal = (
+  candles: Candle[],
+  price: number,
+  dataQuality: number,
+  ranges: {
+    session?: { high: number; low: number } | null;
+    previousDay?: { high: number; low: number } | null;
+    weekly?: { high: number; low: number } | null;
+    openingRange?: { high: number; low: number } | null;
+  },
+  mtfResult: MultiTimeframeResult | null
+): SRReversalFactors => {
+  return useMemo<SRReversalFactors>(() => {
+    if (!price || price <= 0 || candles.length === 0) {
+      return { factors: [], reversalSignal: null, srLevels: [] };
     }
 
-    // 1. Identify support/resistance levels
-    const levels: SRLevel[] = [];
+    const seeds = buildLevelSeeds(candles, ranges, price);
+    const levels = seeds.map(seed => toLevel(seed, price, dataQuality));
 
-    // We'll add levels based on available data from tradingData and marketContext
-    // Since we don't have historical candle data, we'll use what we can
+    // SR bias factor: nearby supports are bullish, nearby resistances bearish.
+    const factors: FactorContribution[] = [];
+    let buyWeight = 0;
+    let sellWeight = 0;
 
-    // Example: Previous session high and low
-    if (tradingData.session) {
-      const sessionHigh = tradingData.session.high;
-      const sessionLow = tradingData.session.low;
+    levels.forEach(level => {
+      const proximity = level.distanceFromPrice <= price * 0.01;
+      if (!proximity) return;
 
-      // Session high as resistance
-      levels.push({
-        id: `session_high_${Date.now()}`,
-        type: 'PREV_SESSION_HIGH',
-        direction: 'RESISTANCE',
-        priceLow: sessionHigh,
-        priceHigh: sessionHigh,
-        strength: 80,
-        timeframe: '1d',
-        testCount: 0, // we don't have history to count tests
-        freshness: 100, // assuming it's fresh
-        distanceFromPrice: Math.abs(tradingData.price - sessionHigh),
-        pricePosition: tradingData.price > sessionHigh ? 'ABOVE' : tradingData.price < sessionHigh ? 'BELOW' : 'INSIDE',
-        zoneState: 'APPROACHING', // we'll compute this below
-        invalidationLevel: sessionHigh * 1.005, // example: 0.5% above for invalidation
-        confidence: 70,
-        dataQuality: tradingData.dataQuality.overall
-      });
-
-      // Session low as support
-      levels.push({
-        id: `session_low_${Date.now()}`,
-        type: 'PREV_SESSION_LOW',
-        direction: 'SUPPORT',
-        priceLow: sessionLow,
-        priceHigh: sessionLow,
-        strength: 80,
-        timeframe: '1d',
-        testCount: 0,
-        freshness: 100,
-        distanceFromPrice: Math.abs(tradingData.price - sessionLow),
-        pricePosition: tradingData.price > sessionLow ? 'ABOVE' : tradingData.price < sessionLow ? 'BELOW' : 'INSIDE',
-        zoneState: 'APPROACHING',
-        invalidationLevel: sessionLow * 0.995, // example: 0.5% below for invalidation
-        confidence: 70,
-        dataQuality: tradingData.dataQuality.overall
-      });
-    }
-
-    // Example: Previous day high and low
-    if (tradingData.previousDay) {
-      const prevDayHigh = tradingData.previousDay.high;
-      const prevDayLow = tradingData.previousDay.low;
-
-      levels.push({
-        id: `prev_day_high_${Date.now()}`,
-        type: 'PREV_DAY_HIGH',
-        direction: 'RESISTANCE',
-        priceLow: prevDayHigh,
-        priceHigh: prevDayHigh,
-        strength: 70,
-        timeframe: '1d',
-        testCount: 0,
-        freshness: 80, // less fresh than session
-        distanceFromPrice: Math.abs(tradingData.price - prevDayHigh),
-        pricePosition: tradingData.price > prevDayHigh ? 'ABOVE' : tradingData.price < prevDayHigh ? 'BELOW' : 'INSIDE',
-        zoneState: 'APPROACHING',
-        invalidationLevel: prevDayHigh * 1.003,
-        confidence: 60,
-        dataQuality: tradingData.dataQuality.overall
-      });
-
-      levels.push({
-        id: `prev_day_low_${Date.now()}`,
-        type: 'PREV_DAY_LOW',
-        direction: 'SUPPORT',
-        priceLow: prevDayLow,
-        priceHigh: prevDayLow,
-        strength: 70,
-        timeframe: '1d',
-        testCount: 0,
-        freshness: 80,
-        distanceFromPrice: Math.abs(tradingData.price - prevDayLow),
-        pricePosition: tradingData.price > prevDayLow ? 'ABOVE' : tradingData.price < prevDayLow ? 'BELOW' : 'INSIDE',
-        zoneState: 'APPROACHING',
-        invalidationLevel: prevDayLow * 0.997,
-        confidence: 60,
-        dataQuality: tradingData.dataQuality.overall
-      });
-    }
-
-    // Example: Weekly high and low
-    if (tradingData.weekly) {
-      const weeklyHigh = tradingData.weekly.high;
-      const weeklyLow = tradingData.weekly.low;
-
-      levels.push({
-        id: `weekly_high_${Date.now()}`,
-        type: 'WEEKLY_HIGH',
-        direction: 'RESISTANCE',
-        priceLow: weeklyHigh,
-        priceHigh: weeklyHigh,
-        strength: 90,
-        timeframe: '1w',
-        testCount: 0,
-        freshness: 60,
-        distanceFromPrice: Math.abs(tradingData.price - weeklyHigh),
-        pricePosition: tradingData.price > weeklyHigh ? 'ABOVE' : tradingData.price < weeklyHigh ? 'BELOW' : 'INSIDE',
-        zoneState: 'APPROACHING',
-        invalidationLevel: weeklyHigh * 1.002,
-        confidence: 80,
-        dataQuality: tradingData.dataQuality.overall
-      });
-
-      levels.push({
-        id: `weekly_low_${Date.now()}`,
-        type: 'WEEKLY_LOW',
-        direction: 'SUPPORT',
-        priceLow: weeklyLow,
-        priceHigh: weeklyLow,
-        strength: 90,
-        timeframe: '1w',
-        testCount: 0,
-        freshness: 60,
-        distanceFromPrice: Math.abs(tradingData.price - weeklyLow),
-        pricePosition: tradingData.price > weeklyLow ? 'ABOVE' : tradingData.price < weeklyLow ? 'BELOW' : 'INSIDE',
-        zoneState: 'APPROACHING',
-        invalidationLevel: weeklyLow * 0.998,
-        confidence: 80,
-        dataQuality: tradingData.dataQuality.overall
-      });
-    }
-
-    // Example: Opening range
-    if (tradingData.openingRange) {
-      const { high: openHigh, low: openLow } = tradingData.openingRange;
-
-      levels.push({
-        id: `opening_range_high_${Date.now()}`,
-        type: 'OPENING_RANGE_HIGH',
-        direction: 'RESISTANCE',
-        priceLow: openHigh,
-        priceHigh: openHigh,
-        strength: 60,
-        timeframe: '1d',
-        testCount: 0,
-        freshness: 90, // very fresh for intraday
-        distanceFromPrice: Math.abs(tradingData.price - openHigh),
-        pricePosition: tradingData.price > openHigh ? 'ABOVE' : tradingData.price < openHigh ? 'BELOW' : 'INSIDE',
-        zoneState: 'APPROACHING',
-        invalidationLevel: openHigh * 1.001,
-        confidence: 50,
-        dataQuality: tradingData.dataQuality.overall
-      });
-
-      levels.push({
-        id: `opening_range_low_${Date.now()}`,
-        type: 'OPENING_RANGE_LOW',
-        direction: 'SUPPORT',
-        priceLow: openLow,
-        priceHigh: openLow,
-        strength: 60,
-        timeframe: '1d',
-        testCount: 0,
-        freshness: 90,
-        distanceFromPrice: Math.abs(tradingData.price - openLow),
-        pricePosition: tradingData.price > openLow ? 'ABOVE' : tradingData.price < openLow ? 'BELOW' : 'INSIDE',
-        zoneState: 'APPROACHING',
-        invalidationLevel: openLow * 0.999,
-        confidence: 50,
-        dataQuality: tradingData.dataQuality.overall
-      });
-    }
-
-    // 2. Update zoneState for each level based on price position and movement
-    // We don't have price history to determine if price is approaching, touching, etc.
-    // We'll use a simple threshold for now
-    const updateZoneState = (level: SRLevel): SRLevel => {
-      const { price, priceLow, priceHigh } = tradingData;
-      const threshold = 0.001 * price; // 0.1% of price as threshold for touching
-
-      let zoneState = level.zoneState; // keep existing if we can't determine
-
-      if (price >= priceLow - threshold && price <= priceHigh + threshold) {
-        // Price is near the zone
-        if (price >= priceLow && price <= priceHigh) {
-          zoneState = 'INSIDE';
-        } else if (price < priceLow) {
-          zoneState = 'APPROACHING';
-        } else if (price > priceHigh) {
-          zoneState = 'APPROACHING';
-        }
-        // We don't have direction of price movement to determine if touching from above/below
-        // So we'll just set to TOUCHING if within threshold
-        zoneState = 'TOUCHING';
-      } else {
-        // Price is not near the zone
-        if (price < priceLow) {
-          zoneState = 'APPROACHING';
-        } else if (price > priceHigh) {
-          zoneState = 'APPROACHING';
-        } else {
-          zoneState = 'APPROACHING'; // default
-        }
-      }
-
-      // We don't have data to determine REJECTING, BREAKING, RETESTING, INVALIDATED
-      // We'll leave those for when we have more data
-
-      return { ...level, zoneState };
-    };
-
-    const updatedLevels = levels.map(updateZoneState);
-
-    // 3. Compute factors for the compass engine from SR levels
-    const srFactors: FactorContribution[] = [];
-
-    // We'll create a factor for overall SR bias
-    let srBuyWeight = 0;
-    let srSellWeight = 0;
-
-    updatedLevels.forEach(level => {
-      // If price is near a support level, it's bullish; near resistance, bearish
-      if (level.direction === 'SUPPORT' && 
-          (level.zoneState === 'TOUCHING' || level.zoneState === 'RETESTING' || level.zoneState === 'APPROACHING')) {
-        srBuyWeight += level.strength * (level.confidence / 100);
-      }
-      if (level.direction === 'RESISTANCE' && 
-          (level.zoneState === 'TOUCHING' || level.zoneState === 'RETESTING' || level.zoneState === 'APPROACHING')) {
-        srSellWeight += level.strength * (level.confidence / 100);
-      }
+      const weighted = level.strength * (level.confidence / 100);
+      if (level.direction === 'SUPPORT') buyWeight += weighted;
+      else sellWeight += weighted;
     });
 
-    const totalSrWeight = srBuyWeight + srSellWeight;
-    if (totalSrWeight > 0) {
-      const srDirection = srBuyWeight > srSellWeight ? 'BULLISH' : srSellWeight > srBuyWeight ? 'BEARISH' : 'NEUTRAL';
-      srFactors.push({
+    const totalWeight = buyWeight + sellWeight;
+    if (totalWeight > 0) {
+      factors.push({
         category: 'SUPPORT_RESISTANCE',
         name: 'SR_ZONE_BIAS',
-        direction: srDirection,
-        weight: Math.min(100, Math.round(totalSrWeight / 2)), // scale down to not dominate
-        value: `BUY: ${Math.round(srBuyWeight)} / SELL: ${Math.round(srSellWeight)}`,
-        confidence: Math.round((srBuyWeight + srSellWeight) / 2),
+        direction: buyWeight > sellWeight ? 'BULLISH' : sellWeight > buyWeight ? 'BEARISH' : 'NEUTRAL',
+        weight: Math.min(100, Math.round(totalWeight / 2)),
+        value: `BUY ${Math.round(buyWeight)} / SELL ${Math.round(sellWeight)}`,
+        confidence: Math.round((buyWeight + sellWeight) / 2),
       });
     }
 
-    // 4. Compute reversal signal (simplified)
+    const touchingSupport = levels.filter(l => l.direction === 'SUPPORT' && l.zoneState === 'TOUCHING' && l.confidence >= 60);
+    const touchingResistance = levels.filter(l => l.direction === 'RESISTANCE' && l.zoneState === 'TOUCHING' && l.confidence >= 60);
+
     let reversal: ReversalSignal | null = null;
+    if (touchingSupport.length > 0 || touchingResistance.length > 0) {
+      const atSupport = touchingSupport.length > 0;
+      const reference = atSupport ? touchingSupport[0] : touchingResistance[0];
 
-    // We'll create a very basic reversal signal based on SR factors and price action
-    // This is a placeholder and should be enhanced with real data
+      const aligned = mtfResult
+        ? mtfResult.timeframes.filter(t => (atSupport ? t.direction === 'BUY' : t.direction === 'SELL')).map(t => t.timeframe)
+        : [];
+      const conflicting = mtfResult
+        ? mtfResult.timeframes.filter(t => (atSupport ? t.direction === 'SELL' : t.direction === 'BUY')).map(t => t.timeframe)
+        : [];
+      const unavailable = mtfResult ? [] : ['1m', '5m', '15m', '1h', '4h', '1d'];
 
-    // Determine if we are near a support or resistance level
-    const nearSupport = updatedLevels.some(l => 
-      l.direction === 'SUPPORT' && 
-      (l.zoneState === 'TOUCHING' || l.zoneState === 'RETESTING') && 
-      l.confidence > 60
-    );
+      const confidence = Math.round(
+        Math.max(30, Math.min(90, reference.confidence * 0.6 + (aligned.length / 6) * 40))
+      );
 
-    const nearResistance = updatedLevels.some(l => 
-      l.direction === 'RESISTANCE' && 
-      (l.zoneState === 'TOUCHING' || l.zoneState === 'RETESTING') && 
-      l.confidence > 60
-    );
-
-    // We don't have data for rejection, absorption, etc. so we'll set to null for now
-    if (nearSupport || nearResistance) {
-      // We have a potential reversal watch
-      const state = nearSupport ? 'BULLISH_REVERSAL_WATCH' : 'BEARISH_REVERSAL_WATCH';
-      const reason = nearSupport 
-        ? 'Price near support level' 
-        : 'Price near resistance level';
+      const volumeConfirmation = buildVolumeConfirmation(candles);
 
       reversal = {
-        state,
-        reason,
-        confidence: 50,
-        dataQuality: tradingData.dataQuality.overall,
+        state: atSupport ? 'BULLISH_REVERSAL_WATCH' : 'BEARISH_REVERSAL_WATCH',
+        reason: `Price touching ${atSupport ? 'support' : 'resistance'} at ${reference.priceLow.toFixed(2)}`,
+        confidence,
+        dataQuality,
         timestamp: Date.now(),
-        price: tradingData.price,
-        previousDirection: 'NEUTRAL', // we don't have previous direction from compass
-        currentDirection: nearSupport ? 'BULLISH' : 'BEARISH',
-        directionChangeReason: reason,
-        orderFlowConfirmation: {
-          available: false,
-          bullishPressure: 0,
-          bearishPressure: 0,
-          delta: 0,
-          absorption: false,
-          exhaustion: false
-        },
-        timeframeAgreement: {
-          aligned: [],
-          conflicting: [],
-          unavailable: ['1m', '5m', '15m', '1h', '4h', '1d']
-        },
+        price,
+        previousDirection: 'NEUTRAL',
+        currentDirection: atSupport ? 'BULLISH' : 'BEARISH',
+        directionChangeReason: 'Price at a monitored S/R level',
+        volumeConfirmation: volumeConfirmation,
+        timeframeAgreement: { aligned, conflicting, unavailable },
         invalidation: {
-          level: nearSupport ? 
-            updatedLevels.find(l => l.direction === 'SUPPORT' && l.zoneState === 'TOUCHING')?.invalidationLevel || 0 :
-            updatedLevels.find(l => l.direction === 'RESISTANCE' && l.zoneState === 'TOUCHING')?.invalidationLevel || 0,
-          distance: 0
+          level: reference.invalidationLevel,
+          distance: Math.abs(price - reference.invalidationLevel),
         },
-        riskReward: {
-          target: 0,
-          stop: 0,
-          ratio: 0
-        }
+        riskReward: { target: 0, stop: 0, ratio: 0 },
       };
-    }
 
-    // 5. Create factors from reversal signal (if any)
-    if (reversal) {
-      const reversalFactor: FactorContribution = {
+      factors.push({
         category: 'REVERSAL',
         name: 'REVERSAL_SIGNAL',
-        direction: reversal.currentDirection === 'BULLISH' ? 'BULLISH' : 'BEARISH',
-        weight: Math.round(reversal.confidence / 2), // scale down
-        value: `${reversal.state} (${reversal.confidence}%)`,
-        confidence: reversal.confidence
-      };
-      srFactors.push(reversalFactor);
+        direction: atSupport ? 'BULLISH' : 'BEARISH',
+        weight: Math.round(confidence / 2),
+        value: `${reversal.state} (${confidence}%)`,
+        confidence,
+      });
     }
 
-    return {
-      factors: srFactors,
-      reversalSignal: reversal,
-      srLevels: updatedLevels
-    };
-  }, [tradingData.price, tradingData.dataQuality, tradingData.session, tradingData.previousDay, tradingData.weekly, tradingData.openingRange, mtfResult, marketContext]);
-
-  return srReversalData;
+    return { factors, reversalSignal: reversal, srLevels: levels };
+  }, [candles, price, dataQuality, ranges.session, ranges.previousDay, ranges.weekly, ranges.openingRange, mtfResult]);
 };

@@ -89,36 +89,39 @@ export const ReversalPanel = ({ reversalSignal, srLevels, price }: ReversalPanel
             </div>
 
             <div className="border-t border-white/[0.04] pt-4">
-              <span className="text-white/50 font-bold uppercase text-xs">Order Flow</span>
+              <span className="text-white/50 font-bold uppercase text-xs">Volume Confirmation</span>
               <div className="grid grid-cols-1 gap-2 text-xs mt-1">
                 <div>
                   <span className="text-white/50">Available:</span>
                   <span className={cn(
                     "font-mono",
-                    reversalSignal.orderFlowConfirmation.available ? "text-green-400" : "text-red-500"
+                    reversalSignal.volumeConfirmation.available ? "text-green-400" : "text-red-500"
                   )}>
-                    {reversalSignal.orderFlowConfirmation.available ? 'YES' : 'NO'}
+                    {reversalSignal.volumeConfirmation.available ? 'YES' : 'NO'}
                   </span>
                 </div>
                 <div>
-                  <span className="text-white/50">Bullish Pressure:</span>
-                  <span className="font-mono">{reversalSignal.orderFlowConfirmation.bullishPressure}%</span>
+                  <span className="text-white/50">Volume vs Average:</span>
+                  <span className={cn(
+                    "font-mono",
+                    reversalSignal.volumeConfirmation.volumeRatio >= 1.2 ? "text-green-400" : "text-white/70"
+                  )}>
+                    {reversalSignal.volumeConfirmation.volumeRatio.toFixed(2)}x
+                  </span>
                 </div>
                 <div>
-                  <span className="text-white/50">Bearish Pressure:</span>
-                  <span className="font-mono">{reversalSignal.orderFlowConfirmation.bearishPressure}%</span>
+                  <span className="text-white/50">Rising Volume:</span>
+                  <span className="font-mono">{reversalSignal.volumeConfirmation.risingVolume ? 'YES' : 'NO'}</span>
                 </div>
-                {reversalSignal.orderFlowConfirmation.delta !== 0 && (
-                  <div>
-                    <span className="text-white/50">Delta:</span>
-                    <span className={cn(
-                      "font-mono",
-                      reversalSignal.orderFlowConfirmation.delta > 0 ? "text-green-400" : "text-red-500"
-                    )}>
-                      {reversalSignal.orderFlowConfirmation.delta.toFixed(2)}
-                    </span>
-                  </div>
-                )}
+                <div>
+                  <span className="text-white/50">Exhaustion:</span>
+                  <span className={cn(
+                    "font-mono",
+                    reversalSignal.volumeConfirmation.exhaustion ? "text-amber-400" : "text-white/70"
+                  )}>
+                    {reversalSignal.volumeConfirmation.exhaustion ? 'YES' : 'NO'}
+                  </span>
+                </div>
               </div>
             </div>
 

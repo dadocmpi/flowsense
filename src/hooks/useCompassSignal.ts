@@ -1,11 +1,13 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useRefinedTradingData } from '../hooks/useRefinedTradingData';
-import { useMultiTimeframe } from '../hooks/useMultiTimeframe';
-import { useMarketContextEngine } from '../hooks/useMarketContextEngine';
-import { useMacroContext } from '../hooks/useMacroContext';
-import { useFundamentalIntelligence, useFundamentalBias, usePositionSizing } from '../hooks/useFundamentalIntelligence';
-import { useSrReversal } from '../hooks/useSrReversal';
-import { IndicatorSummary } from '../types/trading';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useMarketData } from './useMarketData';
+import { useMultiTimeframe } from './useMultiTimeframe';
+import { useMarketContextEngine } from './useMarketContextEngine';
+import { useMacroContext } from './useMacroContext';
+import { useFundamentalIntelligence } from './useFundamentalIntelligence';
+import { useSrReversal } from './useSrReversal';
+import { findAssetConfig } from '../types/trading';
+import type { Candle } from '../lib/indicators';
+import type { MarketDataError, MarketDataState, DataQualityScore } from '../types/trading';
 import {
   FactorContribution,
   LiveAnalysisState,
@@ -21,7 +23,6 @@ import {
   minuteKeyFromTimestamp,
   formatCompassDirection,
   directionColor,
-  dataLabelColor,
 } from '../lib/compassEngine';
 import { ReversalSignal, SRLevel } from '../types/srReversal';
 
@@ -37,9 +38,19 @@ export interface CompassEngineHookResult {
   config: CompassEngineConfig;
   refresh: () => void;
   setConfig: (partial: Partial<CompassEngineConfig>) => void;
-  // New fields for SR/R
   reversalSignal: ReversalSignal | null;
   srLevels: SRLevel[];
+  // Market data passthrough
+  marketData: MarketDataState;
+  candles: Candle[];
+  price: number;
+  precision: number;
+  assetName: string;
+  dataQuality: DataQualityScore;
+  isLoading: boolean;
+  error: MarketDataError | null;
+  nextRefreshIn: number;
+  lastUpdated: number | null;
 }
 
 export interface SignalHistoryEntry {
@@ -55,21 +66,41 @@ export interface SignalHistoryEntry {
   factorSummary: string[];
 }
 
-export const useCompassSignal = (): CompassEngineHookResult => {
+function dataLabelFromQuality(quality: DataQualityScore): DataLabel {
+  switch (quality.metrics.freshness) {
+    case 'LIVE':
+      return 'LIVE';
+    case 'DELAYED':
+      return 'DELAYED';
+    case 'STALE':
+      return 'CACHED';
+    default:
+      return 'UNAVAILABLE';
+  }
+}
+
+export const useCompassSignal = (symbol = 'XAU/USD'): CompassEngineHookResult => {
   const [official, setOfficial] = useState<OfficialCompassState | null>(null);
   const [live, setLive] = useState<LiveAnalysisState | null>(null);
   const [history, setHistory] = useState<SignalHistoryEntry[]>([]);
   const [config, setConfig] = useState<CompassEngineConfig>(DEFAULT_COMPASS_CONFIG);
   const [secondsUntilNextUpdate, setSecondsUntilNextUpdate] = useState(secondsUntilNextMinute());
-  const [reversalSignal, setReversalSignal] = useState<ReversalSignal | null>(null);
-  const [srLevels, setSrLevels] = useState<SRLevel[]>([]);
 
-  const tradingData = useRefinedTradingData();
-  const mtfResult = useMultiTimeframe('PAXGUSDT', tradingData.price);
-  const marketContext = useMarketContextEngine(tradingData);
-  const macroContext = useMacroContext(tradingData.price, marketContext.ema200Value, { macroUpdateIntervalMs: 30000 });
-  const fundamentalIntelligence = useFundamentalIntelligence(tradingData.price, 60000);
-  const srReversal = useSrReversal();
+  const assetConfig = findAssetConfig(symbol);
+
+  const marketData = useMarketData(symbol);
+  const { data, dataQuality, error, isLoading, lastUpdated, nextRefreshIn } = marketData;
+
+  const mtfResult = useMultiTimeframe(data.candles, '5min');
+  const marketContext = useMarketContextEngine(data);
+  const macroContext = useMacroContext(data.candles);
+  const fundamentalIntelligence = useFundamentalIntelligence(data.candles, data.price, 60000);
+  const srReversal = useSrReversal(data.candles, data.price, dataQuality.overall, {
+    session: data.session,
+    previousDay: data.previousDay,
+    weekly: data.weekly,
+    openingRange: data.openingRange,
+  }, mtfResult);
 
   // Refs for storing latest values
   const liveRef = useRef<LiveAnalysisState | null>(null);
@@ -101,18 +132,15 @@ export const useCompassSignal = (): CompassEngineHookResult => {
     } catch (e) {
       console.warn('Failed to save compass history to localStorage:', e);
     }
-  }, [historyRef.current]);
+  }, [history]);
 
   // Compute live analysis whenever core data changes
   useEffect(() => {
-    if (!tradingData.price || tradingData.price <= 0) {
+    if (!data.price || data.price <= 0) {
       liveRef.current = null;
-      setSrLevels([]);
-      setReversalSignal(null);
       return;
     }
 
-    // Build factor contributions from all available sources
     const factors: FactorContribution[] = [];
 
     // 1. Market Context Engine factors
@@ -126,83 +154,71 @@ export const useCompassSignal = (): CompassEngineHookResult => {
         category: 'ZONE_CLUSTER',
         name: 'MARKET_CONTEXT',
         direction: score >= 60 ? 'BULLISH' : score <= 40 ? 'BEARISH' : 'NEUTRAL',
-        weight: Math.min(100, Math.round((total > 0 ? buyCount / total : 0) * 100)),
+        weight: Math.min(100, Math.round((buyCount / total) * 100)),
         value: `${buyCount} buy / ${sellCount} sell`,
         confidence: marketContext.dataQuality?.overall || 50,
       });
     }
 
     // 2. Multi-timeframe alignment
-    if (mtfResult) {
+    if (mtfResult && mtfResult.timeframes.length > 0) {
       const buyCount = mtfResult.timeframes.filter(t => t.direction === 'BUY').length;
       const sellCount = mtfResult.timeframes.filter(t => t.direction === 'SELL').length;
       const total = mtfResult.timeframes.length;
 
-      if (total > 0) {
-        const bullishPct = buyCount / total;
-        const bearishPct = sellCount / total;
-
-        factors.push({
-          category: 'STRUCTURE',
-          name: 'MTF_ALIGNMENT',
-          direction: bullishPct > bearishPct ? 'BULLISH' : bearishPct > bearishPct ? 'BEARISH' : 'NEUTRAL',
-          weight: Math.round((total > 0 ? Math.max(buyCount, sellCount) / total : 0) * 100),
-          value: `${buyCount} BUY / ${sellCount} SELL / ${total - buyCount - sellCount} NEUTRAL`,
-          confidence: mtfResult.weightedScore > 0 ? 80 : 60,
-        });
-      }
+      factors.push({
+        category: 'STRUCTURE',
+        name: 'MTF_ALIGNMENT',
+        direction: buyCount > sellCount ? 'BULLISH' : sellCount > buyCount ? 'BEARISH' : 'NEUTRAL',
+        weight: Math.round((Math.max(buyCount, sellCount) / total) * 100),
+        value: `${buyCount} BUY / ${sellCount} SELL / ${total - buyCount - sellCount} NEUTRAL`,
+        confidence: 60 + Math.round((Math.abs(mtfResult.weightedScore) / 100) * 30),
+      });
     }
 
-    // 3. Fundamental intelligence factors
+    // 3. Technical indicator summaries (from real candles)
+    if (data.overallSummary) {
+      const score = data.overallSummary.score;
+      factors.push({
+        category: 'OSCILLATOR',
+        name: 'TECHNICAL_SUMMARY',
+        direction: score >= 60 ? 'BULLISH' : score <= 40 ? 'BEARISH' : 'NEUTRAL',
+        weight: 20,
+        value: `${data.overallSummary.verdict} (${score}%)`,
+        confidence: dataQuality.overall,
+      });
+    }
+
+    // 4. Volatility regime (from real ATR)
     if (fundamentalIntelligence) {
-      const { riskSentiment, goldVolatility } = fundamentalIntelligence;
+      const { volatilityRegime, atrPercent } = fundamentalIntelligence;
 
-      if (goldVolatility === 'EXTREME') {
+      if (volatilityRegime === 'EXTREME' || volatilityRegime === 'HIGH') {
         factors.push({
           category: 'VOLATILITY',
-          name: 'GOLD_VOLATILITY',
+          name: 'VOLATILITY_REGIME',
           direction: 'BEARISH',
-          weight: 10,
-          value: 'EXTREME',
+          weight: volatilityRegime === 'EXTREME' ? 10 : 8,
+          value: atrPercent !== null ? `${volatilityRegime} (ATR ${atrPercent.toFixed(2)}%)` : volatilityRegime,
           confidence: 70,
         });
-      } else if (goldVolatility === 'HIGH') {
+      } else if (volatilityRegime === 'LOW') {
         factors.push({
           category: 'VOLATILITY',
-          name: 'GOLD_VOLATILITY',
-          direction: 'BEARISH',
-          weight: 8,
-          value: 'HIGH',
-          confidence: 70,
-        });
-      }
-
-      if (riskSentiment === 'RISK_ON') {
-        factors.push({
-          category: 'FUNDAMENTAL',
-          name: 'RISK_SENTIMENT',
-          direction: 'BULLISH',
-          weight: 15,
-          value: riskSentiment,
-          confidence: 80,
-        });
-      } else if (riskSentiment === 'RISK_OFF') {
-        factors.push({
-          category: 'FUNDAMENTAL',
-          name: 'RISK_SENTIMENT',
-          direction: 'BEARISH',
-          weight: 15,
-          value: riskSentiment,
-          confidence: 80,
+          name: 'VOLATILITY_REGIME',
+          direction: 'NEUTRAL',
+          weight: 5,
+          value: atrPercent !== null ? `LOW (ATR ${atrPercent.toFixed(2)}%)` : 'LOW',
+          confidence: 65,
         });
       }
     }
 
-    // 4. Macro context factors
+    // 5. Macro context factors
     if (macroContext) {
       const { bias, dxyTrend, yieldsTrend, riskRegime } = macroContext;
 
-      if (bias === 'BULLISH') {
+      if (bias === 'BULLISH' || bias === 'STRONG_BULLISH') {
         factors.push({
           category: 'MACRO',
           name: 'MACRO_BIAS',
@@ -211,7 +227,7 @@ export const useCompassSignal = (): CompassEngineHookResult => {
           value: `${riskRegime} / ${dxyTrend} DXY / ${yieldsTrend} yields`,
           confidence: 75,
         });
-      } else if (bias === 'BEARISH') {
+      } else if (bias === 'BEARISH' || bias === 'STRONG_BEARISH') {
         factors.push({
           category: 'MACRO',
           name: 'MACRO_BIAS',
@@ -223,22 +239,17 @@ export const useCompassSignal = (): CompassEngineHookResult => {
       }
     }
 
-    // 5. SR/R factors
+    // 6. SR/R factors
     factors.push(...srReversal.factors);
 
-    // Update SR levels and reversal signal state
-    setSrLevels(srReversal.srLevels);
-    setReversalSignal(srReversal.reversalSignal);
-
-    // Compute live analysis
     const timestamp = Date.now();
     const minuteKey = minuteKeyFromTimestamp(timestamp);
 
     const liveState = computeLiveAnalysis({
       factors,
-      price: tradingData.price,
-      dataQuality: tradingData.dataQuality?.overall || 50,
-      dataLabel: tradingData.dataQuality?.freshness || 'DELAYED',
+      price: data.price,
+      dataQuality: dataQuality.overall,
+      dataLabel: dataLabelFromQuality(dataQuality),
       marketRegime: marketContext.uiSummary?.state || 'UNKNOWN',
       timestamp,
       minuteKey,
@@ -246,7 +257,17 @@ export const useCompassSignal = (): CompassEngineHookResult => {
 
     liveRef.current = liveState;
     setLive(liveState);
-  }, [tradingData.price, tradingData.dataQuality, marketContext.uiSummary, mtfResult, fundamentalIntelligence, macroContext, config, srReversal]);
+  }, [
+    data.price,
+    data.overallSummary,
+    dataQuality,
+    marketContext.uiSummary,
+    mtfResult,
+    fundamentalIntelligence,
+    macroContext,
+    config,
+    srReversal.factors,
+  ]);
 
   // Timer-based minute boundary check
   useEffect(() => {
@@ -256,19 +277,11 @@ export const useCompassSignal = (): CompassEngineHookResult => {
       const currentMinuteKey = liveRef.current.minuteKey;
       const lastMinuteKey = lastMinuteKeyRef.current;
 
-      // Check if minute has changed
       if (currentMinuteKey && currentMinuteKey !== lastMinuteKey) {
-        // Prevent duplicate publishes within the same minute
         if (pendingPublishRef.current) return;
-
         pendingPublishRef.current = true;
 
-        // Publish official signal
-        const officialState = publishOfficialSignal(
-          liveRef.current,
-          officialRef.current,
-          config
-        );
+        const officialState = publishOfficialSignal(liveRef.current, officialRef.current, config);
 
         if (officialState) {
           officialRef.current = officialState;
@@ -277,21 +290,18 @@ export const useCompassSignal = (): CompassEngineHookResult => {
           setHistory([...historyRef.current]);
         }
 
-        // Reset pending flag after a short delay to allow for minute boundary
         setTimeout(() => {
           pendingPublishRef.current = false;
         }, 1000);
 
-        // Update last minute key
         lastMinuteKeyRef.current = currentMinuteKey;
       }
     };
 
-    // Check every second
     checkMinuteBoundary();
     const interval = setInterval(checkMinuteBoundary, 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [config]);
 
   // Update countdown to next update
   useEffect(() => {
@@ -303,44 +313,36 @@ export const useCompassSignal = (): CompassEngineHookResult => {
     return () => clearInterval(interval);
   }, []);
 
-  // Derived UI values
-  const directionLabel = officialRef.current?.direction
-    ? formatCompassDirection(officialRef.current.direction)
-    : liveRef.current?.rawDirection
-      ? formatCompassDirection(liveRef.current.rawDirection)
+  const directionLabel = official?.direction
+    ? formatCompassDirection(official.direction)
+    : live?.rawDirection
+      ? formatCompassDirection(live.rawDirection)
       : 'NEUTRAL';
 
-  const directionColorValue = officialRef.current?.direction
-    ? directionColor(officialRef.current.direction)
-    : liveRef.current?.rawDirection
-      ? directionColor(liveRef.current.rawDirection)
+  const directionColorValue = official?.direction
+    ? directionColor(official.direction)
+    : live?.rawDirection
+      ? directionColor(live.rawDirection)
       : '#f59e0b';
 
-  const dataLabel: DataLabel = officialRef.current?.dataLabel || liveRef.current?.dataLabel || 'DELAYED';
+  const dataLabel: DataLabel = dataLabelFromQuality(dataQuality);
 
-  const minutesSinceLastSignal = officialRef.current
-    ? Math.round((Date.now() - new Date(officialRef.current.timestamp).getTime()) / 60000)
+  const minutesSinceLastSignal = official
+    ? Math.round((Date.now() - new Date(official.timestamp).getTime()) / 60000)
     : 0;
 
   const refresh = useCallback(() => {
-    // Clear refs to force recomputation
-    liveRef.current = null;
-    officialRef.current = null;
-    lastMinuteKeyRef.current = null;
-    pendingPublishRef.current = false;
-    // Also reset SR/R state
-    setSrLevels([]);
-    setReversalSignal(null);
-  }, []);
+    marketData.refresh();
+  }, [marketData]);
 
   const setConfigAction = useCallback((partial: Partial<CompassEngineConfig>) => {
     setConfig(prev => ({ ...prev, ...partial }));
   }, []);
 
-  return {
-    official: officialRef.current,
-    live: liveRef.current,
-    history: historyRef.current,
+  return useMemo(() => ({
+    official,
+    live,
+    history,
     directionLabel,
     directionColor: directionColorValue,
     dataLabel,
@@ -349,7 +351,41 @@ export const useCompassSignal = (): CompassEngineHookResult => {
     config,
     refresh,
     setConfig: setConfigAction,
-    reversalSignal,
-    srLevels
-  };
+    reversalSignal: srReversal.reversalSignal,
+    srLevels: srReversal.srLevels,
+    marketData: data,
+    candles: data.candles,
+    price: data.price,
+    precision: assetConfig.precision,
+    assetName: assetConfig.name,
+    dataQuality,
+    isLoading,
+    error,
+    nextRefreshIn,
+    lastUpdated,
+  }), [
+    official,
+    live,
+    history,
+    directionLabel,
+    directionColorValue,
+    dataLabel,
+    secondsUntilNextUpdate,
+    minutesSinceLastSignal,
+    config,
+    refresh,
+    setConfigAction,
+    srReversal.reversalSignal,
+    srReversal.srLevels,
+    data,
+    data.candles,
+    data.price,
+    assetConfig.precision,
+    assetConfig.name,
+    dataQuality,
+    isLoading,
+    error,
+    nextRefreshIn,
+    lastUpdated,
+  ]);
 };

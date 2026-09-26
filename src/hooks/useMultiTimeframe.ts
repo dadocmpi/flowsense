@@ -1,5 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useMemo } from 'react';
 import { Timeframe } from '../types/trading';
+import type { Candle } from '../lib/indicators';
+import { ema, rsi } from '../lib/indicators';
+import { aggregateCandles, intervalToMinutes } from '../lib/marketAnalysis';
 
 export interface TimeframeData {
   timeframe: Timeframe;
@@ -14,121 +17,93 @@ export interface MultiTimeframeResult {
   consensus: 'BUY' | 'SELL' | 'NEUTRAL';
 }
 
-export const useMultiTimeframe = (symbol: string, currentPrice: number) => {
-  const [result, setResult] = useState<MultiTimeframeResult | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  
-  const timeframesRef = useRef<Timeframe[]>(['1m', '5m', '15m', '1h', '4h', '1d']);
-  
-  useEffect(() => {
-    if (!currentPrice || currentPrice <= 0) {
-      setIsLoading(false);
-      return;
-    }
-    
-    const calculateMultiTimeframe = () => {
-      try {
-        // In a real implementation, this would fetch data for each timeframe
-        // For now, we'll simulate based on current price and some randomness
-        const timeframesData: TimeframeData[] = timeframesRef.current.map(tf => {
-          // Simulate different timeframe behaviors
-          // Shorter timeframes more volatile, longer more stable
-          const volatilityFactor = {
-            '1m': 0.9,
-            '5m': 0.7,
-            '15m': 0.5,
-            '1h': 0.3,
-            '4h': 0.2,
-            '1d': 0.1
-          }[tf] || 0.5;
-          
-          // Generate a signal based on price position and some noise
-          const noise = (Math.random() - 0.5) * volatilityFactor * 20;
-          const baseSignal = 50 + noise; // 0-100 scale
-          
-          let direction: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
-          let strength = Math.abs(baseSignal - 50) * 2; // 0-100
-          let confidence = 70 + Math.random() * 30; // 70-100
-          
-          if (baseSignal > 55) {
-            direction = 'BUY';
-          } else if (baseSignal < 45) {
-            direction = 'SELL';
-          }
-          
-          // Adjust for timeframe reliability
-          if (tf === '1m' || tf === '5m') {
-            confidence *= 0.8; // Lower confidence for very short term
-          } else if (tf === '4h' || tf === '1d') {
-            confidence *= 1.1; // Higher confidence for longer term
-            confidence = Math.min(100, confidence);
-          }
-          
-          return {
-            timeframe: tf,
-            direction,
-            strength: Math.round(strength),
-            confidence: Math.round(confidence)
-          };
-        });
-        
-        // Calculate weighted score (-100 to 100)
-        // Weight longer timeframes more heavily
-        const weights: Record<Timeframe, number> = {
-          '1m': 0.05,
-          '5m': 0.10,
-          '15m': 0.15,
-          '1h': 0.20,
-          '4h': 0.25,
-          '1d': 0.25
-        };
-        
-        let weightedSum = 0;
-        let totalWeight = 0;
-        
-        timeframesData.forEach(tfData => {
-          const weight = weights[tfData.timeframe] || 0;
-          let tfScore = 0;
-          
-          if (tfData.direction === 'BUY') {
-            tfScore = tfData.strength;
-          } else if (tfData.direction === 'SELL') {
-            tfScore = -tfData.strength;
-          }
-          
-          weightedSum += tfScore * weight;
-          totalWeight += weight;
-        });
-        
-        const weightedScore = totalWeight > 0 ? Math.round(weightedSum / totalWeight) : 0;
-        
-        // Determine consensus
-        let consensus: 'BUY' | 'SELL' | 'NEUTRAL' = 'NEUTRAL';
-        if (weightedScore >= 20) {
-          consensus = 'BUY';
-        } else if (weightedScore <= -20) {
-          consensus = 'SELL';
-        }
-        
-        setResult({
-          timeframes: timeframesData,
-          weightedScore,
-          consensus
-        });
-      } catch (error) {
-        console.error('Error calculating multi-timeframe data:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    calculateMultiTimeframe();
-    
-    // Update every 30 seconds
-    const interval = setInterval(calculateMultiTimeframe, 30000);
-    
-    return () => clearInterval(interval);
-  }, [symbol, currentPrice]);
-  
-  return result;
+const TIMEFRAME_MINUTES: Record<Timeframe, number> = {
+  '1m': 1,
+  '5m': 5,
+  '15m': 15,
+  '1h': 60,
+  '4h': 240,
+  '1d': 1440,
+};
+
+const TIMEFRAME_WEIGHTS: Record<Timeframe, number> = {
+  '1m': 0.05,
+  '5m': 0.10,
+  '15m': 0.15,
+  '1h': 0.20,
+  '4h': 0.25,
+  '1d': 0.25,
+};
+
+const MIN_CANDLES_PER_TIMEFRAME = 30;
+
+/**
+ * Scores a timeframe from its real candles using trend (EMA20 vs EMA50) and
+ * momentum (RSI). Higher timeframes are aggregated from the base series, so
+ * no extra API credits are consumed.
+ */
+function scoreTimeframe(candles: Candle[]): Omit<TimeframeData, 'timeframe'> | null {
+  if (candles.length < MIN_CANDLES_PER_TIMEFRAME) return null;
+
+  const closes = candles.map(c => c.close);
+  const currentPrice = closes[closes.length - 1];
+  if (!currentPrice) return null;
+
+  const ema20 = ema(closes, 20);
+  const ema50 = ema(closes, 50);
+  const rsiValue = rsi(closes, 14);
+  if (ema20 === null || ema50 === null) return null;
+
+  // Trend component: separation between fast and slow EMA, normalized by price.
+  const trendSpread = ((ema20 - ema50) / currentPrice) * 100;
+  const trendScore = Math.max(-1, Math.min(1, trendSpread / 1.5));
+
+  // Momentum component: RSI distance from 50.
+  const momentumScore = rsiValue === null ? 0 : Math.max(-1, Math.min(1, (rsiValue - 50) / 25));
+
+  const composite = trendScore * 0.6 + momentumScore * 0.4;
+  const strength = Math.round(Math.min(100, Math.abs(composite) * 100));
+
+  const direction: TimeframeData['direction'] = composite > 0.15 ? 'BUY' : composite < -0.15 ? 'SELL' : 'NEUTRAL';
+
+  // Confidence reflects how much data backs the timeframe and how decisive it is.
+  const dataConfidence = Math.min(1, candles.length / 100);
+  const confidence = Math.round(Math.max(30, Math.min(100, (0.5 + Math.abs(composite) * 0.5) * dataConfidence * 100)));
+
+  return { direction, strength, confidence };
+}
+
+export const useMultiTimeframe = (baseCandles: Candle[], baseInterval = '5min'): MultiTimeframeResult | null => {
+  return useMemo<MultiTimeframeResult | null>(() => {
+    if (baseCandles.length === 0) return null;
+
+    const baseMinutes = intervalToMinutes(baseInterval);
+    const timeframesData: TimeframeData[] = [];
+
+    (Object.keys(TIMEFRAME_MINUTES) as Timeframe[]).forEach(tf => {
+      const minutes = TIMEFRAME_MINUTES[tf];
+      const series = minutes <= baseMinutes ? baseCandles : aggregateCandles(baseCandles, minutes);
+
+      const scored = scoreTimeframe(series);
+      if (scored) timeframesData.push({ ...scored, timeframe: tf });
+    });
+
+    if (timeframesData.length === 0) return null;
+
+    let weightedSum = 0;
+    let totalWeight = 0;
+
+    timeframesData.forEach(tfData => {
+      const weight = TIMEFRAME_WEIGHTS[tfData.timeframe] || 0;
+      const tfScore = tfData.direction === 'BUY' ? tfData.strength : tfData.direction === 'SELL' ? -tfData.strength : 0;
+      weightedSum += tfScore * weight;
+      totalWeight += weight;
+    });
+
+    const weightedScore = totalWeight > 0 ? Math.round(weightedSum / totalWeight) : 0;
+    const consensus: MultiTimeframeResult['consensus'] =
+      weightedScore >= 20 ? 'BUY' : weightedScore <= -20 ? 'SELL' : 'NEUTRAL';
+
+    return { timeframes: timeframesData, weightedScore, consensus };
+  }, [baseCandles, baseInterval]);
 };
