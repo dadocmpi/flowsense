@@ -103,7 +103,10 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
 
   const activeConfig = SUPPORTED_ASSETS.find(a => a.symbol === selectedSymbol) || SUPPORTED_ASSETS[0];
   const precision = activeConfig.precision;
-  const binanceSymbol = activeConfig.binanceSymbol || 'PAXGUSDT';
+  const binanceSymbol = activeConfig.binanceSymbol;
+
+  // Check if this symbol has real data available
+  const hasRealData = !!binanceSymbol;
 
   const [state, setState] = useState<TwelveDataState>({
     symbol: selectedSymbol,
@@ -138,6 +141,31 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
   const wsRef = useRef<WebSocket | null>(null);
 
   const loadInitialData = useCallback(async () => {
+    // If no real data available, set state to unavailable and return
+    if (!hasRealData) {
+      setState(prev => ({
+        ...prev,
+        symbol: selectedSymbol,
+        price: 0,
+        high: 0,
+        low: 0,
+        isLive: false,
+        isMarketOpen: false,
+        oscillators: [],
+        movingAverages: [],
+        orderFlowIndicators: [],
+        recentTrades: [],
+        bids: [],
+        asks: [],
+        overallSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
+        oscillatorsSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
+        maSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
+        orderFlowSummary: { buyCount: 0, neutralCount: 0, sellCount: 0, score: 50, verdict: 'NEUTRAL' },
+      }));
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch(
         `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=1m&limit=200`
@@ -244,7 +272,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
       }));
       setIsLoading(false);
     }
-  }, [binanceSymbol, precision, selectedSymbol]);
+  }, [binanceSymbol, precision, selectedSymbol, hasRealData]);
 
   useEffect(() => {
     loadInitialData();
@@ -252,6 +280,11 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
 
   useEffect(() => {
     if (isLoading) return;
+
+    // If no real data available, skip WebSocket connection
+    if (!hasRealData) {
+      return;
+    }
 
     const connectWebSocket = () => {
           const streams = [
@@ -372,7 +405,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
         wsRef.current.close();
       }
     };
-  }, [binanceSymbol, precision, isLoading]);
+  }, [binanceSymbol, precision, isLoading, hasRealData]);
 
   return {
     ...state,
@@ -392,7 +425,7 @@ export const useRefinedTradingData = (selectedSymbol = 'MGC1!') => {
         websocketConnected: state.isLive,
         lastUpdateTime: Date.now(),
         latencyMs: 0,
-        freshness: state.isLive ? 'LIVE' : 'DELAYED',
+        freshness: hasRealData ? (state.isLive ? 'LIVE' : 'DELAYED') : 'UNAVAILABLE',
       },
     }
   };

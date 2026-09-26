@@ -38,10 +38,19 @@ export interface AssetConfig {
   precision: number;
   contractSize: string;
   tickSize: number;
-  binanceSymbol?: string; // For real data mapping
+  binanceSymbol?: string; // For real data mapping - null/undefined means no real data available
 }
 
 export const SUPPORTED_ASSETS: AssetConfig[] = [
+  { 
+    symbol: 'GC1!', 
+    name: 'Gold Futures (Continuous)', 
+    exchange: 'COMEX / CME', 
+    precision: 2,
+    contractSize: '100 troy oz',
+    tickSize: 0.10,
+    binanceSymbol: 'PAXGUSDT', // Proxy for gold (preserves existing functionality)
+  },
   { 
     symbol: 'MGC1!', 
     name: 'Micro Gold Futures (Continuous)', 
@@ -49,7 +58,7 @@ export const SUPPORTED_ASSETS: AssetConfig[] = [
     precision: 2,
     contractSize: '10 troy oz',
     tickSize: 0.10,
-    binanceSymbol: 'PAXGUSDT', // Proxy for gold
+    binanceSymbol: 'PAXGUSDT', // Proxy for gold (preserves existing functionality)
   },
   {
     symbol: 'ES1!',
@@ -58,7 +67,16 @@ export const SUPPORTED_ASSETS: AssetConfig[] = [
     precision: 2,
     contractSize: '50 USD',
     tickSize: 0.25,
-    binanceSymbol: 'BTCUSDT', // Proxy for SP500 (not ideal but available)
+    binanceSymbol: undefined, // No real ES/MES data from Binance - will show UNAVAILABLE
+  },
+  {
+    symbol: 'MES1!',
+    name: 'Micro E-mini S&P 500 Futures (Continuous)',
+    exchange: 'CME',
+    precision: 2,
+    contractSize: '5 USD',
+    tickSize: 0.25,
+    binanceSymbol: undefined, // No real ES/MES data from Binance - will show UNAVAILABLE
   },
 ];
 

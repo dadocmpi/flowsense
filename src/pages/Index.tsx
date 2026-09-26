@@ -16,7 +16,9 @@ const Index = () => {
   const activeConfig = SUPPORTED_ASSETS.find(asset => asset.symbol === selectedAsset) || SUPPORTED_ASSETS[0];
   const displayNameMap: Record<string, string> = {
     'MGC1!': 'GOLD',
-    'ES1!': 'SP500'
+    'GC1!': 'GOLD',
+    'ES1!': 'SP500',
+    'MES1!': 'SP500 MICRO'
   };
 
   return (
@@ -49,9 +51,14 @@ const Index = () => {
               "font-black",
               compass.dataLabel === 'LIVE' ? "text-green-400" :
               compass.dataLabel === 'DELAYED' ? "text-amber-400" :
+              compass.dataLabel === 'UNAVAILABLE' ? "text-red-500" :
               "text-white/60"
             )}>
-              {compass.dataLabel}
+              {selectedAsset === 'ES1!' || selectedAsset === 'MES1!'
+                ? compass.dataLabel === 'UNAVAILABLE'
+                  ? "S&P 500 FUTURES DATA UNAVAILABLE"
+                  : compass.dataLabel
+                : compass.dataLabel}
             </span>
           </div>
           <div className="flex items-center space-x-2 text-xs font-mono">
@@ -208,6 +215,7 @@ const Index = () => {
                   <div className="text-white font-mono mt-2">
                     {compass.dataLabel === 'LIVE' ? 'Live WebSocket' :
                      compass.dataLabel === 'DELAYED' ? 'Delayed REST API' :
+                     compass.dataLabel === 'UNAVAILABLE' ? 'Data Unavailable' :
                      'Cached / Simulated'}
                   </div>
                 </div>
