@@ -15,6 +15,10 @@ function actionColor(action: IndicatorSignal['action']): string {
   return 'text-amber-400';
 }
 
+function actionLabel(action: IndicatorSignal['action']): string {
+  return action.charAt(0) + action.slice(1).toLowerCase();
+}
+
 const IndicatorGroup: React.FC<{ title: string; indicators: IndicatorSignal[]; emptyText: string }> = ({
   title,
   indicators,
@@ -33,8 +37,8 @@ const IndicatorGroup: React.FC<{ title: string; indicators: IndicatorSignal[]; e
               {indicator.name}
             </span>
             <span className="w-28 text-right font-mono text-white/90">{indicator.value}</span>
-            <span className={cn('w-24 text-center font-bold text-sm', actionColor(indicator.action))}>
-              {indicator.action}
+            <span className={cn('w-24 text-center text-sm font-bold', actionColor(indicator.action))}>
+              {actionLabel(indicator.action)}
             </span>
           </div>
         ))

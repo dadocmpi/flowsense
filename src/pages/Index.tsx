@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useCompassSignal } from '../hooks/useCompassSignal';
 import { CompassDisplay } from '../components/compass/CompassDisplay';
 import { MarketSummary } from '../components/compass/MarketSummary';
-import { ActionPlanningPanel } from '../components/compass/ActionPlanningPanel';
 import { ReversalPanel } from '../components/compass/ReversalPanel';
-import { AssetSummaryCard } from '../components/trading/AssetSummaryCard';
 import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
 import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
+import { CollapsibleSection } from '../components/common/CollapsibleSection';
 import { DEFAULT_SYMBOL, SUPPORTED_ASSETS } from '../types/trading';
+import { factorCategoryLabel, factorNameLabel, verdictLabel } from '../lib/labels';
 import { cn } from '@/lib/utils';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
 
@@ -20,297 +20,247 @@ const ERROR_TITLES: Record<string, string> = {
   UNKNOWN: 'Unexpected error',
 };
 
+const DIRECTION_WORDS: Record<string, string> = {
+  STRONG_BUY: 'Strong buy',
+  BUY: 'Buy',
+  NEUTRAL: 'Neutral',
+  SELL: 'Sell',
+  STRONG_SELL: 'Strong sell',
+};
+
+function verdictTone(direction: string): { text: string; bar: string; badge: string } {
+  switch (direction) {
+    case 'BULLISH':
+      return { text: 'text-green-400', bar: 'bg-green-500', badge: 'bg-green-500/10 border-green-500/30 text-green-400' };
+    case 'BEARISH':
+      return { text: 'text-red-400', bar: 'bg-red-500', badge: 'bg-red-500/10 border-red-500/30 text-red-400' };
+    default:
+      return { text: 'text-amber-400', bar: 'bg-amber-400', badge: 'bg-amber-500/10 border-amber-500/30 text-amber-400' };
+  }
+}
+
 const Index = () => {
   const [selectedAsset, setSelectedAsset] = useState(DEFAULT_SYMBOL);
-  const [activeTab, setActiveTab] = useState<'factors' | 'technical' | 'context' | 'history'>('factors');
 
   const compass = useCompassSignal(selectedAsset);
+  const factors = compass.live?.factors || [];
+  const direction = compass.official?.direction || compass.live?.rawDirection || 'NEUTRAL';
 
   useEffect(() => {
-    // Reset published signal history display when switching instruments.
-    setActiveTab('factors');
+    // Nothing to reset now that the secondary panels keep their own state,
+    // but the scroll position should not carry over between instruments.
+    window.scrollTo({ top: 0 });
   }, [selectedAsset]);
 
-  const factors = compass.live?.factors || [];
-
   return (
-    <div className="min-h-screen w-screen bg-[#050608] text-white font-sans flex flex-col selection:bg-amber-500/30">
-      {/* Header */}
-      <header className="w-full border-b border-white/[0.04] bg-[#07080a] px-8 py-4 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50 backdrop-blur-md">
-        <div className="flex items-center flex-wrap gap-2">
-          {SUPPORTED_ASSETS.map(asset => (
-            <button
-              key={asset.symbol}
-              onClick={() => setSelectedAsset(asset.symbol)}
-              className={cn(
-                'flex flex-col items-start px-3 py-1.5 rounded-lg text-xs font-bold tracking-wider transition-all',
-                selectedAsset === asset.symbol
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.4)]'
-                  : 'bg-white/[0.02] text-white/60 hover:text-white border border-white/[0.04] hover:bg-white/[0.03]'
-              )}
-            >
-              <span className="font-mono">{asset.symbol}</span>
-              <span className={cn(
-                'text-[8px] font-black uppercase tracking-[0.2em]',
-                selectedAsset === asset.symbol ? 'text-black/60' : 'text-white/30'
-              )}>
-                {asset.category}
-              </span>
-            </button>
-          ))}
-        </div>
+    <div className="min-h-screen w-full bg-[#050608] font-sans text-white selection:bg-amber-500/30">
+      <header className="sticky top-0 z-50 w-full border-b border-white/[0.04] bg-[#07080a]/95 px-4 py-3 backdrop-blur-md sm:px-8">
+        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-black tracking-tight">FlowSense</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {SUPPORTED_ASSETS.map(asset => (
+                <button
+                  key={asset.symbol}
+                  onClick={() => setSelectedAsset(asset.symbol)}
+                  className={cn(
+                    'rounded-lg px-2.5 py-1 text-xs font-bold transition-all',
+                    selectedAsset === asset.symbol
+                      ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.4)]'
+                      : 'border border-white/[0.04] bg-white/[0.02] text-white/60 hover:bg-white/[0.04] hover:text-white'
+                  )}
+                >
+                  <span className="font-mono">{asset.symbol.replace('/USDT', '')}</span>
+                </button>
+              ))}
+            </div>
+          </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-xs font-mono">
-            <span className="text-white/50">DATA:</span>
-            <span className={cn(
-              'font-black',
-              compass.dataLabel === 'LIVE' ? 'text-green-400' :
-              compass.dataLabel === 'DELAYED' ? 'text-amber-400' :
-              compass.dataLabel === 'UNAVAILABLE' ? 'text-red-500' : 'text-white/60'
-            )}>
-              {compass.dataLabel}
+          <div className="flex items-center gap-4 text-xs">
+            <span className="font-mono text-white/80">
+              {compass.price > 0
+                ? compass.price.toLocaleString(undefined, {
+                    minimumFractionDigits: compass.precision,
+                    maximumFractionDigits: compass.precision,
+                  })
+                : '--'}
             </span>
+            <button
+              onClick={compass.refresh}
+              className="flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 font-semibold transition-all hover:bg-white/[0.06]"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', compass.isLoading && 'animate-spin')} />
+              Refresh
+            </button>
           </div>
-          <div className="flex items-center gap-2 text-xs font-mono">
-            <span className="text-white/50">CANDLES IN:</span>
-            <span className="text-white/90">{compass.nextRefreshIn}s</span>
-          </div>
-          <div className="flex items-center gap-2 text-xs font-mono">
-            <span className="text-white/50">PRICE:</span>
-            <span className="text-white/90">
-              {compass.price > 0 ? compass.price.toLocaleString(undefined, {
-                minimumFractionDigits: compass.precision,
-                maximumFractionDigits: compass.precision,
-              }) : '--'}
-            </span>
-          </div>
-          <button
-            onClick={compass.refresh}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.06] transition-all"
-          >
-            <RefreshCw className={cn('w-3.5 h-3.5', compass.isLoading && 'animate-spin')} />
-            REFRESH
-          </button>
         </div>
       </header>
 
-      {/* Error banner */}
       {compass.error && (
-        <div className="w-full bg-red-500/10 border-b border-red-500/30 px-8 py-3 flex items-center gap-3 text-sm">
-          <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-          <span className="text-red-200 font-bold">{ERROR_TITLES[compass.error.kind] || 'Error'}:</span>
+        <div className="flex w-full items-center gap-3 border-b border-red-500/30 bg-red-500/10 px-4 py-3 text-sm sm:px-8">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+          <span className="font-bold text-red-200">{ERROR_TITLES[compass.error.kind] || 'Error'}:</span>
           <span className="text-red-200/80">{compass.error.message}</span>
         </div>
       )}
 
-      {/* Main Content */}
-      <main className="flex-grow p-8 max-w-[1920px] w-full mx-auto flex flex-col gap-8">
-        {/* Compass Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          <div className="lg:col-span-5 flex flex-col">
-            <CompassDisplay
-              direction={compass.official?.direction || compass.live?.rawDirection || 'NEUTRAL'}
-              score={compass.official?.score || compass.live?.rawScore || 50}
-              confidence={compass.official?.confidence || 0}
-              timestamp={compass.official?.timestamp || Date.now()}
+      <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 p-4 sm:p-8">
+        {/* Hero: the compass signal */}
+        <CompassDisplay
+          direction={direction}
+          score={compass.official?.score || compass.live?.rawScore || 50}
+          confidence={compass.official?.confidence || 0}
+          price={compass.price}
+          precision={compass.precision}
+          timestamp={compass.official?.timestamp || Date.now()}
+          dataLabel={compass.dataLabel}
+          secondsUntilNextUpdate={compass.secondsUntilNextUpdate}
+          minutesSinceLastSignal={compass.minutesSinceLastSignal}
+          reason={compass.official?.reason || ''}
+          isStale={compass.official?.isStale || false}
+        />
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          {/* ONE consolidated summary, with secondary metrics behind a toggle */}
+          <div className="lg:col-span-7">
+            <MarketSummary
+              data={compass.marketData}
+              dataQuality={compass.dataQuality}
               dataLabel={compass.dataLabel}
-              secondsUntilNextUpdate={compass.secondsUntilNextUpdate}
-              minutesSinceLastSignal={compass.minutesSinceLastSignal}
-              factorSummary={compass.official?.factorSummary || factors.map(f => `${f.name}: ${f.direction}`)}
-              isStale={compass.official?.isStale || false}
-              reason={compass.official?.reason || ''}
+              marketState={compass.official?.marketRegime || compass.live?.marketRegime || 'UNKNOWN'}
+              advancedExtras={
+                <ReversalPanel
+                  reversalSignal={compass.reversalSignal}
+                  srLevels={compass.srLevels}
+                  price={compass.price}
+                  precision={compass.precision}
+                />
+              }
             />
           </div>
 
-          <div className="lg:col-span-7 flex flex-col gap-8">
-            <MarketSummary
-              marketRegime={compass.official?.marketRegime || 'UNKNOWN'}
-              dataQuality={compass.dataQuality.overall}
-              dataLabel={compass.dataLabel}
-              factorAgreement={compass.live?.factorAgreement || 0}
-              availableFactors={compass.live?.availableFactors || 0}
-              totalFactors={compass.live?.totalFactors || 0}
-              price={compass.price}
-              timestamp={compass.live?.timestamp || Date.now()}
-            />
-            <ActionPlanningPanel
-              direction={compass.official?.direction || 'NEUTRAL'}
-              price={compass.price}
-              confidence={compass.official?.confidence || 0}
-              marketRegime={compass.official?.marketRegime || 'UNKNOWN'}
-              dataQuality={compass.dataQuality.overall}
-            />
-            <ReversalPanel
-              reversalSignal={compass.reversalSignal}
-              srLevels={compass.srLevels}
-              price={compass.price}
-            />
+          {/* Market factors: a verdict and a strength bar per row */}
+          <div className="lg:col-span-5">
+            <section className="h-full rounded-2xl border border-white/[0.08] bg-[#0b0c10] p-6">
+              <h3 className="mb-4 text-sm font-bold text-white">Market factors</h3>
+
+              {factors.length === 0 ? (
+                <div className="py-8 text-center text-sm italic text-white/50">
+                  {compass.isLoading ? 'Loading market data…' : 'No factors available — waiting for data'}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {factors.map((factor, index) => {
+                    const tone = verdictTone(factor.direction);
+                    const strength = Math.max(0, Math.min(100, factor.weight));
+                    return (
+                      <div
+                        key={`${factor.name}-${index}`}
+                        className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-white">
+                              {factorNameLabel(factor.name)}
+                            </div>
+                            <div className="text-[10px] uppercase tracking-wider text-white/40">
+                              {factorCategoryLabel(factor.category)}
+                            </div>
+                          </div>
+                          <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-bold', tone.badge)}>
+                            {verdictLabel(factor.direction)}
+                          </span>
+                        </div>
+                        <div className="mt-2.5 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+                            <div className={cn('h-full rounded-full', tone.bar)} style={{ width: `${strength}%` }} />
+                          </div>
+                          <span className="w-8 text-right font-mono text-[10px] text-white/40">{strength}%</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
           </div>
         </div>
 
-        {/* Asset Snapshot */}
-        <AssetSummaryCard data={compass.marketData} dataQuality={compass.dataQuality} />
+        {/* Secondary detail — collapsed so it does not compete with the compass */}
+        <CollapsibleSection title="Technical indicators" subtitle="Oscillators, moving averages, volume and volatility">
+          <TechnicalDetailsTable
+            oscillators={compass.marketData.oscillators}
+            movingAverages={compass.marketData.movingAverages}
+            volumeIndicators={compass.marketData.volumeIndicators}
+            isLoading={compass.isLoading}
+          />
+        </CollapsibleSection>
 
-        {/* Real order flow straight from the exchange */}
-        <RealtimeOrderFlow
-          orderFlow={compass.orderFlow}
-          precision={compass.precision}
-          quote={compass.marketData.currency}
-        />
+        <CollapsibleSection
+          title="Real-time order flow"
+          subtitle={
+            compass.orderFlow.isLive
+              ? 'Live from Binance'
+              : `Binance stream: ${compass.orderFlow.streamStatus.toLowerCase()}`
+          }
+        >
+          <RealtimeOrderFlow
+            orderFlow={compass.orderFlow}
+            precision={compass.precision}
+            quote={compass.marketData.currency}
+          />
+        </CollapsibleSection>
 
-        {/* Expandable Details Sections */}
-        <div className="bg-[#0b0c10] rounded-2xl border border-white/[0.08] overflow-hidden">
-          <div className="flex flex-wrap border-b border-white/[0.04]">
-            {[
-              { id: 'factors', label: 'MARKET FACTORS' },
-              { id: 'technical', label: 'TECHNICAL DETAILS' },
-              { id: 'context', label: 'DATA & CONTEXT' },
-              { id: 'history', label: 'SIGNAL HISTORY' },
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                className={cn(
-                  'flex-1 px-6 py-4 text-xs font-black tracking-wider transition-all border-b-2 min-w-[140px]',
-                  activeTab === tab.id
-                    ? 'border-amber-400 text-amber-400 bg-amber-500/5'
-                    : 'border-transparent text-white/40 hover:text-white/60'
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="p-6">
-            {activeTab === 'factors' && (
-              <div className="space-y-4">
-                <h3 className="text-white font-bold mb-4">Market Factors</h3>
-                {factors.length === 0 && (
-                  <div className="text-center text-white/50 italic py-8">
-                    {compass.isLoading ? 'Loading market data…' : 'No factors available — waiting for data'}
-                  </div>
-                )}
-                {factors.map((factor, index) => (
-                  <div key={`${factor.name}-${index}`} className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <div className="flex items-center gap-4">
-                      <span className="text-white/50 text-xs font-black uppercase">{factor.category}</span>
-                      <span className="text-white font-mono">{factor.name}</span>
-                      <span className="text-white/40 text-xs font-mono hidden md:inline">{factor.value}</span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <span className={cn(
-                        'font-mono font-bold text-sm',
-                        factor.direction === 'BULLISH' ? 'text-green-400' :
-                        factor.direction === 'BEARISH' ? 'text-red-500' : 'text-amber-400'
-                      )}>
-                        {factor.direction}
+        <CollapsibleSection title="Signal history" subtitle={`${compass.history.length} published signals`}>
+          {compass.history.length === 0 ? (
+            <div className="py-8 text-center text-sm italic text-white/50">
+              No signals yet — waiting for the first official minute boundary
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {compass.history
+                .slice(-10)
+                .reverse()
+                .map((entry, index) => (
+                  <div
+                    key={`${entry.minuteKey}-${index}`}
+                    className="flex items-center justify-between rounded-xl border border-white/[0.04] bg-white/[0.02] p-3 text-sm"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className={cn('font-semibold', verdictTone(
+                        entry.direction === 'STRONG_BUY' || entry.direction === 'BUY'
+                          ? 'BULLISH'
+                          : entry.direction === 'STRONG_SELL' || entry.direction === 'SELL'
+                          ? 'BEARISH'
+                          : 'NEUTRAL'
+                      ).text)}>
+                        {DIRECTION_WORDS[entry.direction] ?? entry.direction}
                       </span>
-                      <span className="text-white/50 font-mono text-sm">{factor.weight}%</span>
+                      <span className="font-mono text-xs text-white/40">{entry.minuteKey}</span>
+                    </div>
+                    <div className="flex items-center gap-4 font-mono text-xs text-white/50">
+                      <span>Score {entry.score}</span>
+                      <span>{entry.confidence}%</span>
                     </div>
                   </div>
                 ))}
-              </div>
-            )}
+            </div>
+          )}
+        </CollapsibleSection>
 
-            {activeTab === 'technical' && (
-              <TechnicalDetailsTable
-                oscillators={compass.marketData.oscillators}
-                movingAverages={compass.marketData.movingAverages}
-                volumeIndicators={compass.marketData.volumeIndicators}
-                isLoading={compass.isLoading}
-              />
-            )}
-
-            {activeTab === 'context' && (
-              <div className="space-y-4">
-                <h3 className="text-white font-bold mb-4">Data & Context</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <span className="text-white/50 text-xs font-bold uppercase">Data Source</span>
-                    <div className="text-white font-mono mt-2">Binance (public REST + WebSocket)</div>
-                  </div>
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <span className="text-white/50 text-xs font-bold uppercase">Data Quality</span>
-                    <div className={cn(
-                      'font-mono mt-2',
-                      compass.dataQuality.overall >= 80 ? 'text-green-400' :
-                      compass.dataQuality.overall >= 60 ? 'text-amber-400' : 'text-red-500'
-                    )}>
-                      {compass.dataQuality.overall}%
-                    </div>
-                  </div>
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <span className="text-white/50 text-xs font-bold uppercase">Available Factors</span>
-                    <div className="text-white font-mono mt-2">
-                      {compass.live?.availableFactors || 0} / {compass.live?.totalFactors || 0}
-                    </div>
-                  </div>
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                    <span className="text-white/50 text-xs font-bold uppercase">Last Update</span>
-                    <div className="text-white font-mono mt-2">
-                      {compass.lastUpdated ? new Date(compass.lastUpdated).toLocaleTimeString() : 'N/A'}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                  <span className="text-white/50 text-xs font-bold uppercase">Instrument</span>
-                  <div className="text-white font-mono mt-2">{compass.assetName} ({selectedAsset})</div>
-                </div>
-
-                <div className="p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                  <span className="text-white/50 text-xs font-bold uppercase">Order flow</span>
-                  <div className="text-white font-mono mt-2">
-                    {compass.orderFlow.isLive ? 'LIVE' : compass.orderFlow.streamStatus} · book {compass.orderFlow.bids.length}×{compass.orderFlow.asks.length} · {compass.orderFlow.recentTrades.length} trades
-                  </div>
-                </div>
-
-                <div className="p-4 bg-amber-500/5 rounded-xl border border-amber-500/20">
-                  <span className="text-amber-400 text-xs font-bold uppercase">Scope: crypto only, for now</span>
-                  <ul className="text-white/70 text-sm mt-2 space-y-1 list-disc list-inside">
-                    <li>Only Binance USDT pairs are offered, because these are the instruments we can source honestly end to end</li>
-                    <li>Stocks, forex and indices are a later addition — they need a data source that also provides real order flow</li>
-                    <li>Cross-market feeds such as DXY, VIX and yields are not part of this scope</li>
-                  </ul>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'history' && (
-              <div className="space-y-4">
-                <h3 className="text-white font-bold mb-4">Signal History</h3>
-                {compass.history.length === 0 ? (
-                  <div className="text-center text-white/50 italic py-8">
-                    No signals yet — waiting for first official minute boundary
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {compass.history.slice(-10).reverse().map((entry, index) => (
-                      <div key={`${entry.minuteKey}-${index}`} className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/[0.04]">
-                        <div className="flex items-center gap-4">
-                          <span className={cn(
-                            'font-mono font-bold text-sm',
-                            entry.direction === 'STRONG_BUY' || entry.direction === 'BUY' ? 'text-green-400' :
-                            entry.direction === 'STRONG_SELL' || entry.direction === 'SELL' ? 'text-red-500' : 'text-amber-400'
-                          )}>
-                            {entry.direction.replace('_', ' ')}
-                          </span>
-                          <span className="text-white/50 font-mono text-sm">{entry.minuteKey}</span>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <span className="text-white/50 font-mono text-sm">{entry.score}</span>
-                          <span className="text-white/50 font-mono text-sm">{entry.confidence}%</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
+        {/* Scope note — kept visible because it is a promise, not a detail */}
+        <section className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">Crypto only, for now</h3>
+          <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-white/70">
+            <li>Only Binance USDT pairs are offered, because these are the instruments we can source honestly end to end</li>
+            <li>Stocks, forex and indices are a later addition — they need a data source that also provides real order flow</li>
+            <li>Cross-market feeds such as DXY, VIX and yields are not part of this scope</li>
+          </ul>
+          <p className="mt-3 text-xs text-white/50">
+            {compass.assetName} ({selectedAsset}) · Data from Binance public REST and WebSocket feeds ·{' '}
+            {compass.lastUpdated ? `Last update ${new Date(compass.lastUpdated).toLocaleTimeString()}` : 'Waiting for the first update'}
+          </p>
+        </section>
       </main>
     </div>
   );

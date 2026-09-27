@@ -1,190 +1,95 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 import { ReversalSignal, SRLevel } from '../../types/srReversal';
+import { reversalStateLabel, srTypeLabel } from '../../lib/labels';
 
 interface ReversalPanelProps {
   reversalSignal: ReversalSignal | null;
   srLevels: SRLevel[];
   price: number;
+  precision: number;
 }
 
-export const ReversalPanel = ({ reversalSignal, srLevels, price }: ReversalPanelProps) => {
-  // Find nearest support and resistance
+function Row({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-white/[0.04] py-2 text-sm last:border-0">
+      <span className="text-white/50">{label}</span>
+      <span className={cn('font-mono text-white/90', tone)}>{value}</span>
+    </div>
+  );
+}
+
+function formatPrice(value: number, precision: number): string {
+  return value.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
+}
+
+/**
+ * Support, resistance and reversal context. This used to be a full-width
+ * block of its own; it now sits inside the Advanced details area so it
+ * supports the compass instead of competing with it.
+ */
+export const ReversalPanel: React.FC<ReversalPanelProps> = ({ reversalSignal, srLevels, price, precision }) => {
   const supports = srLevels.filter(level => level.direction === 'SUPPORT');
   const resistances = srLevels.filter(level => level.direction === 'RESISTANCE');
 
-  const nearestSupport = supports.reduce((prev, current) => {
-    return Math.abs(current.priceLow - price) < Math.abs(prev.priceLow - price) ? current : prev;
-  }, supports[0] || { priceLow: 0, priceHigh: 0, strength: 0, timeframe: '', testCount: 0, freshness: 0, distanceFromPrice: 0, pricePosition: 'BELOW', zoneState: 'APPROACHING', invalidationLevel: 0, confidence: 0, dataQuality: 0, id: '', type: 'SUPPLY_ZONE', direction: 'SUPPORT' });
-
-  const nearestResistance = resistances.reduce((prev, current) => {
-    return Math.abs(current.priceLow - price) < Math.abs(prev.priceLow - price) ? current : prev;
-  }, resistances[0] || { priceLow: 0, priceHigh: 0, strength: 0, timeframe: '', testCount: 0, freshness: 0, distanceFromPrice: 0, pricePosition: 'ABOVE', zoneState: 'APPROACHING', invalidationLevel: 0, confidence: 0, dataQuality: 0, id: '', type: 'DEMAND_ZONE', direction: 'RESISTANCE' });
-
-  // Determine if any zone is touched
-  const anyZoneTouched = srLevels.some(level => 
-    level.zoneState === 'TOUCHING' || 
-    level.zoneState === 'RETESTING' ||
-    level.zoneState === 'REJECTING' ||
-    level.zoneState === 'BREAKING'
+  const nearestSupport = supports.reduce(
+    (prev, current) => (Math.abs(current.priceLow - price) < Math.abs(prev.priceLow - price) ? current : prev),
+    supports[0] ?? null
+  );
+  const nearestResistance = resistances.reduce(
+    (prev, current) => (Math.abs(current.priceLow - price) < Math.abs(prev.priceLow - price) ? current : prev),
+    resistances[0] ?? null
   );
 
-  // Get rejection or breakout state from reversal signal
-  const rejectionOrBreakoutState = reversalSignal?.state ?? 'NO_TRADE';
+  const anyZoneTouched = srLevels.some(level =>
+    ['TOUCHING', 'RETESTING', 'REJECTING', 'BREAKING'].includes(level.zoneState)
+  );
+
+  const levelValue = (level: SRLevel | null, emptyText: string) =>
+    level && level.priceLow > 0
+      ? `${formatPrice(level.priceLow, precision)} · ${srTypeLabel(level.type)} · ${level.strength}% strength`
+      : emptyText;
 
   return (
-    <div className="bg-[#0b0c10] rounded-2xl border border-white/[0.08] overflow-hidden">
-      <div className="flex border-b border-white/[0.04] px-6 py-4">
-        <h3 className="text-white font-bold text-xs tracking-wider flex-1">REVERSAL PANEL</h3>
+    <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
+      <div>
+        <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/40">Support and resistance</h4>
+        <Row label="Nearest support" value={levelValue(nearestSupport, 'Unavailable')} tone="text-green-400" />
+        <Row label="Nearest resistance" value={levelValue(nearestResistance, 'Unavailable')} tone="text-red-400" />
+        <Row
+          label="Zone touched"
+          value={anyZoneTouched ? 'Yes' : 'No'}
+          tone={anyZoneTouched ? 'text-green-400' : 'text-white/60'}
+        />
+        <Row label="Levels tracked" value={String(srLevels.length)} />
       </div>
-      <div className="p-6 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-          <div>
-            <span className="text-white/50 font-bold uppercase">Current Price</span>
-            <div className="text-white font-mono mt-1">{price.toFixed(2)}</div>
-          </div>
-          <div>
-            <span className="text-white/50 font-bold uppercase">Nearest Support</span>
-            <div className="text-white font-mono mt-1">
-              {nearestSupport.priceLow > 0 ? nearestSupport.priceLow.toFixed(2) : 'N/A'}
-              <span className="text-xs ml-2 whitespace-nowrap">
-                ({nearestSupport.timeframe} • {nearestSupport.strength}%)
-              </span>
-            </div>
-          </div>
-          <div>
-            <span className="text-white/50 font-bold uppercase">Nearest Resistance</span>
-            <div className="text-white font-mono mt-1">
-              {nearestResistance.priceLow > 0 ? nearestResistance.priceLow.toFixed(2) : 'N/A'}
-              <span className="text-xs ml-2 whitespace-nowrap">
-                ({nearestResistance.timeframe} • {nearestResistance.strength}%)
-              </span>
-            </div>
-          </div>
-          <div>
-            <span className="text-white/50 font-bold uppercase">Zone Touched</span>
-            <div className={cn(
-              "text-white font-mono mt-1",
-              anyZoneTouched ? "text-green-400" : "text-red-500"
-            )}>
-              {anyZoneTouched ? 'YES' : 'NO'}
-            </div>
-          </div>
-        </div>
 
-        <div className="border-t border-white/[0.04] pt-4">
-          <span className="text-white/50 font-bold uppercase text-xs">State</span>
-          <div className="text-white font-mono mt-1">
-            {reversalSignal ? reversalSignal.state.replace('_', ' ') : 'NO_TRADE'}
-          </div>
-        </div>
-
-        {reversalSignal && (
+      <div>
+        <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/40">Reversal watch</h4>
+        <Row label="State" value={reversalStateLabel(reversalSignal?.state ?? 'NO_TRADE')} />
+        {reversalSignal ? (
           <>
-            <div className="border-t border-white/[0.04] pt-4">
-              <span className="text-white/50 font-bold uppercase text-xs">Reason</span>
-              <div className="text-white/90 font-mono mt-1 text-xs">
-                {reversalSignal.reason}
-              </div>
-            </div>
-
-            <div className="border-t border-white/[0.04] pt-4">
-              <span className="text-white/50 font-bold uppercase text-xs">Volume Confirmation</span>
-              <div className="grid grid-cols-1 gap-2 text-xs mt-1">
-                <div>
-                  <span className="text-white/50">Available:</span>
-                  <span className={cn(
-                    "font-mono",
-                    reversalSignal.volumeConfirmation.available ? "text-green-400" : "text-red-500"
-                  )}>
-                    {reversalSignal.volumeConfirmation.available ? 'YES' : 'NO'}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-white/50">Volume vs Average:</span>
-                  <span className={cn(
-                    "font-mono",
-                    reversalSignal.volumeConfirmation.volumeRatio >= 1.2 ? "text-green-400" : "text-white/70"
-                  )}>
-                    {reversalSignal.volumeConfirmation.volumeRatio.toFixed(2)}x
-                  </span>
-                </div>
-                <div>
-                  <span className="text-white/50">Rising Volume:</span>
-                  <span className="font-mono">{reversalSignal.volumeConfirmation.risingVolume ? 'YES' : 'NO'}</span>
-                </div>
-                <div>
-                  <span className="text-white/50">Exhaustion:</span>
-                  <span className={cn(
-                    "font-mono",
-                    reversalSignal.volumeConfirmation.exhaustion ? "text-amber-400" : "text-white/70"
-                  )}>
-                    {reversalSignal.volumeConfirmation.exhaustion ? 'YES' : 'NO'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="border-t border-white/[0.04] pt-4">
-              <span className="text-white/50 font-bold uppercase text-xs">Timeframe Agreement</span>
-              <div className="text-white/90 font-mono mt-1 text-xs">
-                Aligned: {reversalSignal.timeframeAgreement.aligned.join(', ') || 'None'}
-              </div>
-              <div className="text-white/90 font-mono mt-1 text-xs">
-                Conflicting: {reversalSignal.timeframeAgreement.conflicting.join(', ') || 'None'}
-              </div>
-              {reversalSignal.timeframeAgreement.unavailable.length > 0 && (
-                <div className="text-white/90 font-mono mt-1 text-xs">
-                  Unavailable: {reversalSignal.timeframeAgreement.unavailable.join(', ')}
-                </div>
-              )}
-            </div>
-
-            <div className="border-t border-white/[0.04] pt-4">
-              <span className="text-white/50 font-bold uppercase text-xs">Invalidation</span>
-              <div className="text-white font-mono mt-1">
-                Level: {reversalSignal.invalidation.level > 0 ? reversalSignal.invalidation.level.toFixed(2) : 'N/A'}
-              </div>
-              <div className="text-white font-mono mt-1">
-                Distance: {reversalSignal.invalidation.distance > 0 ? reversalSignal.invalidation.distance.toFixed(2) : 'N/A'}
-              </div>
-            </div>
-
-            <div className="border-t border-white/[0.04] pt-4">
-              <span className="text-white/50 font-bold uppercase text-xs">Risk/Reward</span>
-              <div className="text-white font-mono mt-1">
-                Target: {reversalSignal.riskReward.target > 0 ? reversalSignal.riskReward.target.toFixed(2) : 'N/A'}
-              </div>
-              <div className="text-white font-mono mt-1">
-                Stop: {reversalSignal.riskReward.stop > 0 ? reversalSignal.riskReward.stop.toFixed(2) : 'N/A'}
-              </div>
-              <div className="text-white font-mono mt-1">
-                Ratio: {reversalSignal.riskReward.ratio > 0 ? reversalSignal.riskReward.ratio.toFixed(2) : 'N/A'}
-              </div>
-            </div>
-
-            <div className="border-t border-white/[0.04] pt-4">
-              <span className="text-white/50 font-bold uppercase text-xs">Confidence</span>
-              <div className={cn(
-                "font-mono mt-1",
-                reversalSignal.confidence >= 80 ? "text-green-400" :
-                reversalSignal.confidence >= 60 ? "text-amber-400" : "text-red-500"
-              )}>
-                {reversalSignal.confidence}%
-              </div>
-            </div>
-
-            <div className="border-t border-white/[0.04] pt-4">
-              <span className="text-white/50 font-bold uppercase text-xs">Data Quality</span>
-              <div className={cn(
-                "font-mono mt-1",
-                reversalSignal.dataQuality >= 80 ? "text-green-400" :
-                reversalSignal.dataQuality >= 60 ? "text-amber-400" : "text-red-500"
-              )}>
-                {reversalSignal.dataQuality}%
-              </div>
-            </div>
+            <Row label="Confidence" value={`${reversalSignal.confidence}%`} />
+            <Row
+              label="Volume vs average"
+              value={reversalSignal.volumeConfirmation.volumeRatio > 0 ? `${reversalSignal.volumeConfirmation.volumeRatio.toFixed(2)}x` : 'Unavailable'}
+            />
+            <Row
+              label="Timeframes aligned"
+              value={reversalSignal.timeframeAgreement.aligned.join(', ') || 'None'}
+            />
+            <Row
+              label="Invalidation level"
+              value={reversalSignal.invalidation.level > 0 ? formatPrice(reversalSignal.invalidation.level, precision) : 'Unavailable'}
+            />
+            {reversalSignal.reason && (
+              <p className="mt-3 text-xs leading-relaxed text-white/50">{reversalSignal.reason}</p>
+            )}
           </>
+        ) : (
+          <p className="mt-3 text-xs text-white/40">
+            No reversal is being watched. The engine reports one only when price is touching a monitored level.
+          </p>
         )}
       </div>
     </div>
