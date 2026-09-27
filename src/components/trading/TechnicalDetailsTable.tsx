@@ -25,25 +25,25 @@ const IndicatorGroup: React.FC<{ title: string; indicators: IndicatorSignal[]; e
   emptyText,
 }) => (
   <div>
-    <h3 className="text-white font-bold mb-3 flex items-center">
+    <h3 className="text-title text-white font-bold mb-3 flex items-center">
       <span className="w-4 h-4 bg-amber-400 rounded mr-2" />
       {title}
     </h3>
     <div className="space-y-2">
       {indicators.length > 0 ? (
         indicators.map(indicator => (
-          <div key={indicator.name} className="flex items-center justify-between text-sm">
-            <span className="flex-1 text-white/70" title={indicator.description}>
+          <div key={indicator.name} className="flex items-center justify-between gap-2 text-body">
+            <span className="min-w-0 flex-1 truncate text-white/70" title={indicator.description}>
               {indicator.name}
             </span>
-            <span className="w-28 text-right font-mono text-white/90">{indicator.value}</span>
-            <span className={cn('w-24 text-center text-sm font-bold', actionColor(indicator.action))}>
+            <span className="w-20 shrink-0 text-right font-mono text-white/90 sm:w-28">{indicator.value}</span>
+            <span className={cn('w-20 shrink-0 text-center text-body font-bold sm:w-24', actionColor(indicator.action))}>
               {actionLabel(indicator.action)}
             </span>
           </div>
         ))
       ) : (
-        <div className="text-center text-white/50 italic py-4">{emptyText}</div>
+        <div className="text-center text-body text-white/50 italic py-4">{emptyText}</div>
       )}
     </div>
   </div>

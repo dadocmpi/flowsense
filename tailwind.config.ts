@@ -18,6 +18,38 @@ export default {
       },
     },
     extend: {
+      // ── Type scale ─────────────────────────────────────────────────────
+      // One semantic scale for the whole app. Panels must pick a role, not a
+      // one-off pixel size, so text of the same importance is the same size
+      // everywhere:
+      //   text-data      numeric readouts / prices        (most important data)
+      //   text-data-lg   the hero numeric readout (price)
+      //   text-headline  the compass verdict word
+      //   text-title     section / pane titles
+      //   text-body      default body copy and list rows
+      //   text-label     secondary labels and captions
+      //   text-micro     table headers and fine print
+      fontSize: {
+        micro: ['0.6875rem', { lineHeight: '1rem' }],
+        label: ['0.75rem', { lineHeight: '1.05rem' }],
+        body: ['0.875rem', { lineHeight: '1.3rem' }],
+        title: ['1rem', { lineHeight: '1.45rem' }],
+        data: ['1.125rem', { lineHeight: '1.6rem' }],
+        'data-lg': ['2rem', { lineHeight: '1.1' }],
+        headline: ['2.5rem', { lineHeight: '1' }],
+      },
+      // ── Spacing scale ──────────────────────────────────────────────────
+      // Panels share these so gutters never drift apart section to section:
+      //   gap-panel    space between top-level panels
+      //   p-panel      panel interior padding (panel-pad-lg wider screens)
+      //   gap-block    space between blocks inside a panel
+      //   gap-field    space between label/value rows
+      spacing: {
+        panel: '1.25rem',
+        'panel-lg': '1.75rem',
+        block: '1.5rem',
+        field: '0.5rem',
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
