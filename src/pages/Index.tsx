@@ -192,29 +192,6 @@ const Index = () => {
             </div>
           )}
         </Section>
-
-        {/* Provenance detail — always visible */}
-        <Section title="Data source and scope" subtitle="Provenance and coverage">
-          <div className="space-y-4 text-body text-white/70">
-            <div>
-              <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Data source</h4>
-              <p>
-                {compass.assetName} ({selectedAsset}) · Binance public WebSocket stream
-                {compass.lastUpdated
-                  ? ` · last tick ${new Date(compass.lastUpdated).toLocaleTimeString()}`
-                  : ' · waiting for the first tick'}
-              </p>
-            </div>
-            <div>
-              <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Crypto only, for now</h4>
-              <ul className="list-inside list-disc space-y-1">
-                <li>Only Binance USDT pairs are offered, because these are the instruments we can source honestly end to end</li>
-                <li>Stocks, forex and indices are a later addition — they need a data source that also provides real order flow</li>
-                <li>Cross-market feeds such as DXY, VIX and yields are not part of this scope</li>
-              </ul>
-            </div>
-          </div>
-        </Section>
       </main>
     </div>
   );
