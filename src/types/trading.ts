@@ -194,6 +194,7 @@ export interface MarketDataResult {
   isLoading: boolean;
   error: MarketDataError | null;
   lastUpdated: number | null;
-  nextRefreshIn: number;
-  refresh: () => void;
+  /** Health of the persistent market-data stream, surfaced so a dropped
+   *  connection is never mistaken for a live-but-quiet market. */
+  streamStatus: OrderFlowState['streamStatus'];
 }

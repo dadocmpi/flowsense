@@ -7,7 +7,8 @@ import {
   confidenceFromScore,
   clampScore,
 } from '../../lib/compassEngine';
-import { dataLabelText } from '../../lib/labels';
+import { streamStatusLabel } from '../../lib/labels';
+import { OrderFlowState } from '../../types/trading';
 import { cn } from '@/lib/utils';
 
 interface CompassDisplayProps {
@@ -16,9 +17,8 @@ interface CompassDisplayProps {
   /** Data quality 0-100, used only to scale the confidence ceiling. */
   dataQuality: number;
   timestamp: number;
-  dataLabel: 'LIVE' | 'DELAYED' | 'CACHED' | 'SIMULATED' | 'UNAVAILABLE';
-  secondsUntilNextUpdate: number;
-  minutesSinceLastSignal: number;
+  /** Health of the stream feeding the compass, so a dropped feed is obvious. */
+  streamStatus: OrderFlowState['streamStatus'];
   isStale: boolean;
 }
 
@@ -49,9 +49,7 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
   score,
   dataQuality,
   timestamp,
-  dataLabel,
-  secondsUntilNextUpdate,
-  minutesSinceLastSignal,
+  streamStatus,
   isStale,
 }) => {
   const value = clampScore(score);
@@ -60,6 +58,7 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
   const color = sentimentColorFromScore(value);
   const confidence = confidenceFromScore(value, dataQuality);
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const isLive = streamStatus === 'LIVE';
 
   return (
     <section className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0b0c10] px-6 py-10 shadow-[0_25px_60px_rgba(0,0,0,0.9)] backdrop-blur-2xl sm:px-10 sm:py-14">
@@ -171,9 +170,12 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
 
         <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-[11px] text-white/40">
           <span>As of {time}</span>
-          <span>Feed {dataLabelText(dataLabel)}</span>
-          <span>Next update in {secondsUntilNextUpdate}s</span>
-          <span>Signal age {minutesSinceLastSignal} min</span>
+          <span className="flex items-center gap-1.5">
+            <span className={cn('h-2 w-2 rounded-full', isLive ? 'bg-green-400 animate-pulse' : 'bg-amber-400')} />
+            <span className={cn('font-semibold', isLive ? 'text-green-400' : 'text-amber-400')}>
+              {isLive ? 'Streaming live' : `Stream ${streamStatusLabel(streamStatus).toLowerCase()}`}
+            </span>
+          </span>
           <span className={cn('font-semibold', isStale ? 'text-amber-400' : 'text-green-400')}>
             State: {isStale ? 'Stale' : 'Active'}
           </span>

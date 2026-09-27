@@ -7,7 +7,7 @@ import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
 import { CollapsibleSection } from '../components/common/CollapsibleSection';
 import { DEFAULT_SYMBOL, SUPPORTED_ASSETS } from '../types/trading';
 import { cn } from '@/lib/utils';
-import { RefreshCw, AlertTriangle } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 
 const ERROR_TITLES: Record<string, string> = {
   GEO_BLOCKED: 'Binance unavailable in this region',
@@ -73,7 +73,7 @@ const Index = () => {
           </div>
 
           <div className="flex items-center gap-4 text-xs">
-            <span className="font-mono text-white/80">
+            <span className="font-mono text-sm font-semibold text-white/90">
               {compass.price > 0
                 ? compass.price.toLocaleString(undefined, {
                     minimumFractionDigits: compass.precision,
@@ -81,13 +81,6 @@ const Index = () => {
                   })
                 : '--'}
             </span>
-            <button
-              onClick={compass.refresh}
-              className="flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.03] px-3 py-1.5 font-semibold transition-all hover:bg-white/[0.06]"
-            >
-              <RefreshCw className={cn('h-3.5 w-3.5', compass.isLoading && 'animate-spin')} />
-              Refresh
-            </button>
           </div>
         </div>
       </header>
@@ -100,16 +93,25 @@ const Index = () => {
         </div>
       )}
 
+      {/* A dropped feed must never read as a quiet market. */}
+      {compass.streamStatus !== 'LIVE' && !compass.error && (
+        <div className="flex w-full items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs sm:px-8">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
+          <span className="font-semibold text-amber-200">
+            {compass.streamStatus === 'OFFLINE' ? 'Market feed offline' : 'Reconnecting to the market feed'} — showing the last data received
+          </span>
+        </div>
+      )}
+
       <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 p-4 sm:p-8">
         {/* Hero: the compass signal. It is the single source of truth — every
-            element is derived from the live aggregated score. */}
+            element is derived from the live aggregated score, which now moves
+            with every trade rather than once a minute. */}
         <CompassDisplay
           score={compass.live?.rawScore ?? compass.official?.score ?? 50}
           dataQuality={compass.dataQuality.overall}
           timestamp={compass.official?.timestamp || Date.now()}
-          dataLabel={compass.dataLabel}
-          secondsUntilNextUpdate={compass.secondsUntilNextUpdate}
-          minutesSinceLastSignal={compass.minutesSinceLastSignal}
+          streamStatus={compass.streamStatus}
           isStale={compass.official?.isStale || false}
         />
 
@@ -117,9 +119,14 @@ const Index = () => {
             compass internally, it no longer renders its own panel. */}
         <MarketSummary
           data={compass.marketData}
-          dataQuality={compass.dataQuality}
-          dataLabel={compass.dataLabel}
           marketState={compass.official?.marketRegime || compass.live?.marketRegime || 'UNKNOWN'}
+          advancedExtras={
+            <p className="text-sm text-white/60">
+              {compass.dataQuality.metrics.source === 'BINANCE'
+                ? 'Binance public WebSocket stream'
+                : 'Unavailable — no feed'}
+            </p>
+          }
         />
 
         {/* Secondary detail — collapsed so it does not compete with the compass */}
@@ -147,10 +154,10 @@ const Index = () => {
           />
         </CollapsibleSection>
 
-        <CollapsibleSection title="Signal history" subtitle={`${compass.history.length} published signals`}>
+        <CollapsibleSection title="Signal history" subtitle="Recent published compass signals">
           {compass.history.length === 0 ? (
             <div className="py-8 text-center text-sm italic text-white/50">
-              No signals yet — waiting for the first official minute boundary
+              No signals yet — the compass publishes an official read at each minute boundary
             </div>
           ) : (
             <div className="space-y-2">
@@ -172,7 +179,9 @@ const Index = () => {
                       ).text)}>
                         {DIRECTION_WORDS[entry.direction] ?? entry.direction}
                       </span>
-                      <span className="font-mono text-xs text-white/40">{entry.minuteKey}</span>
+                      <span className="font-mono text-xs text-white/40">
+                        {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
                     </div>
                     <div className="flex items-center gap-4 font-mono text-xs text-white/50">
                       <span>Score {entry.score}</span>
@@ -184,19 +193,28 @@ const Index = () => {
           )}
         </CollapsibleSection>
 
-        {/* Scope note — kept visible because it is a promise, not a detail */}
-        <section className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400">Crypto only, for now</h3>
-          <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-white/70">
-            <li>Only Binance USDT pairs are offered, because these are the instruments we can source honestly end to end</li>
-            <li>Stocks, forex and indices are a later addition — they need a data source that also provides real order flow</li>
-            <li>Cross-market feeds such as DXY, VIX and yields are not part of this scope</li>
-          </ul>
-          <p className="mt-3 text-xs text-white/50">
-            {compass.assetName} ({selectedAsset}) · Data from Binance public REST and WebSocket feeds ·{' '}
-            {compass.lastUpdated ? `Last update ${new Date(compass.lastUpdated).toLocaleTimeString()}` : 'Waiting for the first update'}
-          </p>
-        </section>
+        {/* Internal / provenance detail, hidden by default */}
+        <CollapsibleSection title="Advanced" subtitle="Data source and scope">
+          <div className="space-y-4 text-sm text-white/70">
+            <div>
+              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/40">Data source</h4>
+              <p>
+                {compass.assetName} ({selectedAsset}) · Binance public WebSocket stream
+                {compass.lastUpdated
+                  ? ` · last tick ${new Date(compass.lastUpdated).toLocaleTimeString()}`
+                  : ' · waiting for the first tick'}
+              </p>
+            </div>
+            <div>
+              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/40">Crypto only, for now</h4>
+              <ul className="list-inside list-disc space-y-1">
+                <li>Only Binance USDT pairs are offered, because these are the instruments we can source honestly end to end</li>
+                <li>Stocks, forex and indices are a later addition — they need a data source that also provides real order flow</li>
+                <li>Cross-market feeds such as DXY, VIX and yields are not part of this scope</li>
+              </ul>
+            </div>
+          </div>
+        </CollapsibleSection>
       </main>
     </div>
   );

@@ -56,7 +56,7 @@ export const BINANCE_INTERVALS: Record<string, string> = {
   '1d': '1d',
 };
 
-function formatUtc(ms: number): string {
+export function formatUtc(ms: number): string {
   const d = new Date(ms);
   const p = (n: number) => String(n).padStart(2, '0');
   // "YYYY-MM-DD HH:MM:SS" (UTC), the format the shared candle aggregation and
@@ -204,6 +204,8 @@ export interface StreamHandlers {
   onTicker?: (payload: Record<string, unknown>) => void;
   onDepth?: (payload: Record<string, unknown>) => void;
   onAggTrade?: (payload: Record<string, unknown>) => void;
+  /** In-progress kline for the subscribed interval, pushed by the exchange. */
+  onKline?: (payload: Record<string, unknown>) => void;
   onStatus?: (status: 'CONNECTING' | 'LIVE' | 'RECONNECTING' | 'OFFLINE', host?: string) => void;
 }
 
@@ -212,13 +214,26 @@ export interface StreamHandle {
 }
 
 /**
- * Opens the combined public stream (ticker + partial book depth + aggTrade),
- * falling back across hosts and reconnecting with capped backoff. Returns a
- * handle whose close() tears everything down.
+ * Opens the combined public stream (ticker + partial book depth + aggTrade +
+ * the base-interval kline), falling back across hosts and reconnecting with
+ * capped backoff. Returns a handle whose close() tears everything down.
+ *
+ * The kline stream is what replaces the old REST poll: Binance pushes the
+ * open candle on every trade, so the candle series and the indicators derived
+ * from it advance continuously instead of once a minute.
  */
-export function openMarketStream(binanceSymbol: string, handlers: StreamHandlers): StreamHandle {
+export function openMarketStream(
+  binanceSymbol: string,
+  handlers: StreamHandlers,
+  klineInterval = '5m'
+): StreamHandle {
   const lower = binanceSymbol.toLowerCase();
-  const streams = [`${lower}@ticker`, `${lower}@depth10@100ms`, `${lower}@aggTrade`].join('/');
+  const streams = [
+    `${lower}@ticker`,
+    `${lower}@depth10@100ms`,
+    `${lower}@aggTrade`,
+    `${lower}@kline_${klineInterval}`,
+  ].join('/');
 
   let ws: WebSocket | null = null;
   let closed = false;
@@ -267,6 +282,7 @@ export function openMarketStream(binanceSymbol: string, handlers: StreamHandlers
       const eventType = typeof data.e === 'string' ? data.e : '';
       if (eventType === '24hrTicker') handlers.onTicker?.(data);
       else if (eventType === 'aggTrade') handlers.onAggTrade?.(data);
+      else if (eventType === 'kline') handlers.onKline?.(data);
     };
 
     ws.onerror = () => {

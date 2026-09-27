@@ -290,14 +290,3 @@ export function directionColor(d: CompassDirection): string {
     default: return sentimentColorFromScore(50);
   }
 }
-
-export function dataLabelColor(label: DataLabel): string {
-  switch (label) {
-    case 'LIVE': return 'text-green-400';
-    case 'DELAYED': return 'text-amber-400';
-    case 'CACHED': return 'text-blue-400';
-    case 'SIMULATED': return 'text-purple-400';
-    case 'UNAVAILABLE': return 'text-red-500';
-    default: return 'text-white';
-  }
-}

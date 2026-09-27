@@ -19,7 +19,6 @@ import {
   computeLiveAnalysis,
   publishOfficialSignal,
   addToHistory,
-  secondsUntilNextMinute,
   minuteKeyFromTimestamp,
   formatCompassDirection,
   directionColor,
@@ -33,10 +32,7 @@ export interface CompassEngineHookResult {
   directionLabel: string;
   directionColor: string;
   dataLabel: DataLabel;
-  secondsUntilNextUpdate: number;
-  minutesSinceLastSignal: number;
   config: CompassEngineConfig;
-  refresh: () => void;
   setConfig: (partial: Partial<CompassEngineConfig>) => void;
   reversalSignal: ReversalSignal | null;
   srLevels: SRLevel[];
@@ -50,8 +46,9 @@ export interface CompassEngineHookResult {
   dataQuality: DataQualityScore;
   isLoading: boolean;
   error: MarketDataError | null;
-  nextRefreshIn: number;
   lastUpdated: number | null;
+  /** Health of the persistent stream backing every live figure. */
+  streamStatus: OrderFlowState['streamStatus'];
 }
 
 export interface SignalHistoryEntry {
@@ -85,12 +82,11 @@ export const useCompassSignal = (symbol = 'BTC/USDT'): CompassEngineHookResult =
   const [live, setLive] = useState<LiveAnalysisState | null>(null);
   const [history, setHistory] = useState<SignalHistoryEntry[]>([]);
   const [config, setConfig] = useState<CompassEngineConfig>(DEFAULT_COMPASS_CONFIG);
-  const [secondsUntilNextUpdate, setSecondsUntilNextUpdate] = useState(secondsUntilNextMinute());
 
   const assetConfig = findAssetConfig(symbol);
 
   const marketData = useMarketData(symbol);
-  const { data, orderFlow, dataQuality, error, isLoading, lastUpdated, nextRefreshIn } = marketData;
+  const { data, orderFlow, dataQuality, error, isLoading, lastUpdated, streamStatus } = marketData;
 
   const mtfResult = useMultiTimeframe(data.candles, '5min');
   const marketContext = useMarketContextEngine(data, orderFlow);
@@ -322,16 +318,6 @@ export const useCompassSignal = (symbol = 'BTC/USDT'): CompassEngineHookResult =
     return () => clearInterval(interval);
   }, [config]);
 
-  // Update countdown to next update
-  useEffect(() => {
-    const updateCountdown = () => {
-      setSecondsUntilNextUpdate(secondsUntilNextMinute());
-    };
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
   const directionLabel = official?.direction
     ? formatCompassDirection(official.direction)
     : live?.rawDirection
@@ -346,14 +332,6 @@ export const useCompassSignal = (symbol = 'BTC/USDT'): CompassEngineHookResult =
 
   const dataLabel: DataLabel = dataLabelFromQuality(dataQuality);
 
-  const minutesSinceLastSignal = official
-    ? Math.round((Date.now() - new Date(official.timestamp).getTime()) / 60000)
-    : 0;
-
-  const refresh = useCallback(() => {
-    marketData.refresh();
-  }, [marketData]);
-
   const setConfigAction = useCallback((partial: Partial<CompassEngineConfig>) => {
     setConfig(prev => ({ ...prev, ...partial }));
   }, []);
@@ -365,10 +343,7 @@ export const useCompassSignal = (symbol = 'BTC/USDT'): CompassEngineHookResult =
     directionLabel,
     directionColor: directionColorValue,
     dataLabel,
-    secondsUntilNextUpdate,
-    minutesSinceLastSignal,
     config,
-    refresh,
     setConfig: setConfigAction,
     reversalSignal: srReversal.reversalSignal,
     srLevels: srReversal.srLevels,
@@ -381,8 +356,8 @@ export const useCompassSignal = (symbol = 'BTC/USDT'): CompassEngineHookResult =
     dataQuality,
     isLoading,
     error,
-    nextRefreshIn,
     lastUpdated,
+    streamStatus,
   }), [
     official,
     live,
@@ -390,10 +365,7 @@ export const useCompassSignal = (symbol = 'BTC/USDT'): CompassEngineHookResult =
     directionLabel,
     directionColorValue,
     dataLabel,
-    secondsUntilNextUpdate,
-    minutesSinceLastSignal,
     config,
-    refresh,
     setConfigAction,
     srReversal.reversalSignal,
     srReversal.srLevels,
@@ -406,7 +378,7 @@ export const useCompassSignal = (symbol = 'BTC/USDT'): CompassEngineHookResult =
     dataQuality,
     isLoading,
     error,
-    nextRefreshIn,
     lastUpdated,
+    streamStatus,
   ]);
 };

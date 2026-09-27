@@ -114,19 +114,6 @@ export function reversalStateLabel(state: string): string {
   return REVERSAL_STATES[state] ?? titleCaseToken(state);
 }
 
-const DATA_LABELS: Record<string, string> = {
-  LIVE: 'Live',
-  DELAYED: 'Delayed',
-  CACHED: 'Cached',
-  SIMULATED: 'Simulated',
-  UNAVAILABLE: 'Unavailable',
-};
-
-/** Feed data label as a plain-English label. */
-export function dataLabelText(label: string): string {
-  return DATA_LABELS[label] ?? titleCaseToken(label);
-}
-
 const STREAM_STATUSES: Record<string, string> = {
   LIVE: 'Live',
   CONNECTING: 'Connecting',
