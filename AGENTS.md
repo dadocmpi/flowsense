@@ -61,8 +61,13 @@ the most reliable choice.
 The top bar holds the price and the asset tabs only. The removed "DATA: LIVE",
 "CANDLES IN" countdown and REFRESH button were obsolete once the feed became
 continuous — do not re-add them. Debug-style internals (raw data-quality
-percentages, last-bar timestamps, candle counts) belong in a collapsed
-Advanced section, not in the primary view.
+percentages, last-bar timestamps, candle counts) belong in a secondary section
+below the primary view, not in the primary view.
+
+Every panel is permanently expanded. Do not add collapsible/show-hide controls,
+accordions or any other click-to-reveal wrapper: all data must be visible on
+page load. Put secondary or debug content in its own always-visible section
+instead of hiding it.
 
 ## Real aggressor flow
 
