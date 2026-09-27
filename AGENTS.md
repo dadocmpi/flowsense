@@ -25,13 +25,29 @@ simulated.
 ## Architecture
 
 ```
-src/lib/binanceClient.ts       REST + WebSocket client, host fallback, error mapping
+src/lib/binanceClient.ts       REST seed + WebSocket client, host fallback, error mapping
 src/lib/indicators.ts          pure indicator math, no I/O
 src/lib/marketAnalysis.ts      aggregation, derived ranges, buildIndicators/buildSummary
-src/hooks/useMarketData.ts     the single data entry point (REST + live stream)
+src/hooks/useMarketData.ts     the single data entry point (REST seed + live stream)
 src/hooks/useMarketContextEngine.ts   context engine; consumes real order flow
 src/components/trading/RealtimeOrderFlow.tsx  book depth, tape, buy/sell split
 ```
+
+### Streaming, not polling
+
+There is no candle-close poll and no manual refresh. `useMarketData` makes two
+REST calls once (klines + 24h ticker) to seed history, then one combined
+WebSocket carries everything live: `@ticker` (24h stats), `@kline_5m` (the open
+candle, pushed on every trade), `@depth10@100ms` and `@aggTrade`. High-frequency
+stream messages accumulate in refs and one coalesced snapshot commits to React
+state every 150 ms, so the compass, price and order flow all move within a
+second or two of market activity without re-rendering on every trade.
+
+Do not reintroduce a refresh timer, a countdown, or an interval tied to candle
+close. If you need a derived series, aggregate it from the live candle ref.
+A dropped socket triggers the client's capped-backoff reconnect; on the next
+`LIVE` the hook re-seeds klines to refill the series, and the UI shows a
+reconnecting banner instead of presenting stale data as live.
 
 Host fallback order (REST and WS alike): `data-api.binance.vision` →
 `api.binance.com` / `stream.binance.com:9443` → `api.binance.us` /
@@ -39,6 +55,14 @@ Host fallback order (REST and WS alike): `data-api.binance.vision` →
 client remembers the first host that answers. `data-api.binance.vision` and
 `data-stream.binance.vision` are the official public market-data mirrors and are
 the most reliable choice.
+
+## UI
+
+The top bar holds the price and the asset tabs only. The removed "DATA: LIVE",
+"CANDLES IN" countdown and REFRESH button were obsolete once the feed became
+continuous — do not re-add them. Debug-style internals (raw data-quality
+percentages, last-bar timestamps, candle counts) belong in a collapsed
+Advanced section, not in the primary view.
 
 ## Real aggressor flow
 

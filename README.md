@@ -21,11 +21,24 @@ Two public, unauthenticated feeds are used, both with
 
 | Feed | Endpoint | Used for |
 | --- | --- | --- |
-| REST klines | `/api/v3/klines` | 300 × 5m candles, plus the real per-candle taker-buy split |
-| REST 24h ticker | `/api/v3/ticker/24hr` | price, change, high/low, volume |
-| WebSocket `@ticker` | combined stream | live price in between REST refreshes |
+| REST klines | `/api/v3/klines` | one-time seed of 300 × 5m candles, plus the real per-candle taker-buy split |
+| REST 24h ticker | `/api/v3/ticker/24hr` | one-time seed of price, change, high/low, volume |
+| WebSocket `@ticker` | combined stream | live 24h price, change and volume |
+| WebSocket `@kline_5m` | combined stream | the open candle, pushed on every trade |
 | WebSocket `@depth10@100ms` | combined stream | top-10 order book, refreshed 10×/s |
 | WebSocket `@aggTrade` | combined stream | aggregated trade tape (the tick-by-tick flow) |
+
+Everything is live. The two REST calls run once, to seed candle history and the
+24h statistics; after that the single combined WebSocket drives the price, the
+open candle, the indicators, the order book and the tape. The candle stream
+advances the open candle on every trade, so the compass and every derived
+indicator move continuously instead of waiting for a candle to close. The client
+reconnects with capped backoff and the UI shows a clear `reconnecting` banner
+while the feed is down, so stale data is never presented as live.
+
+`src/hooks/useMarketData.ts` accumulates the high-frequency stream messages in
+refs and commits one coalesced snapshot to React state every 150 ms. That keeps
+all four feeds live without a full re-render on every individual trade.
 
 Binance runs several regional domains and blocks some of them from some
 locations (HTTP 451). `src/lib/binanceClient.ts` tries the official hosts in
@@ -54,10 +67,10 @@ No key, no `.env`, no server-side component is required.
 ## Layout
 
 ```
-src/lib/binanceClient.ts       REST + WebSocket client, host fallback, error mapping
+src/lib/binanceClient.ts       REST seed + WebSocket client, host fallback, error mapping
 src/lib/indicators.ts          pure indicator math, no I/O
 src/lib/marketAnalysis.ts      candle aggregation, derived ranges, indicator set
-src/hooks/useMarketData.ts     the single data entry point (REST + stream)
+src/hooks/useMarketData.ts     the single data entry point (REST seed + live stream)
 src/hooks/useCompassSignal.ts  orchestrates the real hooks
 src/components/trading/RealtimeOrderFlow.tsx   order book, tape, buy/sell split
 ```

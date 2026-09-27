@@ -1,13 +1,11 @@
 import React, { useState } from 'react';
-import { ChevronDown, Radio } from 'lucide-react';
-import { MarketDataState, DataQualityScore } from '../../types/trading';
+import { ChevronDown } from 'lucide-react';
+import { MarketDataState } from '../../types/trading';
 import { cn } from '@/lib/utils';
-import { dataLabelText, marketStateLabel } from '../../lib/labels';
+import { marketStateLabel } from '../../lib/labels';
 
 interface MarketSummaryProps {
   data: MarketDataState;
-  dataQuality: DataQualityScore;
-  dataLabel: 'LIVE' | 'DELAYED' | 'CACHED' | 'SIMULATED' | 'UNAVAILABLE';
   marketState: string;
   /** Rendered inside the Advanced details area, below the technical metrics. */
   advancedExtras?: React.ReactNode;
@@ -16,14 +14,6 @@ interface MarketSummaryProps {
 function formatPrice(value: number, precision: number): string {
   return value.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
 }
-
-const FEED_TONE: Record<string, string> = {
-  LIVE: 'bg-green-400',
-  DELAYED: 'bg-amber-400',
-  CACHED: 'bg-blue-400',
-  SIMULATED: 'bg-purple-400',
-  UNAVAILABLE: 'bg-red-500',
-};
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
@@ -35,14 +25,12 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: s
 }
 
 /**
- * The one summary block. Price and change are front and centre with a live
- * status indicator; every secondary metric lives behind the Advanced details
- * toggle so it does not compete with the compass.
+ * The one summary block. Price, change and the market state are front and
+ * centre; every secondary metric lives behind the Advanced details toggle so it
+ * does not compete with the compass.
  */
 export const MarketSummary: React.FC<MarketSummaryProps> = ({
   data,
-  dataQuality,
-  dataLabel,
   marketState,
   advancedExtras,
 }) => {
@@ -73,12 +61,8 @@ export const MarketSummary: React.FC<MarketSummaryProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1.5">
-          <Radio className={cn('h-3.5 w-3.5', dataLabel === 'LIVE' ? 'text-green-400' : 'text-white/40')} />
-          <span className={cn('h-2 w-2 rounded-full', FEED_TONE[dataLabel] ?? 'bg-white/40', dataLabel === 'LIVE' && 'animate-pulse')} />
-          <span className="text-xs font-semibold text-white/70">{dataLabelText(dataLabel)}</span>
-          <span className="text-xs text-white/30">•</span>
-          <span className="text-xs text-white/50">{marketStateLabel(marketState)}</span>
+        <div className="rounded-full border border-white/[0.06] bg-white/[0.02] px-3 py-1.5">
+          <span className="text-xs font-semibold text-white/70">{marketStateLabel(marketState)}</span>
         </div>
       </div>
 
@@ -105,20 +89,10 @@ export const MarketSummary: React.FC<MarketSummaryProps> = ({
             </div>
 
             <div>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/40">Data quality</h4>
-              <Metric
-                label="Overall quality"
-                value={`${dataQuality.overall}%`}
-                tone={dataQuality.overall >= 80 ? 'text-green-400' : dataQuality.overall >= 60 ? 'text-amber-400' : 'text-red-500'}
-              />
-              <Metric label="Source" value={dataQuality.metrics.source === 'BINANCE' ? 'Binance' : 'Unavailable'} />
-              <Metric label="Status" value={dataQuality.metrics.freshness === 'LIVE' ? 'Live' : dataQuality.metrics.freshness.toLowerCase()} />
-              <Metric label="Last bar" value={data.datetime || 'Unavailable'} />
-              <Metric label="Candles loaded" value={String(data.candles.length)} />
+              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/40">Data source</h4>
+              {advancedExtras}
             </div>
           </div>
-
-          {advancedExtras && <div className="mt-6 border-t border-white/[0.06] pt-6">{advancedExtras}</div>}
         </div>
       )}
     </section>
