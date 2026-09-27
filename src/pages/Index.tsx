@@ -4,7 +4,7 @@ import { CompassDisplay } from '../components/compass/CompassDisplay';
 import { MarketSummary } from '../components/compass/MarketSummary';
 import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
 import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
-import { CollapsibleSection } from '../components/common/CollapsibleSection';
+import { Section } from '../components/common/Section';
 import { DEFAULT_SYMBOL, SUPPORTED_ASSETS } from '../types/trading';
 import { cn } from '@/lib/utils';
 import { AlertTriangle } from 'lucide-react';
@@ -115,8 +115,8 @@ const Index = () => {
           isStale={compass.official?.isStale || false}
         />
 
-        {/* Market summary — kept as-is; the reversal logic still feeds the
-            compass internally, it no longer renders its own panel. */}
+        {/* Market summary — every metric renders expanded; the reversal logic
+            still feeds the compass internally. */}
         <MarketSummary
           data={compass.marketData}
           marketState={compass.official?.marketRegime || compass.live?.marketRegime || 'UNKNOWN'}
@@ -129,17 +129,17 @@ const Index = () => {
           }
         />
 
-        {/* Secondary detail — collapsed so it does not compete with the compass */}
-        <CollapsibleSection title="Technical indicators" subtitle="Oscillators, moving averages, volume and volatility">
+        {/* Secondary detail — always expanded so no data is hidden */}
+        <Section title="Technical indicators" subtitle="Oscillators, moving averages, volume and volatility">
           <TechnicalDetailsTable
             oscillators={compass.marketData.oscillators}
             movingAverages={compass.marketData.movingAverages}
             volumeIndicators={compass.marketData.volumeIndicators}
             isLoading={compass.isLoading}
           />
-        </CollapsibleSection>
+        </Section>
 
-        <CollapsibleSection
+        <Section
           title="Real-time order flow"
           subtitle={
             compass.orderFlow.isLive
@@ -152,9 +152,9 @@ const Index = () => {
             precision={compass.precision}
             quote={compass.marketData.currency}
           />
-        </CollapsibleSection>
+        </Section>
 
-        <CollapsibleSection title="Signal history" subtitle="Recent published compass signals">
+        <Section title="Signal history" subtitle="Recent published compass signals">
           {compass.history.length === 0 ? (
             <div className="py-8 text-center text-body italic text-white/50">
               No signals yet — the compass publishes an official read at each minute boundary
@@ -191,10 +191,10 @@ const Index = () => {
                 ))}
             </div>
           )}
-        </CollapsibleSection>
+        </Section>
 
-        {/* Internal / provenance detail, hidden by default */}
-        <CollapsibleSection title="Advanced" subtitle="Data source and scope">
+        {/* Provenance detail — always visible */}
+        <Section title="Data source and scope" subtitle="Provenance and coverage">
           <div className="space-y-4 text-body text-white/70">
             <div>
               <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Data source</h4>
@@ -214,7 +214,7 @@ const Index = () => {
               </ul>
             </div>
           </div>
-        </CollapsibleSection>
+        </Section>
       </main>
     </div>
   );

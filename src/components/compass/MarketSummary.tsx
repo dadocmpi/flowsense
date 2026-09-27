@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import { ChevronDown } from 'lucide-react';
+import React from 'react';
 import { MarketDataState } from '../../types/trading';
 import { cn } from '@/lib/utils';
 import { marketStateLabel } from '../../lib/labels';
@@ -7,7 +6,7 @@ import { marketStateLabel } from '../../lib/labels';
 interface MarketSummaryProps {
   data: MarketDataState;
   marketState: string;
-  /** Rendered inside the Advanced details area, below the technical metrics. */
+  /** Rendered with the technical metrics, under the data source heading. */
   advancedExtras?: React.ReactNode;
 }
 
@@ -26,16 +25,14 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: s
 
 /**
  * The one summary block. Price, change and the market state are front and
- * centre; every secondary metric lives behind the Advanced details toggle so it
- * does not compete with the compass.
+ * centre; every secondary metric renders below them, always expanded, so no
+ * figure is hidden behind a toggle.
  */
 export const MarketSummary: React.FC<MarketSummaryProps> = ({
   data,
   marketState,
   advancedExtras,
 }) => {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-
   const lastCandle = data.candles[data.candles.length - 1];
   const isUp = data.percentChange >= 0;
 
@@ -66,35 +63,23 @@ export const MarketSummary: React.FC<MarketSummaryProps> = ({
         </div>
       </div>
 
-      <button
-        type="button"
-        aria-expanded={advancedOpen}
-        onClick={() => setAdvancedOpen(prev => !prev)}
-        className="mt-5 flex w-full items-center justify-between rounded-lg border border-white/[0.06] bg-white/[0.02] px-4 py-2.5 text-body font-semibold text-white/70 transition-colors hover:bg-white/[0.04]"
-      >
-        <span>{advancedOpen ? 'Hide details' : 'Advanced details'}</span>
-        <ChevronDown className={cn('h-4 w-4 transition-transform', advancedOpen && 'rotate-180')} />
-      </button>
+      <div className="mt-5 border-t border-white/[0.06] pt-5">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2 md:gap-y-0">
+          <div>
+            <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Technical metrics</h4>
+            <Metric label="Average true range (14)" value={data.atr !== null ? formatPrice(data.atr, data.precision) : 'Unavailable'} />
+            <Metric label="Volume-weighted average price" value={data.vwap !== null ? formatPrice(data.vwap, data.precision) : 'Unavailable'} />
+            <Metric label="Volume point of control" value={data.pointOfControl !== null ? formatPrice(data.pointOfControl, data.precision) : 'Unavailable'} />
+            <Metric label="Session range" value={`${formatPrice(data.low, data.precision)} – ${formatPrice(data.high, data.precision)}`} />
+            <Metric label="Candle volume" value={lastCandle && lastCandle.volume > 0 ? lastCandle.volume.toLocaleString() : 'Unavailable'} />
+          </div>
 
-      {advancedOpen && (
-        <div className="pt-4">
-          <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
-            <div>
-              <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Technical metrics</h4>
-              <Metric label="Average true range (14)" value={data.atr !== null ? formatPrice(data.atr, data.precision) : 'Unavailable'} />
-              <Metric label="Volume-weighted average price" value={data.vwap !== null ? formatPrice(data.vwap, data.precision) : 'Unavailable'} />
-              <Metric label="Volume point of control" value={data.pointOfControl !== null ? formatPrice(data.pointOfControl, data.precision) : 'Unavailable'} />
-              <Metric label="Session range" value={`${formatPrice(data.low, data.precision)} – ${formatPrice(data.high, data.precision)}`} />
-              <Metric label="Candle volume" value={lastCandle && lastCandle.volume > 0 ? lastCandle.volume.toLocaleString() : 'Unavailable'} />
-            </div>
-
-            <div>
-              <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Data source</h4>
-              {advancedExtras}
-            </div>
+          <div>
+            <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Data source</h4>
+            {advancedExtras}
           </div>
         </div>
-      )}
+      </div>
     </section>
   );
 };
