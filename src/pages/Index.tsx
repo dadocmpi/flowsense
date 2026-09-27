@@ -2,12 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useCompassSignal } from '../hooks/useCompassSignal';
 import { CompassDisplay } from '../components/compass/CompassDisplay';
 import { MarketSummary } from '../components/compass/MarketSummary';
-import { ReversalPanel } from '../components/compass/ReversalPanel';
 import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
 import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
 import { CollapsibleSection } from '../components/common/CollapsibleSection';
 import { DEFAULT_SYMBOL, SUPPORTED_ASSETS } from '../types/trading';
-import { factorCategoryLabel, factorNameLabel, verdictLabel } from '../lib/labels';
 import { cn } from '@/lib/utils';
 import { RefreshCw, AlertTriangle } from 'lucide-react';
 
@@ -43,8 +41,6 @@ const Index = () => {
   const [selectedAsset, setSelectedAsset] = useState(DEFAULT_SYMBOL);
 
   const compass = useCompassSignal(selectedAsset);
-  const factors = compass.live?.factors || [];
-  const direction = compass.official?.direction || compass.live?.rawDirection || 'NEUTRAL';
 
   useEffect(() => {
     // Nothing to reset now that the secondary panels keep their own state,
@@ -105,86 +101,26 @@ const Index = () => {
       )}
 
       <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 p-4 sm:p-8">
-        {/* Hero: the compass signal */}
+        {/* Hero: the compass signal. It is the single source of truth — every
+            element is derived from the live aggregated score. */}
         <CompassDisplay
-          direction={direction}
-          score={compass.official?.score || compass.live?.rawScore || 50}
-          confidence={compass.official?.confidence || 0}
-          price={compass.price}
-          precision={compass.precision}
+          score={compass.live?.rawScore ?? compass.official?.score ?? 50}
+          dataQuality={compass.dataQuality.overall}
           timestamp={compass.official?.timestamp || Date.now()}
           dataLabel={compass.dataLabel}
           secondsUntilNextUpdate={compass.secondsUntilNextUpdate}
           minutesSinceLastSignal={compass.minutesSinceLastSignal}
-          reason={compass.official?.reason || ''}
           isStale={compass.official?.isStale || false}
         />
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          {/* ONE consolidated summary, with secondary metrics behind a toggle */}
-          <div className="lg:col-span-7">
-            <MarketSummary
-              data={compass.marketData}
-              dataQuality={compass.dataQuality}
-              dataLabel={compass.dataLabel}
-              marketState={compass.official?.marketRegime || compass.live?.marketRegime || 'UNKNOWN'}
-              advancedExtras={
-                <ReversalPanel
-                  reversalSignal={compass.reversalSignal}
-                  srLevels={compass.srLevels}
-                  price={compass.price}
-                  precision={compass.precision}
-                />
-              }
-            />
-          </div>
-
-          {/* Market factors: a verdict and a strength bar per row */}
-          <div className="lg:col-span-5">
-            <section className="h-full rounded-2xl border border-white/[0.08] bg-[#0b0c10] p-6">
-              <h3 className="mb-4 text-sm font-bold text-white">Market factors</h3>
-
-              {factors.length === 0 ? (
-                <div className="py-8 text-center text-sm italic text-white/50">
-                  {compass.isLoading ? 'Loading market data…' : 'No factors available — waiting for data'}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {factors.map((factor, index) => {
-                    const tone = verdictTone(factor.direction);
-                    const strength = Math.max(0, Math.min(100, factor.weight));
-                    return (
-                      <div
-                        key={`${factor.name}-${index}`}
-                        className="rounded-xl border border-white/[0.04] bg-white/[0.02] p-3"
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-white">
-                              {factorNameLabel(factor.name)}
-                            </div>
-                            <div className="text-[10px] uppercase tracking-wider text-white/40">
-                              {factorCategoryLabel(factor.category)}
-                            </div>
-                          </div>
-                          <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-bold', tone.badge)}>
-                            {verdictLabel(factor.direction)}
-                          </span>
-                        </div>
-                        <div className="mt-2.5 flex items-center gap-2">
-                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                            <div className={cn('h-full rounded-full', tone.bar)} style={{ width: `${strength}%` }} />
-                          </div>
-                          <span className="w-8 text-right font-mono text-[10px] text-white/40">{strength}%</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          </div>
-        </div>
+        {/* Market summary — kept as-is; the reversal logic still feeds the
+            compass internally, it no longer renders its own panel. */}
+        <MarketSummary
+          data={compass.marketData}
+          dataQuality={compass.dataQuality}
+          dataLabel={compass.dataLabel}
+          marketState={compass.official?.marketRegime || compass.live?.marketRegime || 'UNKNOWN'}
+        />
 
         {/* Secondary detail — collapsed so it does not compete with the compass */}
         <CollapsibleSection title="Technical indicators" subtitle="Oscillators, moving averages, volume and volatility">

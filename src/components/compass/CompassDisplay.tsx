@@ -1,20 +1,24 @@
 import React from 'react';
-import { CompassDirection, directionColor } from '../../lib/compassEngine';
-import { buildTradePlan } from '../../lib/tradePlan';
-import { dataLabelText, plainReason } from '../../lib/labels';
+import {
+  CompassDirection,
+  scoreToDirection,
+  needleAngleFromScore,
+  sentimentColorFromScore,
+  confidenceFromScore,
+  clampScore,
+} from '../../lib/compassEngine';
+import { dataLabelText } from '../../lib/labels';
 import { cn } from '@/lib/utils';
 
 interface CompassDisplayProps {
-  direction: CompassDirection;
+  /** The single aggregated signal value, 0 (strong sell) to 100 (strong buy). */
   score: number;
-  confidence: number;
-  price: number;
-  precision: number;
+  /** Data quality 0-100, used only to scale the confidence ceiling. */
+  dataQuality: number;
   timestamp: number;
   dataLabel: 'LIVE' | 'DELAYED' | 'CACHED' | 'SIMULATED' | 'UNAVAILABLE';
   secondsUntilNextUpdate: number;
   minutesSinceLastSignal: number;
-  reason: string;
   isStale: boolean;
 }
 
@@ -34,66 +38,34 @@ const GLOW_CLASS: Record<string, string> = {
   '#ef5350': 'from-[#ef5350]/30',
 };
 
-const PANEL_CLASS: Record<string, string> = {
-  '#26a69a': 'bg-[#26a69a]/15',
-  '#4db6ac': 'bg-[#26a69a]/10',
-  '#f59e0b': 'bg-amber-500/10',
-  '#e57373': 'bg-[#ef5350]/10',
-  '#ef5350': 'bg-[#ef5350]/15',
-};
-
-function strengthLabel(confidence: number): string {
-  if (confidence >= 75) return 'Strong';
-  if (confidence >= 55) return 'Moderate';
-  if (confidence >= 35) return 'Weak';
-  return 'Very weak';
-}
-
-function formatPrice(value: number, precision: number): string {
-  return value.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
-}
-
 /**
- * The hero element of the dashboard: the signal compass. It carries the
- * direction, a strength read, one plain-English reason and the entry / stop /
- * target plan as compact inline stats.
+ * The hero element of the dashboard. Everything visible here — the needle
+ * angle, the colour it points into, the direction label and the confidence
+ * badge — is derived from the same `score`. There is no second path that could
+ * disagree, so the gauge reads as one continuous scale: far left = strong sell
+ * (red), centre = neutral (amber), far right = strong buy (green).
  */
 export const CompassDisplay: React.FC<CompassDisplayProps> = ({
-  direction,
   score,
-  confidence,
-  price,
-  precision,
+  dataQuality,
   timestamp,
   dataLabel,
   secondsUntilNextUpdate,
   minutesSinceLastSignal,
-  reason,
   isStale,
 }) => {
-  const color = directionColor(direction);
-  const plan = buildTradePlan(direction, price);
+  const value = clampScore(score);
+  const direction = scoreToDirection(value);
+  const needleAngle = needleAngleFromScore(value);
+  const color = sentimentColorFromScore(value);
+  const confidence = confidenceFromScore(value, dataQuality);
   const time = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  // Needle position: score is 0-100 mapped onto the -90..+90 degree sweep.
-  const needleAngle = -90 + (score / 100) * 180;
-
-  const stats = [
-    { label: 'Entry', value: plan ? formatPrice(plan.entryHigh, precision) : '--', tone: 'text-white' },
-    { label: 'Stop', value: plan ? formatPrice(plan.stopLoss, precision) : '--', tone: 'text-red-400' },
-    { label: 'Target', value: plan ? formatPrice(plan.target, precision) : '--', tone: 'text-green-400' },
-    {
-      label: 'Reward / risk',
-      value: plan && plan.ratio > 0 ? `1 : ${plan.ratio.toFixed(2)}` : '--',
-      tone: plan && plan.ratio >= 1.5 ? 'text-green-400' : plan && plan.ratio >= 1 ? 'text-amber-400' : 'text-red-400',
-    },
-  ];
-
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0b0c10] px-6 py-10 shadow-[0_25px_60px_rgba(0,0,0,0.9)] backdrop-blur-2xl sm:px-10">
+    <section className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0b0c10] px-6 py-10 shadow-[0_25px_60px_rgba(0,0,0,0.9)] backdrop-blur-2xl sm:px-10 sm:py-14">
       <div
         className={cn(
-          'pointer-events-none absolute -top-32 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-gradient-to-b to-transparent blur-3xl transition-all duration-700',
+          'pointer-events-none absolute -top-40 left-1/2 h-[30rem] w-[30rem] -translate-x-1/2 rounded-full bg-gradient-to-b to-transparent blur-3xl transition-all duration-700',
           GLOW_CLASS[color] ?? 'from-amber-500/15'
         )}
       />
@@ -102,31 +74,48 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
         <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/40">Signal Compass</p>
 
         {/* Gauge */}
-        <div className="relative my-4 w-full max-w-[420px]">
-          <div className="relative mx-auto h-44 w-80 sm:w-96">
+        <div className="relative my-6 w-full max-w-[560px]">
+          <div className="relative mx-auto aspect-[2/1] w-full">
             <svg className="h-full w-full overflow-visible" viewBox="0 0 300 150">
+              <defs>
+                <linearGradient id="compassArc" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#ef5350" />
+                  <stop offset="25%" stopColor="#e57373" />
+                  <stop offset="50%" stopColor="#f59e0b" />
+                  <stop offset="75%" stopColor="#4db6ac" />
+                  <stop offset="100%" stopColor="#26a69a" />
+                </linearGradient>
+              </defs>
+
+              {/* Full-scale track */}
               <path
                 d="M 55 135 A 95 95 0 0 1 245 135"
                 fill="none"
                 stroke="rgba(255, 255, 255, 0.05)"
-                strokeWidth="1"
-                strokeDasharray="2 4"
+                strokeWidth="12"
+                strokeLinecap="round"
               />
+
+              {/* Continuous colour scale the needle sweeps across */}
+              <path
+                d="M 55 135 A 95 95 0 0 1 245 135"
+                fill="none"
+                stroke="url(#compassArc)"
+                strokeWidth="12"
+                strokeLinecap="round"
+                opacity="0.85"
+              />
+
+              {/* Tick marks, coloured by the same scale */}
               {Array.from({ length: 35 }, (_, i) => {
                 const angleRad = ((-180 + (i / 34) * 180) * Math.PI) / 180;
                 const isMajor = i % 7 === 0 || i === 0 || i === 34;
-                const rOuter = isMajor ? 115 : 108;
+                const rOuter = isMajor ? 122 : 117;
                 const x1 = 150 + 95 * Math.cos(angleRad);
                 const y1 = 135 + 95 * Math.sin(angleRad);
                 const x2 = 150 + rOuter * Math.cos(angleRad);
                 const y2 = 135 + rOuter * Math.sin(angleRad);
-                const ratio = i / 34;
-                let tickColor = '#f59e0b';
-                if (ratio < 0.22) tickColor = '#ef5350';
-                else if (ratio < 0.42) tickColor = '#e57373';
-                else if (ratio < 0.58) tickColor = '#f59e0b';
-                else if (ratio < 0.78) tickColor = '#4db6ac';
-                else tickColor = '#26a69a';
+                const tickColor = sentimentColorFromScore((i / 34) * 100);
 
                 return (
                   <line
@@ -142,67 +131,52 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
                   />
                 );
               })}
+
+              {/* Needle — rotation, colour and label all come from `value` */}
+              <g
+                style={{
+                  transform: `rotate(${needleAngle}deg)`,
+                  transformOrigin: '150px 135px',
+                  transformBox: 'view-box',
+                  transition: 'transform 900ms cubic-bezier(0.22, 1, 0.36, 1)',
+                }}
+              >
+                <polygon points="150,44 158,135 142,135" fill={color} />
+                <circle cx="150" cy="135" r="9" fill={color} />
+              </g>
+              <circle cx="150" cy="135" r="15" fill="#07080a" stroke={color} strokeWidth="2.5" />
             </svg>
-
-            <div
-              className="pointer-events-none absolute bottom-2 left-1/2 z-30 -ml-[3px] flex h-32 w-1.5 origin-bottom flex-col items-center justify-start"
-              style={{ transform: `rotate(${needleAngle}deg)` }}
-            >
-              <div className="h-0 w-0 border-b-[28px] border-l-[6px] border-r-[6px] border-b-amber-400 border-l-transparent border-r-transparent drop-shadow-[0_0_12px_rgba(251,191,36,1)]" />
-              <div className="h-[90px] w-[2.5px] bg-gradient-to-t from-amber-500/20 via-amber-400/90 to-amber-300" />
-            </div>
-
-            <div className="absolute -bottom-2 left-1/2 z-40 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border-2 border-amber-400 bg-[#07080a] shadow-[0_0_20px_rgba(245,158,11,0.6)]">
-              <div className="h-3.5 w-3.5 animate-pulse rounded-full bg-amber-400" />
-            </div>
           </div>
 
-          <div className="mt-2 flex justify-between px-2 text-[10px] font-semibold uppercase tracking-wider text-white/35">
+          <div className="mt-2 flex justify-between px-2 text-[11px] font-semibold uppercase tracking-wider text-white/35">
             <span>Strong sell</span>
             <span>Neutral</span>
             <span>Strong buy</span>
           </div>
         </div>
 
-        {/* Direction */}
-        <div className={cn('w-full rounded-2xl border border-white/[0.06] px-6 py-4 text-center backdrop-blur-xl', PANEL_CLASS[color] ?? 'bg-amber-500/10')}>
-          <span className="block text-3xl font-black uppercase tracking-widest drop-shadow-md sm:text-4xl" style={{ color }}>
+        {/* Direction and confidence — both derived from the same score */}
+        <div
+          className="mt-2 flex flex-col items-center gap-2 rounded-2xl border border-white/[0.06] px-10 py-5 text-center backdrop-blur-xl transition-colors duration-700"
+          style={{ backgroundColor: `${color}1a` }}
+        >
+          <span
+            className="block text-4xl font-black uppercase tracking-widest drop-shadow-md transition-colors duration-700 sm:text-5xl"
+            style={{ color }}
+          >
             {DIRECTION_WORD[direction]}
           </span>
-          <div className="mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-white/50">
-            <span>{strengthLabel(confidence)} conviction</span>
-            <span className="text-white/20">|</span>
-            <span>{confidence}% confidence</span>
-            <span className="text-white/20">|</span>
-            <span>Score {score}</span>
-            {isStale && (
-              <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-semibold text-amber-400">
-                Stale
-              </span>
-            )}
-          </div>
+          <span className="font-mono text-2xl font-bold text-white/90 sm:text-3xl">{confidence}% confidence</span>
         </div>
 
-        {/* One plain-English reason line */}
-        <p className="mt-4 max-w-2xl text-center text-sm leading-relaxed text-white/70">
-          {reason ? plainReason(reason) : 'Waiting for enough live factors to publish a signal.'}
-        </p>
-
-        {/* Compact inline plan */}
-        <div className="mt-8 grid w-full grid-cols-2 gap-px overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.04] sm:grid-cols-4">
-          {stats.map(stat => (
-            <div key={stat.label} className="bg-[#0b0c10] px-4 py-3 text-center">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-white/40">{stat.label}</div>
-              <div className={cn('mt-1 font-mono text-sm font-bold sm:text-base', stat.tone)}>{stat.value}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-[11px] text-white/40">
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-[11px] text-white/40">
           <span>As of {time}</span>
           <span>Feed {dataLabelText(dataLabel)}</span>
           <span>Next update in {secondsUntilNextUpdate}s</span>
           <span>Signal age {minutesSinceLastSignal} min</span>
+          <span className={cn('font-semibold', isStale ? 'text-amber-400' : 'text-green-400')}>
+            State: {isStale ? 'Stale' : 'Active'}
+          </span>
         </div>
       </div>
     </section>

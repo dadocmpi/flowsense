@@ -42,6 +42,35 @@ export function scoreToDirection(score: number, config: CompassEngineConfig = DE
   return 'NEUTRAL';
 }
 
+/** Clamp any raw reading onto the compass' 0-100 scale. */
+export function clampScore(score: number): number {
+  if (!Number.isFinite(score)) return 50;
+  return Math.max(0, Math.min(100, score));
+}
+
+/**
+ * The single geometric mapping for the gauge: a 0-100 score becomes the
+ * needle's rotation in degrees, where 0 is the far-left (strong sell) end,
+ * 50 is straight up (neutral) and 100 is the far-right (strong buy) end.
+ * Every consumer of the needle MUST use this so position can never disagree
+ * with the score it was derived from.
+ */
+export function needleAngleFromScore(score: number): number {
+  return -90 + (clampScore(score) / 100) * 180;
+}
+
+/**
+ * Confidence is derived from the same score that positions the needle, so the
+ * badge can never contradict the gauge: a reading at neutral cannot claim high
+ * confidence and a reading pinned to an extreme cannot claim low confidence.
+ * Data quality scales the ceiling without changing the shape.
+ */
+export function confidenceFromScore(score: number, dataQuality: number): number {
+  const distanceFromNeutral = Math.abs(clampScore(score) - 50) / 50;
+  const quality = Math.max(0, Math.min(100, Number.isFinite(dataQuality) ? dataQuality : 0)) / 100;
+  return Math.round(quality * (0.35 + 0.65 * distanceFromNeutral) * 100);
+}
+
 export function computeLiveAnalysis(
   params: {
     factors: FactorContribution[];
@@ -132,20 +161,16 @@ export function publishOfficialSignal(
     return null;
   }
 
-  // Apply anti-noise: only change if score difference exceeds threshold
-  let direction = live.rawDirection;
+  // The published direction is always derived from the published score. The
+  // anti-noise threshold used to retain the previous direction while letting
+  // the score move on, which let the gauge and its label drift apart; the
+  // display now derives every element from this one score, so they cannot.
+  const direction = scoreToDirection(live.rawScore, config);
   let reason = 'New minute snapshot — standard recalculation';
 
-  if (previousOfficial) {
+  if (previousOfficial && direction !== previousOfficial.direction) {
     const scoreDiff = Math.abs(live.rawScore - previousOfficial.score);
-    if (scoreDiff < config.directionChangeThreshold && live.rawDirection === previousOfficial.direction) {
-      direction = previousOfficial.direction;
-      reason = `Score change ${scoreDiff.toFixed(0)} pts below threshold ${config.directionChangeThreshold} — direction retained`;
-    } else if (scoreDiff >= config.directionChangeThreshold && live.rawDirection !== previousOfficial.direction) {
-      reason = `Score change ${scoreDiff.toFixed(0)} pts exceeds threshold — direction changed from ${previousOfficial.direction} to ${direction}`;
-    } else if (live.rawDirection !== previousOfficial.direction) {
-      reason = `Direction changed from ${previousOfficial.direction} to ${direction}`;
-    }
+    reason = `Score change ${scoreDiff.toFixed(0)} pts — direction changed from ${previousOfficial.direction} to ${direction}`;
   }
 
   const factorSummary = live.factors
@@ -157,9 +182,10 @@ export function publishOfficialSignal(
     minuteKey: live.minuteKey,
     direction,
     score: live.rawScore,
-    // Confidence blends data quality with how one-sided the factors are, so a
-    // contested reading cannot present as fully confident.
-    confidence: Math.min(100, Math.round(live.dataQuality * (live.factorAgreement / 100))),
+    // Confidence is derived from the published score, never from the raw
+    // factor agreement alone: whatever positions the needle also sets the
+    // confidence, so the label and the gauge can never disagree.
+    confidence: confidenceFromScore(live.rawScore, live.dataQuality),
     factorSummary,
     timestamp: live.timestamp,
     price: live.price,
@@ -213,14 +239,55 @@ export function formatCompassDirection(d: CompassDirection): string {
   return d.replace('_', ' ');
 }
 
+/**
+ * The compass scale is one continuous 0-100 range. These anchor colours sit on
+ * that range at the five direction centres; every needle, tick and label colour
+ * is interpolated from THIS list, so the colour the needle points into and the
+ * colour of the label are always the same function of the same score.
+ */
+const SENTIMENT_ANCHORS: { score: number; color: string }[] = [
+  { score: 0, color: '#ef5350' },   // strong sell
+  { score: 25, color: '#e57373' },  // sell
+  { score: 50, color: '#f59e0b' },  // neutral
+  { score: 75, color: '#4db6ac' },  // buy
+  { score: 100, color: '#26a69a' }, // strong buy
+];
+
+function hexToRgb(hex: string): [number, number, number] {
+  const value = hex.replace('#', '');
+  return [
+    parseInt(value.slice(0, 2), 16),
+    parseInt(value.slice(2, 4), 16),
+    parseInt(value.slice(4, 6), 16),
+  ];
+}
+
+/** Colour of the scale at a given score, interpolated between the anchors. */
+export function sentimentColorFromScore(score: number): string {
+  const s = clampScore(score);
+  for (let i = 0; i < SENTIMENT_ANCHORS.length - 1; i += 1) {
+    const from = SENTIMENT_ANCHORS[i];
+    const to = SENTIMENT_ANCHORS[i + 1];
+    if (s <= to.score) {
+      const t = to.score === from.score ? 0 : (s - from.score) / (to.score - from.score);
+      const [r1, g1, b1] = hexToRgb(from.color);
+      const [r2, g2, b2] = hexToRgb(to.color);
+      const toHex = (n: number) => Math.round(n).toString(16).padStart(2, '0');
+      return `#${toHex(r1 + (r2 - r1) * t)}${toHex(g1 + (g2 - g1) * t)}${toHex(b1 + (b2 - b1) * t)}`;
+    }
+  }
+  return SENTIMENT_ANCHORS[SENTIMENT_ANCHORS.length - 1].color;
+}
+
+/** Direction colour, taken from the same scale the needle is drawn on. */
 export function directionColor(d: CompassDirection): string {
   switch (d) {
-    case 'STRONG_BUY': return '#26a69a';
-    case 'BUY': return '#4db6ac';
-    case 'NEUTRAL': return '#f59e0b';
-    case 'SELL': return '#e57373';
-    case 'STRONG_SELL': return '#ef5350';
-    default: return '#f59e0b';
+    case 'STRONG_BUY': return sentimentColorFromScore(100);
+    case 'BUY': return sentimentColorFromScore(75);
+    case 'NEUTRAL': return sentimentColorFromScore(50);
+    case 'SELL': return sentimentColorFromScore(25);
+    case 'STRONG_SELL': return sentimentColorFromScore(0);
+    default: return sentimentColorFromScore(50);
   }
 }
 
