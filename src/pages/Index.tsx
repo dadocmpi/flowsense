@@ -53,14 +53,14 @@ const Index = () => {
       <header className="sticky top-0 z-50 w-full border-b border-white/[0.04] bg-[#07080a]/95 px-4 py-3 backdrop-blur-md sm:px-8">
         <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="text-sm font-black tracking-tight">FlowSense</span>
+            <span className="text-title font-black tracking-tight">FlowSense</span>
             <div className="flex flex-wrap items-center gap-1.5">
               {SUPPORTED_ASSETS.map(asset => (
                 <button
                   key={asset.symbol}
                   onClick={() => setSelectedAsset(asset.symbol)}
                   className={cn(
-                    'rounded-lg px-2.5 py-1 text-xs font-bold transition-all',
+                    'rounded-lg px-2.5 py-1 text-label font-bold transition-all',
                     selectedAsset === asset.symbol
                       ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.4)]'
                       : 'border border-white/[0.04] bg-white/[0.02] text-white/60 hover:bg-white/[0.04] hover:text-white'
@@ -72,8 +72,8 @@ const Index = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-4 text-xs">
-            <span className="font-mono text-sm font-semibold text-white/90">
+          <div className="flex items-center gap-4 text-label">
+            <span className="font-mono text-data font-bold text-white/90">
               {compass.price > 0
                 ? compass.price.toLocaleString(undefined, {
                     minimumFractionDigits: compass.precision,
@@ -86,7 +86,7 @@ const Index = () => {
       </header>
 
       {compass.error && (
-        <div className="flex w-full items-center gap-3 border-b border-red-500/30 bg-red-500/10 px-4 py-3 text-sm sm:px-8">
+        <div className="flex w-full items-center gap-3 border-b border-red-500/30 bg-red-500/10 px-4 py-3 text-body sm:px-8">
           <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
           <span className="font-bold text-red-200">{ERROR_TITLES[compass.error.kind] || 'Error'}:</span>
           <span className="text-red-200/80">{compass.error.message}</span>
@@ -95,7 +95,7 @@ const Index = () => {
 
       {/* A dropped feed must never read as a quiet market. */}
       {compass.streamStatus !== 'LIVE' && !compass.error && (
-        <div className="flex w-full items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs sm:px-8">
+        <div className="flex w-full items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-label sm:px-8">
           <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
           <span className="font-semibold text-amber-200">
             {compass.streamStatus === 'OFFLINE' ? 'Market feed offline' : 'Reconnecting to the market feed'} — showing the last data received
@@ -103,7 +103,7 @@ const Index = () => {
         </div>
       )}
 
-      <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 p-4 sm:p-8">
+      <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-panel p-panel sm:gap-block sm:p-panel-lg">
         {/* Hero: the compass signal. It is the single source of truth — every
             element is derived from the live aggregated score, which now moves
             with every trade rather than once a minute. */}
@@ -121,7 +121,7 @@ const Index = () => {
           data={compass.marketData}
           marketState={compass.official?.marketRegime || compass.live?.marketRegime || 'UNKNOWN'}
           advancedExtras={
-            <p className="text-sm text-white/60">
+            <p className="text-body text-white/60">
               {compass.dataQuality.metrics.source === 'BINANCE'
                 ? 'Binance public WebSocket stream'
                 : 'Unavailable — no feed'}
@@ -156,7 +156,7 @@ const Index = () => {
 
         <CollapsibleSection title="Signal history" subtitle="Recent published compass signals">
           {compass.history.length === 0 ? (
-            <div className="py-8 text-center text-sm italic text-white/50">
+            <div className="py-8 text-center text-body italic text-white/50">
               No signals yet — the compass publishes an official read at each minute boundary
             </div>
           ) : (
@@ -167,7 +167,7 @@ const Index = () => {
                 .map((entry, index) => (
                   <div
                     key={`${entry.minuteKey}-${index}`}
-                    className="flex items-center justify-between rounded-xl border border-white/[0.04] bg-white/[0.02] p-3 text-sm"
+                    className="flex items-center justify-between rounded-xl border border-white/[0.04] bg-white/[0.02] p-3 text-body"
                   >
                     <div className="flex items-center gap-3">
                       <span className={cn('font-semibold', verdictTone(
@@ -179,11 +179,11 @@ const Index = () => {
                       ).text)}>
                         {DIRECTION_WORDS[entry.direction] ?? entry.direction}
                       </span>
-                      <span className="font-mono text-xs text-white/40">
+                      <span className="font-mono text-label text-white/40">
                         {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
-                    <div className="flex items-center gap-4 font-mono text-xs text-white/50">
+                    <div className="flex items-center gap-4 font-mono text-label text-white/50">
                       <span>Score {entry.score}</span>
                       <span>{entry.confidence}%</span>
                     </div>
@@ -195,9 +195,9 @@ const Index = () => {
 
         {/* Internal / provenance detail, hidden by default */}
         <CollapsibleSection title="Advanced" subtitle="Data source and scope">
-          <div className="space-y-4 text-sm text-white/70">
+          <div className="space-y-4 text-body text-white/70">
             <div>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/40">Data source</h4>
+              <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Data source</h4>
               <p>
                 {compass.assetName} ({selectedAsset}) · Binance public WebSocket stream
                 {compass.lastUpdated
@@ -206,7 +206,7 @@ const Index = () => {
               </p>
             </div>
             <div>
-              <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-white/40">Crypto only, for now</h4>
+              <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Crypto only, for now</h4>
               <ul className="list-inside list-disc space-y-1">
                 <li>Only Binance USDT pairs are offered, because these are the instruments we can source honestly end to end</li>
                 <li>Stocks, forex and indices are a later addition — they need a data source that also provides real order flow</li>

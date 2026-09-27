@@ -61,7 +61,7 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
   const isLive = streamStatus === 'LIVE';
 
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0b0c10] px-6 py-10 shadow-[0_25px_60px_rgba(0,0,0,0.9)] backdrop-blur-2xl sm:px-10 sm:py-14">
+    <section className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-[#0b0c10] p-panel shadow-[0_25px_60px_rgba(0,0,0,0.9)] backdrop-blur-2xl sm:p-panel-lg">
       <div
         className={cn(
           'pointer-events-none absolute -top-40 left-1/2 h-[30rem] w-[30rem] -translate-x-1/2 rounded-full bg-gradient-to-b to-transparent blur-3xl transition-all duration-700',
@@ -70,10 +70,11 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
       />
 
       <div className="relative z-10 mx-auto flex max-w-3xl flex-col items-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-white/40">Signal Compass</p>
+        <p className="text-label font-semibold uppercase tracking-[0.3em] text-white/40">Signal Compass</p>
 
-        {/* Gauge */}
-        <div className="relative my-6 w-full max-w-[560px]">
+        {/* Gauge — the visual focus, but capped relative to the viewport so it
+            never overwhelms the panels below it or overflows short screens. */}
+        <div className="relative my-block w-full max-w-[320px] sm:max-w-[420px] lg:max-w-[460px]">
           <div className="relative mx-auto aspect-[2/1] w-full">
             <svg className="h-full w-full overflow-visible" viewBox="0 0 300 150">
               <defs>
@@ -147,7 +148,7 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
             </svg>
           </div>
 
-          <div className="mt-2 flex justify-between px-2 text-[11px] font-semibold uppercase tracking-wider text-white/35">
+          <div className="mt-2 flex justify-between px-2 text-micro font-semibold uppercase tracking-wider text-white/35">
             <span>Strong sell</span>
             <span>Neutral</span>
             <span>Strong buy</span>
@@ -156,19 +157,19 @@ export const CompassDisplay: React.FC<CompassDisplayProps> = ({
 
         {/* Direction and confidence — both derived from the same score */}
         <div
-          className="mt-2 flex flex-col items-center gap-2 rounded-2xl border border-white/[0.06] px-10 py-5 text-center backdrop-blur-xl transition-colors duration-700"
+          className="mt-3 flex flex-col items-center gap-2 rounded-2xl border border-white/[0.06] px-8 py-5 text-center backdrop-blur-xl transition-colors duration-700 sm:px-10"
           style={{ backgroundColor: `${color}1a` }}
         >
           <span
-            className="block text-4xl font-black uppercase tracking-widest drop-shadow-md transition-colors duration-700 sm:text-5xl"
+            className="block text-headline font-black uppercase tracking-[0.2em] drop-shadow-md transition-colors duration-700"
             style={{ color }}
           >
             {DIRECTION_WORD[direction]}
           </span>
-          <span className="font-mono text-2xl font-bold text-white/90 sm:text-3xl">{confidence}% confidence</span>
+          <span className="font-mono text-data font-bold text-white/90">{confidence}% confidence</span>
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-[11px] text-white/40">
+        <div className="mt-block flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-label text-white/40">
           <span>As of {time}</span>
           <span className="flex items-center gap-1.5">
             <span className={cn('h-2 w-2 rounded-full', isLive ? 'bg-green-400 animate-pulse' : 'bg-amber-400')} />

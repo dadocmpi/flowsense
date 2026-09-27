@@ -29,18 +29,18 @@ export const CollapsibleSection: React.FC<CollapsibleSectionProps> = ({
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(prev => !prev)}
-        className="flex w-full items-center justify-between gap-4 px-6 py-4 text-left transition-colors hover:bg-white/[0.02]"
+        className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition-colors hover:bg-white/[0.02] sm:px-6"
       >
         <span>
-          <span className="text-sm font-bold text-white">{title}</span>
-          {subtitle && <span className="ml-3 text-xs text-white/50">{subtitle}</span>}
+          <span className="text-title font-bold text-white">{title}</span>
+          {subtitle && <span className="ml-3 text-label text-white/50">{subtitle}</span>}
         </span>
-        <span className="flex items-center gap-2 text-xs font-semibold text-white/50">
+        <span className="flex shrink-0 items-center gap-2 text-label font-semibold text-white/50">
           <span>{open ? 'Hide' : 'Show'}</span>
           <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} />
         </span>
       </button>
-      {open && <div className="border-t border-white/[0.06] p-6">{children}</div>}
+      {open && <div className="border-t border-white/[0.06] p-panel sm:p-panel-lg">{children}</div>}
     </section>
   );
 };
