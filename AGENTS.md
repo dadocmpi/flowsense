@@ -37,7 +37,6 @@ src/core/scoring.ts            gauges, score -> label mapping, confluence
 src/core/structure.ts          swing highs/lows, BOS, CHoCH, premium/discount
 src/core/session.ts            session open resolution (RTH/FULL), DST-safe
 src/core/metrics.ts            ATR, VWAP, session range, point of control
-src/core/history.ts            signal history: ordering, dedupe, relabelling
 src/core/candles.ts            bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts    one timeframe -> three gauges + structure + metrics
 src/core/multiTimeframe.ts     every timeframe + the confluence bias

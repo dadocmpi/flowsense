@@ -123,14 +123,6 @@ session open — `RTH` or `FULL`, selected in config. Crypto trades continuously
 and has no open to reset at, so its window is the fetched series and the panel
 labels it as a window rather than a session.
 
-## Signal history
-
-Stored per instrument and per timeframe, newest first, with the date and time
-on every row. Records written by earlier versions are re-labelled from their
-score when loaded, so a row saved with an inconsistent label is healed on read.
-Two readings closer than the dedupe window on the same series are treated as
-one publish, which stops a reconnect or a tab resume from double-recording.
-
 ## Data providers
 
 Candles come through a provider abstraction (`MarketDataProvider` in
@@ -183,7 +175,7 @@ instrument carries an ordered candidate list in `api/_lib/symbols.ts`:
 
 The server walks the list, uses the first symbol that returns candles, and
 remembers it. **A proxy is always labelled a proxy** — in the header and in the
-Data source and scope panel — and never presented as the futures contract.
+page footer — and never presented as the futures contract.
 
 To see what your own plan entitles:
 
@@ -258,7 +250,6 @@ src/core/structure.ts       swing highs/lows, BOS, CHoCH, premium/discount
 src/core/session.ts         session open resolution, VWAP/POC window
 src/core/metrics.ts         ATR, VWAP, session range, point of control
 src/core/marketHours.ts     is the market still producing bars? (pure)
-src/core/history.ts         signal history store, ordering, dedupe, relabelling
 src/core/candles.ts         bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts one timeframe → three gauges + structure + metrics
 src/core/multiTimeframe.ts  every timeframe + the confluence bias

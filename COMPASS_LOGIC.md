@@ -23,7 +23,6 @@ label and the score can never disagree.
 | Entry check: does the market agree with a long/short? | `src/core/entryCheck.ts` |
 | Session open resolution (RTH/FULL, DST-safe) | `src/core/session.ts` |
 | ATR, VWAP, session range, point of control | `src/core/metrics.ts` |
-| Signal history store: ordering, dedupe, relabelling | `src/core/history.ts` |
 | Candle bucketing, resampling, live-tail merge | `src/core/candles.ts` |
 | One timeframe → three gauges + structure + metrics | `src/core/timeframeEngine.ts` |
 | Every timeframe + the confluence bias | `src/core/multiTimeframe.ts` |
