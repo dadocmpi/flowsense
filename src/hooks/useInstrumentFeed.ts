@@ -17,17 +17,19 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Candle, Timeframe } from '../core/types';
-import type { Instrument } from '../core/instruments';
+import type { Instrument, ResolvedSource } from '../core/instruments';
 import {
   ProviderError,
   providerForInstrument,
   probeFuturesProvider,
+  resolvedSourceFor,
   type OrderFlowSnapshot,
   type ProviderErrorKind,
   type StreamStatus,
 } from '../core/providers';
 import { mergeLiveTail, upsertLastCandle } from '../core/candles';
 import { TIMEFRAMES, TIMEFRAME_MINUTES } from '../core/types';
+import { marketState, type MarketStateResult } from '../core/marketHours';
 import {
   applyTrade,
   buildOrderFlowSnapshot,
@@ -79,10 +81,29 @@ export interface InstrumentFeed {
   error: FeedError | null;
   /** True when the instrument has a configured data source. */
   configured: boolean;
+  /**
+   * False when the server's status route could not be reached at all. Distinct
+   * from "not configured": a missing api/ deployment or a network blip is not a
+   * missing API key, and the UI must not claim one when the other is true.
+   */
+  sourceReachable: boolean;
   /** Why it is unavailable, when it is. */
   unavailableReason: string | null;
   /** Human label of the source actually serving this instrument. */
   sourceLabel: string;
+  /**
+   * What the app is really reading, once the server has resolved a symbol. A
+   * proxy is labelled as a proxy; the UI must never call it the futures
+   * contract.
+   */
+  resolvedSource: ResolvedSource | null;
+  /**
+   * Whether the live price arrives as real ticks or as a REST poll. A polled
+   * feed is delayed by definition and the UI says so.
+   */
+  feedMode: 'STREAM' | 'POLL' | 'NONE';
+  /** Whether the market is still producing bars, and why. */
+  market: MarketStateResult;
   orderFlow: OrderFlowSnapshot;
   /** True only when the provider reports genuine order flow. */
   orderFlowAvailable: boolean;
@@ -128,6 +149,7 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<FeedError | null>(null);
   const [configured, setConfigured] = useState<boolean>(provider ? provider.isConfigured() : false);
+  const [sourceReachable, setSourceReachable] = useState(true);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
   const [orderFlow, setOrderFlow] = useState<OrderFlowSnapshot>(emptyOrderFlow);
   const [revision, setRevision] = useState(0);
@@ -147,9 +169,12 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
   }, [streamStatus]);
 
   // Futures configuration is a server-side fact; ask the status route first.
+  // Keyed on the provider id, not on capabilities: a futures provider may
+  // advertise a tick feed yet still need the server to confirm a key exists.
   useEffect(() => {
-    if (!provider || provider.capabilities.ticks || provider.capabilities.orderFlow) {
+    if (!provider || provider.id !== 'futures') {
       setConfigured(provider ? provider.isConfigured() : false);
+      setSourceReachable(true);
       setUnavailableReason(null);
       return;
     }
@@ -160,11 +185,13 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       .then(result => {
         if (!active) return;
         setConfigured(result.configured);
+        setSourceReachable(result.reachable);
         setUnavailableReason(result.configured ? null : result.note ?? null);
       })
       .catch(() => {
         if (!active) return;
         setConfigured(false);
+        setSourceReachable(false);
         setUnavailableReason('Could not reach the futures status route');
       });
 
@@ -254,6 +281,7 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       candleCache.set(instrument.id, { seriesByTimeframe: collected, fetchedAt: Date.now() });
       setError(null);
       setConfigured(true);
+      setSourceReachable(true);
       setUnavailableReason(null);
       setIsLoading(false);
       setRevision(r => r + 1);
@@ -374,10 +402,31 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
 
   const orderFlowAvailable = Boolean(provider?.capabilities.orderFlow);
 
+  // What the server actually resolved for this instrument, for the provenance
+  // label. Read on each render so it reflects the last candles response.
+  const resolvedSource = resolvedSourceFor(instrument.id) ?? null;
+
+  // A tick feed that reports UNAVAILABLE means the provider fell back to REST
+  // polling. That is a delayed feed, and it is labelled as one.
+  const feedMode: 'STREAM' | 'POLL' | 'NONE' = useMemo(() => {
+    if (!provider) return 'NONE';
+    if (streamStatus === 'UNAVAILABLE') return 'POLL';
+    if (provider.capabilities.ticks || provider.capabilities.orderFlow) return 'STREAM';
+    return candles.length > 0 ? 'POLL' : 'NONE';
+  }, [provider, streamStatus, candles.length]);
+
+  // Whether the market is still producing bars. A closed market must not keep
+  // presenting a stale reading as if it were live.
+  const market = useMemo(
+    () => marketState(candles, BASE_TIMEFRAME, lastUpdate ?? Date.now()),
+    [candles, lastUpdate]
+  );
+
   // A provider with candles but no tick feed is still live in the sense that
   // its newest bar is current; the status reflects what is actually true.
   const effectiveStatus: StreamStatus = useMemo(() => {
     if (!provider) return 'OFFLINE';
+    if (streamStatus === 'UNAVAILABLE') return 'UNAVAILABLE';
     if (provider.capabilities.ticks || provider.capabilities.orderFlow) return streamStatus;
     return candles.length > 0 ? 'LIVE' : streamStatus;
   }, [provider, streamStatus, candles.length]);
@@ -393,8 +442,12 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       isLoading,
       error,
       configured,
+      sourceReachable,
       unavailableReason,
       sourceLabel,
+      resolvedSource,
+      feedMode,
+      market,
       orderFlow: orderFlowAvailable
         ? orderFlow
         : { ...emptyOrderFlow(), streamStatus: effectiveStatus, isLive: effectiveStatus === 'LIVE' },
@@ -411,8 +464,12 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       isLoading,
       error,
       configured,
+      sourceReachable,
       unavailableReason,
       sourceLabel,
+      resolvedSource,
+      feedMode,
+      market,
       orderFlow,
       orderFlowAvailable,
       revision,

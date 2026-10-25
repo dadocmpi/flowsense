@@ -12,7 +12,7 @@
 //
 // No panel is collapsible: everything is visible on load.
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useInstrumentFeed, BASE_TIMEFRAME, isFeedFresh } from '../hooks/useInstrumentFeed';
 import { useMultiTimeframeCompass } from '../hooks/useMultiTimeframeCompass';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
@@ -26,8 +26,9 @@ import { SignalHistoryPanel } from '../components/compass/SignalHistoryPanel';
 import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { DEFAULT_INSTRUMENT_ID, findInstrument, instrumentsByGroup, type Instrument } from '../core/instruments';
-import { providerForInstrument } from '../core/providers';
+import { POLL_INTERVAL_MS, probeFuturesProvider, providerForInstrument } from '../core/providers';
 import { checkEntry, type EntryDirection } from '../core/entryCheck';
+import { TIMEFRAME_LABELS } from '../core/types';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import { formatClock, formatNumber } from '../components/compass/format';
 import { cn } from '@/lib/utils';
@@ -43,12 +44,17 @@ const ERROR_TITLES: Record<string, string> = {
   UNKNOWN: 'Unexpected error',
 };
 
+/** Shown instead of "no data source configured" when the route itself is unreachable. */
+const UNREACHABLE_TITLE = 'Data source unreachable';
+
 const STATUS_TEXT: Record<string, string> = {
   CONNECTING: 'Connecting',
   LIVE: 'Live',
   RECONNECTING: 'Reconnecting',
   OFFLINE: 'Offline',
-  UNAVAILABLE: 'Snapshot',
+  // The provider has candles but no live feed; the price is a REST poll, so it
+  // is delayed by definition and must not be dressed as a live tick.
+  UNAVAILABLE: 'Delayed (polling)',
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -56,8 +62,16 @@ const STATUS_TONE: Record<string, string> = {
   LIVE: 'text-[#26a69a]',
   RECONNECTING: 'text-amber-400',
   OFFLINE: 'text-[#ef5350]',
-  UNAVAILABLE: 'text-white/50',
+  UNAVAILABLE: 'text-amber-400',
 };
+
+/** "GC1! · Gold futures (continuous)" — the symbol and what it really is. */
+function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null {
+  const resolved = feed.resolvedSource;
+  if (!resolved) return null;
+  const symbol = resolved.vendorSymbol ?? resolved.symbol;
+  return `${symbol} · ${resolved.description}`;
+}
 
 const Index: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string>(DEFAULT_INSTRUMENT_ID);
@@ -70,17 +84,42 @@ const Index: React.FC = () => {
   const feed = useInstrumentFeed(instrument);
   const { reading, selected, setSelected, history } = useMultiTimeframeCompass(feed);
 
+  // Whether the futures source is configured is a server-side fact. The feed
+  // only asks for the selected instrument, so ask once here too: otherwise the
+  // selector would mark every futures tab unavailable until it is opened.
+  const [futuresConfigured, setFuturesConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    probeFuturesProvider(controller.signal)
+      .then(result => {
+        if (active) setFuturesConfigured(result.configured);
+      })
+      .catch(() => {
+        if (active) setFuturesConfigured(false);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, []);
+
   // Which instruments currently have a configured source, for the selector.
+  // A futures entry stays `undefined` until the probe answers: marking every
+  // futures tab unavailable before we know would be a guess, not a fact.
   const availability = useMemo(() => {
-    const map: Record<string, boolean> = {};
-    for (const candidate of [...instrumentsByGroup('FUTURES'), ...instrumentsByGroup('CRYPTO')]) {
+    const map: Record<string, boolean | undefined> = {};
+    for (const candidate of instrumentsByGroup('CRYPTO')) {
       const provider = providerForInstrument(candidate);
       map[candidate.id] = provider ? provider.isConfigured() : false;
     }
+    for (const candidate of instrumentsByGroup('FUTURES')) {
+      map[candidate.id] = futuresConfigured ?? undefined;
+    }
     // The selected instrument's own feed has the freshest answer.
-    map[instrument.id] = feed.configured;
+    if (feed.configured) map[instrument.id] = true;
     return map;
-  }, [instrument.id, feed.configured]);
+  }, [instrument.id, feed.configured, futuresConfigured]);
 
   const frame = reading?.timeframes.find(t => t.timeframe === selected) ?? null;
   const fresh = isFeedFresh(feed.lastUpdate);
@@ -135,8 +174,34 @@ const Index: React.FC = () => {
                 </span>
                 <span className="font-mono text-white/40">{formatClock(feed.lastUpdate)}</span>
               </span>
+              {/* A closed market is stated plainly: the reading below it is the
+                  last real one, not a live one. */}
+              {feed.market.state === 'CLOSED' && (
+                <span className="font-bold text-amber-400" title={feed.market.reason}>
+                  Market closed
+                </span>
+              )}
             </div>
           </div>
+
+          {/* What we are really reading. A proxy is called a proxy, never the
+              futures contract. */}
+          {sourceDetail(feed) && (
+            <div className="flex flex-wrap items-center gap-2 text-label text-white/45">
+              <span className="uppercase tracking-wider text-white/30">Source</span>
+              <span className="font-mono text-white/70">{feed.sourceLabel}</span>
+              <span className="text-white/25">·</span>
+              <span className="font-mono text-white/70">{sourceDetail(feed)}</span>
+              {feed.resolvedSource?.kind === 'proxy' && (
+                <span
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
+                  title="This is a proxy for the futures contract, not the contract itself."
+                >
+                  Proxy
+                </span>
+              )}
+            </div>
+          )}
 
           <InstrumentSelector selectedId={instrument.id} onSelect={handleSelect} availability={availability} />
         </div>
@@ -145,18 +210,31 @@ const Index: React.FC = () => {
       <main className="mx-auto flex max-w-[1400px] flex-col gap-panel px-4 py-6 sm:px-8 sm:py-8">
         {/* ── Unavailable / error state ────────────────────────────────── */}
         {!feed.configured && !feed.isLoading && (
-          <Section title={ERROR_TITLES.NOT_CONFIGURED} subtitle={instrument.id}>
+          <Section
+            title={feed.sourceReachable ? ERROR_TITLES.NOT_CONFIGURED : UNREACHABLE_TITLE}
+            subtitle={instrument.id}
+          >
             <div className="flex flex-col gap-2">
               <p className="text-body text-white/70">
                 {feed.unavailableReason ??
                   feed.error?.message ??
                   'This instrument has no configured data source.'}
               </p>
-              <p className="text-label text-white/45">
-                FlowSense shows nothing rather than a fabricated number. See{' '}
-                <span className="font-mono text-white/70">Data source and scope</span> at the bottom of this page for
-                how to configure a source.
-              </p>
+              {feed.sourceReachable ? (
+                <p className="text-label text-white/45">
+                  FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500 and Dow need{' '}
+                  <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
+                  environment; see <span className="font-mono text-white/70">Data source and scope</span> at the bottom
+                  of this page.
+                </p>
+              ) : (
+                <p className="text-label text-white/45">
+                  The server route that holds the API key did not answer. On a local dev server the{' '}
+                  <span className="font-mono text-white/70">api/</span> functions are not running — use{' '}
+                  <span className="font-mono text-white/70">vercel dev</span>. In production this is a network or
+                  deployment problem, not a missing key.
+                </p>
+              )}
             </div>
           </Section>
         )}
@@ -244,11 +322,17 @@ const Index: React.FC = () => {
           {feed.orderFlowAvailable ? (
             <OrderFlowPanel flow={feed.orderFlow} precision={pricePrecision} quote={instrument.quote} />
           ) : (
-            <p className="text-body text-white/60">
-              No real order flow for {instrument.id}. {feed.sourceLabel} provides candles only, and order flow is
-              never estimated from candles — so this panel stays empty rather than showing a synthetic book or tape.
-              Real order flow is available on the Binance crypto pairs.
-            </p>
+            <div className="flex flex-col gap-2 text-body text-white/60">
+              <p>
+                No real order flow for {instrument.id}. {feed.sourceLabel} provides candles
+                {feed.feedMode === 'POLL' ? ' and a polled price' : ''} only, and order flow is never estimated from
+                candles — so this panel stays empty rather than showing a synthetic book or tape.
+              </p>
+              <p className="text-label text-white/45">
+                Real order flow — order book depth, trade tape and a genuine aggressor split — is available on the
+                Binance crypto pairs, where the exchange publishes it directly.
+              </p>
+            </div>
           )}
         </Section>
 
@@ -272,18 +356,54 @@ const Index: React.FC = () => {
               <dl className="grid grid-cols-1 gap-x-8 gap-y-2 sm:grid-cols-2">
                 <Line label="Instrument" value={`${instrument.name} (${instrument.id})`} />
                 <Line label="Exchange" value={instrument.exchange} />
-                <Line label="Source" value={feed.sourceLabel} />
+                <Line label="Provider" value={feed.sourceLabel} />
                 <Line
-                  label="Continuous contract"
+                  label="Symbol in use"
                   value={
-                    instrument.continuousSymbol
-                      ? `${instrument.continuousSymbol} (${instrument.roll?.method ?? 'frontMonth'})`
-                      : 'Not applicable'
+                    feed.resolvedSource
+                      ? `${feed.resolvedSource.vendorSymbol ?? feed.resolvedSource.symbol} — ${feed.resolvedSource.description}`
+                      : // Crypto's symbol is fixed and known before any request; only
+                        // a futures symbol has to be resolved by the server.
+                        instrument.group === 'CRYPTO'
+                        ? instrument.providerSymbol
+                        : 'Not resolved yet'
+                  }
+                />
+                <Line
+                  label="Reading"
+                  value={
+                    instrument.group === 'CRYPTO'
+                      ? 'Spot pair, streamed live'
+                      : feed.resolvedSource
+                        ? feed.resolvedSource.kind === 'futures'
+                          ? 'The futures contract itself'
+                          : 'A proxy — not the futures contract'
+                        : 'Unknown until the first request'
+                  }
+                />
+                <Line
+                  label="Price feed"
+                  value={
+                    feed.feedMode === 'STREAM'
+                      ? 'Live stream (real ticks)'
+                      : feed.feedMode === 'POLL'
+                        ? `REST poll, ${POLL_INTERVAL_MS[BASE_TIMEFRAME] / 1000}s — delayed`
+                        : 'None'
+                  }
+                />
+                <Line
+                  label="Market"
+                  value={
+                    feed.market.state === 'OPEN'
+                      ? 'Open — bars arriving'
+                      : feed.market.state === 'CLOSED'
+                        ? `Closed — ${feed.market.reason}`
+                        : 'Unknown — no bars to judge from'
                   }
                 />
                 <Line
                   label="Timeframes"
-                  value={`${BASE_TIMEFRAME} base, plus each timeframe fetched natively`}
+                  value={`${TIMEFRAME_LABELS[BASE_TIMEFRAME]} base, plus each timeframe fetched natively`}
                 />
                 <Line
                   label="Last update"
@@ -300,9 +420,16 @@ const Index: React.FC = () => {
               </h3>
               <ul className="space-y-1.5">
                 <li>
-                  <strong className="text-white/90">Real:</strong> OHLCV candles from the configured futures
-                  provider, requested as a continuous front-month contract. All eight timeframes, the compass, the
-                  confluence matrix and the session VWAP / POC are computed from those candles.
+                  <strong className="text-white/90">Real:</strong> OHLCV candles from Twelve Data, requested
+                  server-side so the API key never reaches the browser. All eight timeframes, the compass, the
+                  confluence matrix and the session VWAP / POC are computed locally from those candles — the
+                  vendor&rsquo;s own indicator endpoints are not used, which keeps the credit spend to one call per
+                  symbol and timeframe.
+                </li>
+                <li>
+                  <strong className="text-white/90">Symbol:</strong> the app tries the continuous contract first
+                  (GC1!, ES1!, YM1!) and falls back to a proxy if the plan does not entitle it. When a proxy is in
+                  use, it is labelled as one here and in the header — it is never presented as the futures contract.
                 </li>
                 <li>
                   <strong className="text-white/90">Not available:</strong> order book depth, trade tape and
@@ -311,9 +438,10 @@ const Index: React.FC = () => {
                 </li>
                 <li>
                   <strong className="text-white/90">Requires configuration:</strong> a server-side API key. Until{' '}
-                  <span className="font-mono text-white/80">FUTURES_PROVIDER</span> and{' '}
-                  <span className="font-mono text-white/80">FUTURES_API_KEY</span> are set, futures instruments show
-                  a &ldquo;no data source configured&rdquo; state and no numbers at all.
+                  <span className="font-mono text-white/80">TWELVE_DATA_API_KEY</span> is set in the deployment
+                  environment, futures instruments show a &ldquo;no data source configured&rdquo; state and no
+                  numbers at all. Run <span className="font-mono text-white/80">npm run check:symbols</span> to see
+                  which symbols your plan entitles.
                 </li>
               </ul>
             </div>
