@@ -7,13 +7,11 @@
 //   3. the selected timeframe's three gauges, vote tables and structure read
 //   4. technical metrics for the selected instrument
 //   5. order flow, only where the provider has real order flow
-//   6. signal history for the selected instrument and timeframe
-//   7. data source and scope, stating what is real and what is unavailable
 //
 // No panel is collapsible: everything is visible on load.
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useInstrumentFeed, BASE_TIMEFRAME, isFeedFresh } from '../hooks/useInstrumentFeed';
+import { useInstrumentFeed } from '../hooks/useInstrumentFeed';
 import { useMultiTimeframeCompass } from '../hooks/useMultiTimeframeCompass';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { ConfluenceMatrix } from '../components/compass/ConfluenceMatrix';
@@ -22,13 +20,11 @@ import { VoteTable } from '../components/compass/VoteTable';
 import { TimeframeCard } from '../components/compass/TimeframeCard';
 import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPanel';
 import { OrderFlowPanel } from '../components/compass/OrderFlowPanel';
-import { SignalHistoryPanel } from '../components/compass/SignalHistoryPanel';
 import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { DEFAULT_INSTRUMENT_ID, findInstrument, instrumentsByGroup, type Instrument } from '../core/instruments';
-import { POLL_INTERVAL_MS, probeFuturesProvider, providerForInstrument } from '../core/providers';
+import { probeFuturesProvider, providerForInstrument } from '../core/providers';
 import { checkEntry, type EntryDirection } from '../core/entryCheck';
-import { TIMEFRAME_LABELS } from '../core/types';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import { formatClock, formatNumber } from '../components/compass/format';
 import { cn } from '@/lib/utils';
@@ -82,7 +78,7 @@ const Index: React.FC = () => {
   );
 
   const feed = useInstrumentFeed(instrument);
-  const { reading, selected, setSelected, history } = useMultiTimeframeCompass(feed);
+  const { reading, selected, setSelected } = useMultiTimeframeCompass(feed);
 
   // Whether the futures source is configured is a server-side fact. The feed
   // only asks for the selected instrument, so ask once here too: otherwise the
@@ -122,7 +118,6 @@ const Index: React.FC = () => {
   }, [instrument.id, feed.configured, futuresConfigured]);
 
   const frame = reading?.timeframes.find(t => t.timeframe === selected) ?? null;
-  const fresh = isFeedFresh(feed.lastUpdate);
   const pricePrecision = instrument.precision;
 
   // The entry check reads every timeframe's summary, so it answers "does the
@@ -224,8 +219,7 @@ const Index: React.FC = () => {
                 <p className="text-label text-white/45">
                   FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500 and Dow need{' '}
                   <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
-                  environment; see <span className="font-mono text-white/70">Data source and scope</span> at the bottom
-                  of this page.
+                  environment.
                 </p>
               ) : (
                 <p className="text-label text-white/45">
@@ -336,163 +330,6 @@ const Index: React.FC = () => {
           )}
         </Section>
 
-        {/* ── Signal history ───────────────────────────────────────────── */}
-        <Section title="Signal history" subtitle={`${instrument.id} · ${selected}`}>
-          <SignalHistoryPanel
-            history={history}
-            instrumentId={instrument.id}
-            timeframe={selected}
-            precision={pricePrecision}
-          />
-        </Section>
-
-        {/* ── Data source and scope ────────────────────────────────────── */}
-        <Section title="Data source and scope" subtitle="What is real, and what is not available">
-          <div className="space-y-6 text-body text-white/70">
-            <div>
-              <h3 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">
-                Current instrument
-              </h3>
-              <dl className="grid grid-cols-1 gap-x-8 gap-y-2 sm:grid-cols-2">
-                <Line label="Instrument" value={`${instrument.name} (${instrument.id})`} />
-                <Line label="Exchange" value={instrument.exchange} />
-                <Line label="Provider" value={feed.sourceLabel} />
-                <Line
-                  label="Symbol in use"
-                  value={
-                    feed.resolvedSource
-                      ? `${feed.resolvedSource.vendorSymbol ?? feed.resolvedSource.symbol} — ${feed.resolvedSource.description}`
-                      : // Crypto's symbol is fixed and known before any request; only
-                        // a futures symbol has to be resolved by the server.
-                        instrument.group === 'CRYPTO'
-                        ? instrument.providerSymbol
-                        : 'Not resolved yet'
-                  }
-                />
-                <Line
-                  label="Reading"
-                  value={
-                    instrument.group === 'CRYPTO'
-                      ? 'Spot pair, streamed live'
-                      : feed.resolvedSource
-                        ? feed.resolvedSource.kind === 'futures'
-                          ? 'The futures contract itself'
-                          : 'A proxy — not the futures contract'
-                        : 'Unknown until the first request'
-                  }
-                />
-                <Line
-                  label="Price feed"
-                  value={
-                    feed.feedMode === 'STREAM'
-                      ? 'Live stream (real ticks)'
-                      : feed.feedMode === 'POLL'
-                        ? `REST poll, ${POLL_INTERVAL_MS[BASE_TIMEFRAME] / 1000}s — delayed`
-                        : 'None'
-                  }
-                />
-                <Line
-                  label="Market"
-                  value={
-                    feed.market.state === 'OPEN'
-                      ? 'Open — bars arriving'
-                      : feed.market.state === 'CLOSED'
-                        ? `Closed — ${feed.market.reason}`
-                        : 'Unknown — no bars to judge from'
-                  }
-                />
-                <Line
-                  label="Timeframes"
-                  value={`${TIMEFRAME_LABELS[BASE_TIMEFRAME]} base, plus each timeframe fetched natively`}
-                />
-                <Line
-                  label="Last update"
-                  value={
-                    feed.lastUpdate ? `${formatClock(feed.lastUpdate)}${fresh ? '' : ' (not streaming)'}` : 'Unavailable'
-                  }
-                />
-              </dl>
-            </div>
-
-            <div>
-              <h3 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">
-                Futures — Gold, S&P 500, Dow Jones
-              </h3>
-              <ul className="space-y-1.5">
-                <li>
-                  <strong className="text-white/90">Real:</strong> OHLCV candles from Twelve Data, requested
-                  server-side so the API key never reaches the browser. All eight timeframes, the compass, the
-                  confluence matrix and the session VWAP / POC are computed locally from those candles — the
-                  vendor&rsquo;s own indicator endpoints are not used, which keeps the credit spend to one call per
-                  symbol and timeframe.
-                </li>
-                <li>
-                  <strong className="text-white/90">Symbol:</strong> the app tries the continuous contract first
-                  (GC1!, ES1!, YM1!) and falls back to a proxy if the plan does not entitle it. When a proxy is in
-                  use, it is labelled as one here and in the header — it is never presented as the futures contract.
-                </li>
-                <li>
-                  <strong className="text-white/90">Not available:</strong> order book depth, trade tape and
-                  buy/sell split. A candle feed cannot produce a genuine aggressor split, so the order-flow panel is
-                  empty for futures rather than estimated.
-                </li>
-                <li>
-                  <strong className="text-white/90">Requires configuration:</strong> a server-side API key. Until{' '}
-                  <span className="font-mono text-white/80">TWELVE_DATA_API_KEY</span> is set in the deployment
-                  environment, futures instruments show a &ldquo;no data source configured&rdquo; state and no
-                  numbers at all. Run <span className="font-mono text-white/80">npm run check:symbols</span> to see
-                  which symbols your plan entitles.
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">
-                Crypto — Binance USDT pairs
-              </h3>
-              <ul className="space-y-1.5">
-                <li>
-                  <strong className="text-white/90">Real:</strong> candles, a live combined WebSocket stream
-                  (ticker, open kline, partial book depth, aggregated trades) and a genuine per-candle taker-buy
-                  split. No API key is used or needed.
-                </li>
-                <li>
-                  <strong className="text-white/90">Order flow:</strong> the depth panel and tape come from
-                  Binance&rsquo;s own book and trades, with the exchange&rsquo;s aggressor flag deciding each
-                  trade&rsquo;s side.
-                </li>
-                <li>
-                  <strong className="text-white/90">Caveat:</strong> the live buy/sell split covers trades received
-                  since the stream opened, not the whole session; the candle-window cumulative delta is a separate
-                  figure and is labelled as such.
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">
-                Session boundary
-              </h3>
-              <p>
-                For futures, VWAP, the session high/low and the volume point of control reset at the start of the
-                current session ({DEFAULT_COMPASS_CONFIG.session.mode === 'RTH'
-                  ? 'regular trading hours'
-                  : 'full session'}
-                , {DEFAULT_COMPASS_CONFIG.session.timezone}). The reset time is shown next to the metrics.
-              </p>
-              <p className="mt-2">
-                Crypto trades continuously and has no session open, so its VWAP, range and POC are measured over the
-                fetched candle window instead — the panel labels the window start rather than implying a session that
-                does not exist.
-              </p>
-            </div>
-
-            <p className="border-t border-white/[0.06] pt-4 text-label text-white/45">
-              Every number on this page is either a provider response or arithmetic over one. Where a figure is not
-              available it reads as unavailable — nothing here is simulated.
-            </p>
-          </div>
-        </Section>
       </main>
 
       <footer className="border-t border-white/[0.04] px-4 py-6 sm:px-8">
@@ -503,14 +340,5 @@ const Index: React.FC = () => {
     </div>
   );
 };
-
-function Line({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.04] py-1.5">
-      <dt className="text-white/45">{label}</dt>
-      <dd className="font-mono text-white/85">{value}</dd>
-    </div>
-  );
-}
 
 export default Index;

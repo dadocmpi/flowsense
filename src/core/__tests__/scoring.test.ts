@@ -1,9 +1,9 @@
 // ============================================
 // SCORING / LABEL CONSISTENCY TESTS
 // ============================================
-// These tests exist because of a real bug: the old history could show a
-// positive score labelled "Sell". The invariant locked in here is that the
-// label is a pure function of the score, so the two can never disagree.
+// These tests exist because of a real bug: a positive score could be labelled
+// "Sell". The invariant locked in here is that the label is a pure function of
+// the score, so the two can never disagree.
 
 import { describe, expect, it } from 'vitest';
 import {

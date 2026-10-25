@@ -55,7 +55,7 @@ export interface ContractRoll {
 }
 
 export interface Instrument {
-  /** Stable id used in history keys and URLs. */
+  /** Stable id used in URLs and display. */
   id: string;
   name: string;
   group: InstrumentGroup;
