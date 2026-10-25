@@ -209,6 +209,7 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
     const load = async () => {
       setIsLoading(true);
       const collected: Partial<Record<Timeframe, Candle[]>> = {};
+      let failed = false;
 
       // Base first, then the rest. A failure on one timeframe must not blank
       // the others, so each is caught on its own.
@@ -234,11 +235,20 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
           const feedError = toFeedError(err);
           setError(feedError);
           if (feedError.kind === 'NOT_CONFIGURED') setConfigured(false);
+          failed = true;
           break;
         }
       }
 
       if (!active) return;
+
+      // A failure must survive: overwriting it here would report an instrument
+      // with no usable candles as configured and error-free.
+      if (failed) {
+        setIsLoading(false);
+        return;
+      }
+
       candleCache.set(instrument.id, { seriesByTimeframe: collected, fetchedAt: Date.now() });
       setError(null);
       setConfigured(true);
