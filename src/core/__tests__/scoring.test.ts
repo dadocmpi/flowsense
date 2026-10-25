@@ -58,6 +58,29 @@ describe('labelFromScore', () => {
     expect(labelFromScore(-100, DEFAULT_COMPASS_CONFIG)).toBe('STRONG_SELL');
   });
 
+  it('REGRESSION: the historical "positive score, Sell label" bug cannot recur', () => {
+    // Root cause of the original bug: the old engine scored on a 0-100 scale
+    // where 50 was neutral, with cut-offs strongBuy 75 / buy 55 / sell 45 /
+    // strongSell 25. A reading of 30 or 25 was genuinely bearish, but it was
+    // rendered as the bare number "Score 30" beside the word "Sell", so it read
+    // as a positive score carrying a bearish label.
+    //
+    // The signed scale removes the ambiguity: the sign IS the direction. These
+    // are the exact values that used to look wrong, and they must now be
+    // unambiguously bearish.
+    for (const legacyLookingValue of [-25, -30, -33, -20]) {
+      expect(labelFromScore(legacyLookingValue, DEFAULT_COMPASS_CONFIG)).not.toBe('BUY');
+      expect(labelFromScore(legacyLookingValue, DEFAULT_COMPASS_CONFIG)).not.toBe('STRONG_BUY');
+    }
+
+    // And the positive counterparts are unambiguously bullish, never bearish.
+    for (const value of [20, 25, 30, 33, 55, 75]) {
+      const label = labelFromScore(value, DEFAULT_COMPASS_CONFIG);
+      expect(isBearishLabel(label)).toBe(false);
+      expect(isBullishLabel(label)).toBe(true);
+    }
+  });
+
   it('NEVER gives a bearish label to a positive score', () => {
     for (let score = 1; score <= 100; score += 0.5) {
       const label = labelFromScore(score, DEFAULT_COMPASS_CONFIG);
@@ -279,7 +302,7 @@ describe('computeConfluence', () => {
   it('reports no direction when timeframes cancel', () => {
     // Equal weights on both sides, so the weighted bias cancels exactly.
     const config = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      timeframeWeights: { '5m': 0, '15m': 1, '30m': 0, '1h': 1, '4h': 0, '1D': 0, '1W': 0 },
+      timeframeWeights: { '1m': 0, '5m': 0, '15m': 1, '30m': 0, '1h': 1, '4h': 0, '1D': 0, '1W': 0 },
     });
     const result = computeConfluence(
       [
@@ -294,7 +317,7 @@ describe('computeConfluence', () => {
   });
 
   it('reflects the configured weights when the sides are unequal', () => {
-    // 15m (weight 1.0) bullish, 1h (weight 1.2) bearish -> bias is negative.
+    // 15m (weight 1.0) bullish, 1h (weight 1.6) bearish -> bias is negative.
     const result = computeConfluence(
       [
         { timeframe: '15m', score: 50, available: true },
@@ -302,7 +325,8 @@ describe('computeConfluence', () => {
       ],
       DEFAULT_COMPASS_CONFIG
     );
-    expect(result.bias).toBeCloseTo(-4.545, 3);
+    // (50 * 1.0 + -50 * 1.6) / (1.0 + 1.6) = -11.538...
+    expect(result.bias).toBeCloseTo(-11.538, 3);
     expect(result.direction).toBe('BEARISH');
   });
 

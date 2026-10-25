@@ -23,9 +23,11 @@ import { TimeframeCard } from '../components/compass/TimeframeCard';
 import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPanel';
 import { OrderFlowPanel } from '../components/compass/OrderFlowPanel';
 import { SignalHistoryPanel } from '../components/compass/SignalHistoryPanel';
+import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { DEFAULT_INSTRUMENT_ID, findInstrument, instrumentsByGroup, type Instrument } from '../core/instruments';
 import { providerForInstrument } from '../core/providers';
+import { checkEntry, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import { formatClock, formatNumber } from '../components/compass/format';
 import { cn } from '@/lib/utils';
@@ -59,6 +61,7 @@ const STATUS_TONE: Record<string, string> = {
 
 const Index: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string>(DEFAULT_INSTRUMENT_ID);
+  const [entryDirection, setEntryDirection] = useState<EntryDirection>('LONG');
   const instrument: Instrument = useMemo(
     () => findInstrument(selectedId) ?? findInstrument(DEFAULT_INSTRUMENT_ID)!,
     [selectedId]
@@ -82,6 +85,25 @@ const Index: React.FC = () => {
   const frame = reading?.timeframes.find(t => t.timeframe === selected) ?? null;
   const fresh = isFeedFresh(feed.lastUpdate);
   const pricePrecision = instrument.precision;
+
+  // The entry check reads every timeframe's summary, so it answers "does the
+  // market agree with the trade I am about to take?" across the whole board.
+  const entryCheck = useMemo(
+    () =>
+      reading
+        ? checkEntry(
+            entryDirection,
+            reading.timeframes.map(tf => ({
+              timeframe: tf.timeframe,
+              label: tf.summary.label,
+              score: tf.summary.score,
+              available: tf.available,
+            })),
+            DEFAULT_COMPASS_CONFIG
+          )
+        : null,
+    [reading, entryDirection]
+  );
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
@@ -157,6 +179,13 @@ const Index: React.FC = () => {
             </p>
           )}
         </Section>
+
+        {/* ── Entry check ──────────────────────────────────────────────── */}
+        {entryCheck && (
+          <Section title="Entry check" subtitle={`${instrument.id} · does the market agree?`}>
+            <EntryCheckPanel result={entryCheck} direction={entryDirection} onDirectionChange={setEntryDirection} />
+          </Section>
+        )}
 
         {/* ── Selected timeframe: gauges, tables, structure ────────────── */}
         {frame && (
@@ -272,7 +301,7 @@ const Index: React.FC = () => {
               <ul className="space-y-1.5">
                 <li>
                   <strong className="text-white/90">Real:</strong> OHLCV candles from the configured futures
-                  provider, requested as a continuous front-month contract. All seven timeframes, the compass, the
+                  provider, requested as a continuous front-month contract. All eight timeframes, the compass, the
                   confluence matrix and the session VWAP / POC are computed from those candles.
                 </li>
                 <li>
