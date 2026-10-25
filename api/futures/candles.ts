@@ -32,12 +32,12 @@ import {
   vendorApiKey,
   type ApiRequest,
   type ApiResponse,
-} from '../_lib/futuresShared';
-import { loadCandles, type ResolvedSymbol } from '../_lib/candleCache';
-import type { Candle, Timeframe } from '../../src/core/types';
-import { TIMEFRAMES } from '../../src/core/types';
-import { fetchTimeSeries, TwelveDataError } from '../_lib/twelvedata';
-import { candidatesFor, findCandidate, type SymbolCandidate } from '../_lib/symbols';
+} from '../_lib/futuresShared.js';
+import { loadCandles, type ResolvedSymbol } from '../_lib/candleCache.js';
+import type { Candle, Timeframe } from '../../src/core/types.js';
+import { TIMEFRAMES } from '../../src/core/types.js';
+import { fetchTimeSeries, TwelveDataError } from '../_lib/twelvedata.js';
+import { candidatesFor, findCandidate, type SymbolCandidate } from '../_lib/symbols.js';
 
 const MAX_LIMIT = 1000;
 

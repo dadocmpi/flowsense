@@ -18,10 +18,10 @@
 // instance is cold is one extra vendor call, not a wrong number. Nothing here
 // ever fabricates a candle — a failed lookup returns an error, never a series.
 
-import { fetchTimeSeries, TwelveDataError, type TimeSeriesResult, type VendorErrorKind } from './twelvedata';
-import { candidatesFor, type SymbolCandidate } from './symbols';
-import { cacheTtlFor, SYMBOL_RESOLUTION_TTL_MS } from '../../src/core/providers/polling';
-import type { Timeframe } from '../../src/core/types';
+import { fetchTimeSeries, TwelveDataError, type TimeSeriesResult, type VendorErrorKind } from './twelvedata.js';
+import { candidatesFor, type SymbolCandidate } from './symbols.js';
+import { cacheTtlFor, SYMBOL_RESOLUTION_TTL_MS } from '../../src/core/providers/polling.js';
+import type { Timeframe } from '../../src/core/types.js';
 
 export interface ResolvedSymbol {
   candidate: SymbolCandidate;

@@ -12,7 +12,7 @@
 // server cache TTL sits just under the poll interval, so a user's poll normally
 // gets fresh data while simultaneous users share one vendor call.
 
-import type { Timeframe } from '../types';
+import type { Timeframe } from '../types.js';
 
 /** How often the client re-fetches each timeframe over REST (ms). */
 export const POLL_INTERVAL_MS: Record<Timeframe, number> = {
