@@ -1,0 +1,62 @@
+// ============================================
+// PER-TIMEFRAME COMPASS ENGINE
+// ============================================
+// Given one candle series and a timeframe, produce the three gauges, the
+// market-structure read and the technical metrics. Pure: same input, same
+// output, no clock and no network.
+
+import type { Candle, Timeframe, TimeframeReading } from './types';
+import { DEFAULT_COMPASS_CONFIG, type CompassConfig } from '../config/compass';
+import { buildGauge, buildSummaryGauge } from './scoring';
+import { indicatorVotes, movingAverageVotes } from './votes';
+import { analyzeMarketStructure } from './structure';
+import { computeTechnicalMetrics } from './metrics';
+
+const EMPTY_READING_BASE = {
+  score: 0,
+  label: 'NEUTRAL' as const,
+  tally: { buy: 0, neutral: 0, sell: 0 },
+  details: [],
+};
+
+export function computeTimeframeReading(
+  timeframe: Timeframe,
+  candles: Candle[],
+  config: CompassConfig = DEFAULT_COMPASS_CONFIG,
+  sessionMode: 'SESSION' | 'CONTINUOUS' = 'SESSION'
+): TimeframeReading {
+  const price = candles.length > 0 ? candles[candles.length - 1].close : 0;
+  const available = candles.length >= config.minCandles;
+
+  if (!available) {
+    return {
+      timeframe,
+      movingAverages: { ...EMPTY_READING_BASE, details: [] },
+      indicators: { ...EMPTY_READING_BASE, details: [] },
+      summary: { ...EMPTY_READING_BASE, details: [] },
+      structure: analyzeMarketStructure(candles),
+      metrics: computeTechnicalMetrics(candles, config.session, sessionMode),
+      price,
+      candleCount: candles.length,
+      sessionMode,
+      available: false,
+    };
+  }
+
+  const movingAverages = buildGauge(movingAverageVotes(candles, config), config.maWeights, config);
+  const indicators = buildGauge(indicatorVotes(candles, config), config.indicatorWeights, config);
+  const summary = buildSummaryGauge(movingAverages, indicators, config);
+
+  return {
+    timeframe,
+    movingAverages,
+    indicators,
+    summary,
+    structure: analyzeMarketStructure(candles),
+    metrics: computeTechnicalMetrics(candles, config.session, sessionMode),
+    price,
+    candleCount: candles.length,
+    sessionMode,
+    available: true,
+  };
+}

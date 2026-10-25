@@ -1,221 +1,342 @@
-import React, { useState, useEffect } from 'react';
-import { useCompassSignal } from '../hooks/useCompassSignal';
-import { CompassDisplay } from '../components/compass/CompassDisplay';
-import { MarketSummary } from '../components/compass/MarketSummary';
-import { TechnicalDetailsTable } from '../components/trading/TechnicalDetailsTable';
-import { RealtimeOrderFlow } from '../components/trading/RealtimeOrderFlow';
+// ============================================
+// FLOWSENSE — MULTI-TIMEFRAME MARKET COMPASS
+// ============================================
+// Layout, top to bottom:
+//   1. instrument selector and the selected instrument's live header
+//   2. the multi-timeframe confluence matrix
+//   3. the selected timeframe's three gauges, vote tables and structure read
+//   4. technical metrics for the selected instrument
+//   5. order flow, only where the provider has real order flow
+//
+// No panel is collapsible: everything is visible on load.
+
+import React, { useEffect, useMemo, useState } from 'react';
+import { useInstrumentFeed } from '../hooks/useInstrumentFeed';
+import { useMultiTimeframeCompass } from '../hooks/useMultiTimeframeCompass';
+import { InstrumentSelector } from '../components/compass/InstrumentSelector';
+import { ConfluenceMatrix } from '../components/compass/ConfluenceMatrix';
+import { CompassGauge } from '../components/compass/CompassGauge';
+import { VoteTable } from '../components/compass/VoteTable';
+import { TimeframeCard } from '../components/compass/TimeframeCard';
+import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPanel';
+import { OrderFlowPanel } from '../components/compass/OrderFlowPanel';
+import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
-import { DEFAULT_SYMBOL, SUPPORTED_ASSETS } from '../types/trading';
+import { DEFAULT_INSTRUMENT_ID, findInstrument, instrumentsByGroup, type Instrument } from '../core/instruments';
+import { probeFuturesProvider, providerForInstrument } from '../core/providers';
+import { checkEntry, type EntryDirection } from '../core/entryCheck';
+import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
+import { formatClock, formatNumber } from '../components/compass/format';
 import { cn } from '@/lib/utils';
-import { AlertTriangle } from 'lucide-react';
 
 const ERROR_TITLES: Record<string, string> = {
-  GEO_BLOCKED: 'Binance unavailable in this region',
-  RATE_LIMIT: 'Binance rate limit reached',
+  NOT_CONFIGURED: 'No data source configured',
+  UNSUPPORTED_INSTRUMENT: 'Instrument not supported by this source',
+  GEO_BLOCKED: 'Data source unavailable in this region',
+  RATE_LIMIT: 'Data source rate limit reached',
   SYMBOL_NOT_FOUND: 'Symbol unavailable',
   NETWORK: 'Network error',
-  UPSTREAM: 'Exchange error',
+  UPSTREAM: 'Data source error',
   UNKNOWN: 'Unexpected error',
 };
 
-const DIRECTION_WORDS: Record<string, string> = {
-  STRONG_BUY: 'Strong buy',
-  BUY: 'Buy',
-  NEUTRAL: 'Neutral',
-  SELL: 'Sell',
-  STRONG_SELL: 'Strong sell',
+/** Shown instead of "no data source configured" when the route itself is unreachable. */
+const UNREACHABLE_TITLE = 'Data source unreachable';
+
+const STATUS_TEXT: Record<string, string> = {
+  CONNECTING: 'Connecting',
+  LIVE: 'Live',
+  RECONNECTING: 'Reconnecting',
+  OFFLINE: 'Offline',
+  // The provider has candles but no live feed; the price is a REST poll, so it
+  // is delayed by definition and must not be dressed as a live tick.
+  UNAVAILABLE: 'Delayed (polling)',
 };
 
-function verdictTone(direction: string): { text: string; bar: string; badge: string } {
-  switch (direction) {
-    case 'BULLISH':
-      return { text: 'text-green-400', bar: 'bg-green-500', badge: 'bg-green-500/10 border-green-500/30 text-green-400' };
-    case 'BEARISH':
-      return { text: 'text-red-400', bar: 'bg-red-500', badge: 'bg-red-500/10 border-red-500/30 text-red-400' };
-    default:
-      return { text: 'text-amber-400', bar: 'bg-amber-400', badge: 'bg-amber-500/10 border-amber-500/30 text-amber-400' };
-  }
+const STATUS_TONE: Record<string, string> = {
+  CONNECTING: 'text-amber-400',
+  LIVE: 'text-[#26a69a]',
+  RECONNECTING: 'text-amber-400',
+  OFFLINE: 'text-[#ef5350]',
+  UNAVAILABLE: 'text-amber-400',
+};
+
+/** "GC1! · Gold futures (continuous)" — the symbol and what it really is. */
+function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null {
+  const resolved = feed.resolvedSource;
+  if (!resolved) return null;
+  const symbol = resolved.vendorSymbol ?? resolved.symbol;
+  return `${symbol} · ${resolved.description}`;
 }
 
-const Index = () => {
-  const [selectedAsset, setSelectedAsset] = useState(DEFAULT_SYMBOL);
+const Index: React.FC = () => {
+  const [selectedId, setSelectedId] = useState<string>(DEFAULT_INSTRUMENT_ID);
+  const [entryDirection, setEntryDirection] = useState<EntryDirection>('LONG');
+  const instrument: Instrument = useMemo(
+    () => findInstrument(selectedId) ?? findInstrument(DEFAULT_INSTRUMENT_ID)!,
+    [selectedId]
+  );
 
-  const compass = useCompassSignal(selectedAsset);
+  const feed = useInstrumentFeed(instrument);
+  const { reading, selected, setSelected } = useMultiTimeframeCompass(feed);
 
+  // Whether the futures source is configured is a server-side fact. The feed
+  // only asks for the selected instrument, so ask once here too: otherwise the
+  // selector would mark every futures tab unavailable until it is opened.
+  const [futuresConfigured, setFuturesConfigured] = useState<boolean | null>(null);
   useEffect(() => {
-    // Nothing to reset now that the secondary panels keep their own state,
-    // but the scroll position should not carry over between instruments.
-    window.scrollTo({ top: 0 });
-  }, [selectedAsset]);
+    let active = true;
+    const controller = new AbortController();
+    probeFuturesProvider(controller.signal)
+      .then(result => {
+        if (active) setFuturesConfigured(result.configured);
+      })
+      .catch(() => {
+        if (active) setFuturesConfigured(false);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, []);
+
+  // Which instruments currently have a configured source, for the selector.
+  // A futures entry stays `undefined` until the probe answers: marking every
+  // futures tab unavailable before we know would be a guess, not a fact.
+  const availability = useMemo(() => {
+    const map: Record<string, boolean | undefined> = {};
+    for (const candidate of instrumentsByGroup('CRYPTO')) {
+      const provider = providerForInstrument(candidate);
+      map[candidate.id] = provider ? provider.isConfigured() : false;
+    }
+    for (const candidate of instrumentsByGroup('FUTURES')) {
+      map[candidate.id] = futuresConfigured ?? undefined;
+    }
+    // The selected instrument's own feed has the freshest answer.
+    if (feed.configured) map[instrument.id] = true;
+    return map;
+  }, [instrument.id, feed.configured, futuresConfigured]);
+
+  const frame = reading?.timeframes.find(t => t.timeframe === selected) ?? null;
+  const pricePrecision = instrument.precision;
+
+  // The entry check reads every timeframe's summary, so it answers "does the
+  // market agree with the trade I am about to take?" across the whole board.
+  const entryCheck = useMemo(
+    () =>
+      reading
+        ? checkEntry(
+            entryDirection,
+            reading.timeframes.map(tf => ({
+              timeframe: tf.timeframe,
+              label: tf.summary.label,
+              score: tf.summary.score,
+              available: tf.available,
+            })),
+            DEFAULT_COMPASS_CONFIG
+          )
+        : null,
+    [reading, entryDirection]
+  );
+
+  const handleSelect = (id: string) => {
+    setSelectedId(id);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   return (
     <div className="min-h-screen w-full bg-[#050608] font-sans text-white selection:bg-amber-500/30">
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-50 w-full border-b border-white/[0.04] bg-[#07080a]/95 px-4 py-3 backdrop-blur-md sm:px-8">
-        <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <span className="text-title font-black tracking-tight">FlowSense</span>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {SUPPORTED_ASSETS.map(asset => (
-                <button
-                  key={asset.symbol}
-                  onClick={() => setSelectedAsset(asset.symbol)}
-                  className={cn(
-                    'rounded-lg px-2.5 py-1 text-label font-bold transition-all',
-                    selectedAsset === asset.symbol
-                      ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.4)]'
-                      : 'border border-white/[0.04] bg-white/[0.02] text-white/60 hover:bg-white/[0.04] hover:text-white'
-                  )}
-                >
-                  <span className="font-mono">{asset.symbol.replace('/USDT', '')}</span>
-                </button>
-              ))}
+        <div className="mx-auto flex max-w-[1400px] flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-baseline gap-3">
+              <span className="text-title font-black tracking-tight">FlowSense</span>
+              <span className="text-label text-white/40">Multi-timeframe market compass</span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-label">
+              <span className="text-white/45">
+                {instrument.name} <span className="text-white/25">· {instrument.exchange}</span>
+              </span>
+              <span className="font-mono text-data font-bold text-white">
+                {feed.price > 0 ? formatNumber(feed.price, pricePrecision) : '--'}
+                <span className="ml-1 text-label font-normal text-white/40">{instrument.quote}</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className={cn('font-bold', STATUS_TONE[feed.streamStatus])}>
+                  ● {STATUS_TEXT[feed.streamStatus] ?? feed.streamStatus}
+                </span>
+                <span className="font-mono text-white/40">{formatClock(feed.lastUpdate)}</span>
+              </span>
+              {/* A closed market is stated plainly: the reading below it is the
+                  last real one, not a live one. */}
+              {feed.market.state === 'CLOSED' && (
+                <span className="font-bold text-amber-400" title={feed.market.reason}>
+                  Market closed
+                </span>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center gap-4 text-label">
-            <span className="font-mono text-data font-bold text-white/90">
-              {compass.price > 0
-                ? compass.price.toLocaleString(undefined, {
-                    minimumFractionDigits: compass.precision,
-                    maximumFractionDigits: compass.precision,
-                  })
-                : '--'}
-            </span>
-          </div>
+          {/* What we are really reading. A proxy is called a proxy, never the
+              futures contract. */}
+          {sourceDetail(feed) && (
+            <div className="flex flex-wrap items-center gap-2 text-label text-white/45">
+              <span className="uppercase tracking-wider text-white/30">Source</span>
+              <span className="font-mono text-white/70">{feed.sourceLabel}</span>
+              <span className="text-white/25">·</span>
+              <span className="font-mono text-white/70">{sourceDetail(feed)}</span>
+              {feed.resolvedSource?.kind === 'proxy' && (
+                <span
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
+                  title="This is a proxy for the futures contract, not the contract itself."
+                >
+                  Proxy
+                </span>
+              )}
+            </div>
+          )}
+
+          <InstrumentSelector selectedId={instrument.id} onSelect={handleSelect} availability={availability} />
         </div>
       </header>
 
-      {compass.error && (
-        <div className="flex w-full items-center gap-3 border-b border-red-500/30 bg-red-500/10 px-4 py-3 text-body sm:px-8">
-          <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
-          <span className="font-bold text-red-200">{ERROR_TITLES[compass.error.kind] || 'Error'}:</span>
-          <span className="text-red-200/80">{compass.error.message}</span>
-        </div>
-      )}
-
-      {/* A dropped feed must never read as a quiet market. */}
-      {compass.streamStatus !== 'LIVE' && !compass.error && (
-        <div className="flex w-full items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-label sm:px-8">
-          <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" />
-          <span className="font-semibold text-amber-200">
-            {compass.streamStatus === 'OFFLINE' ? 'Market feed offline' : 'Reconnecting to the market feed'} — showing the last data received
-          </span>
-        </div>
-      )}
-
-      <main className="mx-auto flex w-full max-w-[1400px] flex-col gap-panel p-panel sm:gap-block sm:p-panel-lg">
-        {/* Hero: the compass signal. It is the single source of truth — every
-            element is derived from the live aggregated score, which now moves
-            with every trade rather than once a minute. */}
-        <CompassDisplay
-          score={compass.live?.rawScore ?? compass.official?.score ?? 50}
-          dataQuality={compass.dataQuality.overall}
-          timestamp={compass.official?.timestamp || Date.now()}
-          streamStatus={compass.streamStatus}
-          isStale={compass.official?.isStale || false}
-        />
-
-        {/* Market summary — every metric renders expanded; the reversal logic
-            still feeds the compass internally. */}
-        <MarketSummary
-          data={compass.marketData}
-          marketState={compass.official?.marketRegime || compass.live?.marketRegime || 'UNKNOWN'}
-          advancedExtras={
-            <p className="text-body text-white/60">
-              {compass.dataQuality.metrics.source === 'BINANCE'
-                ? 'Binance public WebSocket stream'
-                : 'Unavailable — no feed'}
-            </p>
-          }
-        />
-
-        {/* Secondary detail — always expanded so no data is hidden */}
-        <Section title="Technical indicators" subtitle="Oscillators, moving averages, volume and volatility">
-          <TechnicalDetailsTable
-            oscillators={compass.marketData.oscillators}
-            movingAverages={compass.marketData.movingAverages}
-            volumeIndicators={compass.marketData.volumeIndicators}
-            isLoading={compass.isLoading}
-          />
-        </Section>
-
-        <Section
-          title="Real-time order flow"
-          subtitle={
-            compass.orderFlow.isLive
-              ? 'Live from Binance'
-              : `Binance stream: ${compass.orderFlow.streamStatus.toLowerCase()}`
-          }
-        >
-          <RealtimeOrderFlow
-            orderFlow={compass.orderFlow}
-            precision={compass.precision}
-            quote={compass.marketData.currency}
-          />
-        </Section>
-
-        <Section title="Signal history" subtitle="Recent published compass signals">
-          {compass.history.length === 0 ? (
-            <div className="py-8 text-center text-body italic text-white/50">
-              No signals yet — the compass publishes an official read at each minute boundary
+      <main className="mx-auto flex max-w-[1400px] flex-col gap-panel px-4 py-6 sm:px-8 sm:py-8">
+        {/* ── Unavailable / error state ────────────────────────────────── */}
+        {!feed.configured && !feed.isLoading && (
+          <Section
+            title={feed.sourceReachable ? ERROR_TITLES.NOT_CONFIGURED : UNREACHABLE_TITLE}
+            subtitle={instrument.id}
+          >
+            <div className="flex flex-col gap-2">
+              <p className="text-body text-white/70">
+                {feed.unavailableReason ??
+                  feed.error?.message ??
+                  'This instrument has no configured data source.'}
+              </p>
+              {feed.sourceReachable ? (
+                <p className="text-label text-white/45">
+                  FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500 and Dow need{' '}
+                  <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
+                  environment.
+                </p>
+              ) : (
+                <p className="text-label text-white/45">
+                  The server route that holds the API key did not answer. On a local dev server the{' '}
+                  <span className="font-mono text-white/70">api/</span> functions are not running — use{' '}
+                  <span className="font-mono text-white/70">vercel dev</span>. In production this is a network or
+                  deployment problem, not a missing key.
+                </p>
+              )}
             </div>
+          </Section>
+        )}
+
+        {/* A configured source can still fail; that is a real error, not a
+            missing one, so it is reported separately. */}
+        {feed.configured && feed.error && !feed.isLoading && feed.candles.length === 0 && (
+          <Section title={ERROR_TITLES[feed.error.kind] ?? ERROR_TITLES.UNKNOWN} subtitle={instrument.id}>
+            <p className="text-body text-white/70">{feed.error.message}</p>
+          </Section>
+        )}
+
+        {/* ── Confluence matrix ────────────────────────────────────────── */}
+        <Section title="Multi-timeframe confluence" subtitle={`${instrument.id} · all timeframes`}>
+          {reading ? (
+            <ConfluenceMatrix reading={reading} selected={selected} onSelect={setSelected} />
           ) : (
-            <div className="space-y-2">
-              {compass.history
-                .slice(-10)
-                .reverse()
-                .map((entry, index) => (
-                  <div
-                    key={`${entry.minuteKey}-${index}`}
-                    className="flex items-center justify-between rounded-xl border border-white/[0.04] bg-white/[0.02] p-3 text-body"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className={cn('font-semibold', verdictTone(
-                        entry.direction === 'STRONG_BUY' || entry.direction === 'BUY'
-                          ? 'BULLISH'
-                          : entry.direction === 'STRONG_SELL' || entry.direction === 'SELL'
-                          ? 'BEARISH'
-                          : 'NEUTRAL'
-                      ).text)}>
-                        {DIRECTION_WORDS[entry.direction] ?? entry.direction}
-                      </span>
-                      <span className="font-mono text-label text-white/40">
-                        {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+            <p className="py-8 text-center text-body italic text-white/45">
+              {feed.isLoading ? 'Loading candles…' : 'No candles available for this instrument.'}
+            </p>
+          )}
+        </Section>
+
+        {/* ── Entry check ──────────────────────────────────────────────── */}
+        {entryCheck && (
+          <Section title="Entry check" subtitle={`${instrument.id} · does the market agree?`}>
+            <EntryCheckPanel result={entryCheck} direction={entryDirection} onDirectionChange={setEntryDirection} />
+          </Section>
+        )}
+
+        {/* ── Selected timeframe: gauges, tables, structure ────────────── */}
+        {frame && (
+          <>
+            <Section title="Compass" subtitle={`${instrument.id} · ${selected}`}>
+              {frame.available ? (
+                <>
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+                    <CompassGauge title="Moving averages" gauge={frame.movingAverages} size="lg" />
+                    <CompassGauge title="Technical indicators" gauge={frame.indicators} size="lg" />
+                    <CompassGauge title="Summary" gauge={frame.summary} size="lg" />
+                  </div>
+
+                  <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
+                    <div>
+                      <h3 className="mb-2 text-title font-bold text-white">Moving averages</h3>
+                      <VoteTable details={frame.movingAverages.details} valueHeading="Level" />
                     </div>
-                    <div className="flex items-center gap-4 font-mono text-label text-white/50">
-                      <span>Score {entry.score}</span>
-                      <span>{entry.confidence}%</span>
+                    <div>
+                      <h3 className="mb-2 text-title font-bold text-white">Technical indicators</h3>
+                      <VoteTable details={frame.indicators.details} valueHeading="Value" />
                     </div>
                   </div>
-                ))}
+                </>
+              ) : (
+                <p className="py-8 text-center text-body italic text-white/45">
+                  {frame.candleCount} candles on {selected} — not enough to compute a reading (needs{' '}
+                  {DEFAULT_COMPASS_CONFIG.minCandles}).
+                </p>
+              )}
+            </Section>
+
+            {frame.available && (
+              <Section title="Timeframe detail" subtitle={`${instrument.id} · ${selected}`}>
+                <TimeframeCard reading={frame} precision={pricePrecision} quote={instrument.quote} />
+              </Section>
+            )}
+
+            {frame.available && (
+              <Section title="Technical metrics" subtitle={`${instrument.id} · ${selected}`}>
+                <TechnicalMetricsPanel
+                  metrics={frame.metrics}
+                  precision={pricePrecision}
+                  quote={instrument.quote}
+                  session={DEFAULT_COMPASS_CONFIG.session}
+                  timeframe={selected}
+                  sessionMode={frame.sessionMode}
+                />
+              </Section>
+            )}
+          </>
+        )}
+
+        {/* ── Order flow, only where the provider has it ───────────────── */}
+        <Section title="Order flow" subtitle={`${instrument.id} · ${feed.sourceLabel}`}>
+          {feed.orderFlowAvailable ? (
+            <OrderFlowPanel flow={feed.orderFlow} precision={pricePrecision} quote={instrument.quote} />
+          ) : (
+            <div className="flex flex-col gap-2 text-body text-white/60">
+              <p>
+                No real order flow for {instrument.id}. {feed.sourceLabel} provides candles
+                {feed.feedMode === 'POLL' ? ' and a polled price' : ''} only, and order flow is never estimated from
+                candles — so this panel stays empty rather than showing a synthetic book or tape.
+              </p>
+              <p className="text-label text-white/45">
+                Real order flow — order book depth, trade tape and a genuine aggressor split — is available on the
+                Binance crypto pairs, where the exchange publishes it directly.
+              </p>
             </div>
           )}
         </Section>
 
-        {/* Provenance detail — always visible */}
-        <Section title="Data source and scope" subtitle="Provenance and coverage">
-          <div className="space-y-4 text-body text-white/70">
-            <div>
-              <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Data source</h4>
-              <p>
-                {compass.assetName} ({selectedAsset}) · Binance public WebSocket stream
-                {compass.lastUpdated
-                  ? ` · last tick ${new Date(compass.lastUpdated).toLocaleTimeString()}`
-                  : ' · waiting for the first tick'}
-              </p>
-            </div>
-            <div>
-              <h4 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">Crypto only, for now</h4>
-              <ul className="list-inside list-disc space-y-1">
-                <li>Only Binance USDT pairs are offered, because these are the instruments we can source honestly end to end</li>
-                <li>Stocks, forex and indices are a later addition — they need a data source that also provides real order flow</li>
-                <li>Cross-market feeds such as DXY, VIX and yields are not part of this scope</li>
-              </ul>
-            </div>
-          </div>
-        </Section>
       </main>
+
+      <footer className="border-t border-white/[0.04] px-4 py-6 sm:px-8">
+        <p className="mx-auto max-w-[1400px] text-micro text-white/30">
+          FlowSense — analysis only. Not investment advice.
+        </p>
+      </footer>
     </div>
   );
 };

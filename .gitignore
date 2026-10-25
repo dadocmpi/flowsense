@@ -33,3 +33,5 @@ dist-ssr
 # Local secrets
 .env
 .env.*
+# ...but the template holds no secrets and should be committed.
+!.env.example

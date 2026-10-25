@@ -1,16 +1,14 @@
-# What the compass signal is built from
+# What the compass is built from
 
-This document explains, in plain English, what data and logic drive the
-FlowSense compass — the hero gauge at the top of the dashboard. It describes
-the code as it currently stands. It is documentation only; nothing here changes
-the signal.
+This document explains, in plain English, how the FlowSense compass produces its
+reading. It describes the code as it currently stands. It is documentation only;
+nothing here changes the signal.
 
-The short version: the compass is a **weighted vote** across a fixed set of
-factors. Each factor looks at real market data, decides it is bullish, bearish
-or neutral, and casts a vote with a weight. The votes are summed into a single
-0–100 score. Every visible part of the gauge — needle angle, colour, direction
-word and confidence number — is derived from that one score, so they can never
-disagree with each other.
+The short version: for each timeframe, the compass is a **weighted vote** across
+a fixed set of factors. Every factor looks at real candle data, decides Buy,
+Neutral or Sell, and casts a vote with a weight. The votes are combined into a
+single score from −100 to +100. The label is derived from that score, so the
+label and the score can never disagree.
 
 ---
 
@@ -18,283 +16,188 @@ disagree with each other.
 
 | Concern | File |
 | --- | --- |
-| Assembling the factor list and driving the hook | `src/hooks/useCompassSignal.ts` |
-| Weighted-vote aggregation, scoring, publishing | `src/lib/compassEngine.ts` |
-| Score → direction / needle / colour / confidence | `src/lib/compassEngine.ts` |
-| Multi-timeframe scoring | `src/hooks/useMultiTimeframe.ts` |
-| Market-context factor (zones, structure, order book) | `src/hooks/useMarketContextEngine.ts` |
-| Higher-timeframe trend factor | `src/hooks/useMacroContext.ts` |
-| Volatility regime factor | `src/hooks/useFundamentalIntelligence.ts` |
-| Support/resistance and reversal factors | `src/hooks/useSrReversal.ts` |
-| Indicator summaries | `src/lib/marketAnalysis.ts` |
-| Live price, candles, order book and trade tape | `src/hooks/useMarketData.ts` |
+| Indicator math (SMA, EMA, RSI, MACD, ADX, …) | `src/core/indicators.ts` |
+| Per-indicator and per-MA vote logic | `src/core/votes.ts` |
+| Gauge building, score → label, confluence | `src/core/scoring.ts` |
+| Market structure (swings, BOS, CHoCH, premium/discount) | `src/core/structure.ts` |
+| Entry check: does the market agree with a long/short? | `src/core/entryCheck.ts` |
+| Session open resolution (RTH/FULL, DST-safe) | `src/core/session.ts` |
+| ATR, VWAP, session range, point of control | `src/core/metrics.ts` |
+| Candle bucketing, resampling, live-tail merge | `src/core/candles.ts` |
+| One timeframe → three gauges + structure + metrics | `src/core/timeframeEngine.ts` |
+| Every timeframe + the confluence bias | `src/core/multiTimeframe.ts` |
+| Entry-check rules (higher timeframes, agreement shares) | `src/config/compass.ts` |
+| Every weight, tolerance and session setting | `src/config/compass.ts` |
+| Data entry point for one instrument | `src/hooks/useInstrumentFeed.ts` |
+| Runs the multi-timeframe engine | `src/hooks/useMultiTimeframeCompass.ts` |
 
-`useCompassSignal` is the single entry point. It calls the hooks above, turns
-their outputs into `FactorContribution[]`, and hands the list to
-`computeLiveAnalysis` in `compassEngine.ts`.
+Everything in `src/core` is pure: no I/O, no clock, no React. That is what makes
+it testable without a browser, and it is deliberate — keep it that way.
 
 ---
 
-## 2. Timeframes used
+## 2. Timeframes
 
-The compass does **not** run one model per timeframe and average them at the top
-level. Instead, timeframe structure enters through two factors:
+`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, displayed as
+`M1`, `M5`, `M15`, `M30`, `1H`, `4H`, `1D`, `1W`.
 
-1. **`MTF_ALIGNMENT`** (see §3.2) scores each of six timeframes and combines
-   them.
-2. **`HTF_TREND`** (see §3.5) reads price against a single EMA200 computed on
-   the base series.
+Each timeframe is fetched from the provider at its own interval, not aggregated
+from one base series. A 1m seed cannot reach back far enough to fill a weekly, so
+aggregating everything from 1m would silently leave the higher timeframes empty.
 
-The multi-timeframe factor scores these six timeframes, with these fixed weights:
+The live stream carries the 1m bar. The newest bar of the mergeable timeframes
+(5m, 15m, 30m, 1h, 4h, 1D) is refreshed from that live 1m tail via
+`mergeLiveTail`, so a higher timeframe advances with the market between fetches.
+Weekly is deliberately excluded: its exchange boundary (the Monday open) is not
+the epoch-based bucket, so a rebuild would place the bar at the wrong time.
 
-| Timeframe | Weight |
-| --- | --- |
-| 1m | 0.05 |
-| 5m | 0.10 |
-| 15m | 0.15 |
-| 1h | 0.20 |
-| 4h | 0.25 |
-| 1d | 0.25 |
+`mergeLiveTail` also refuses a partial rebuild. A 1m window covers only a few
+hours, so the current daily bucket is usually only partly observed; rebuilding
+it from that tail would report a high, low and volume for a day that has barely
+started. When the base window does not reach the bucket open, the natively
+fetched bar is kept instead — real but unadvanced, rather than replaced with a
+wrong one.
 
-The base series is 5-minute candles. Timeframes equal to or shorter than the
-base interval use the base series directly; longer ones are aggregated from it
-with `aggregateCandles`. A timeframe is skipped if it has fewer than 30 candles.
-
-Each timeframe is scored from its own candles with two components:
-
-- **Trend (60%):** the gap between EMA20 and EMA50 as a percentage of price,
-  normalised by 1.5%. Positive means the fast average is above the slow one.
-- **Momentum (40%):** RSI(14) distance from 50, normalised by 25 points.
-
-The two are blended into a composite in the range −1…+1. A timeframe is `BUY`
-when the composite is above +0.15, `SELL` below −0.15, otherwise `NEUTRAL`.
-Strength is the absolute composite as 0–100. The timeframes' signed strengths
-are then combined by their weights into a `weightedScore` (−100…+100), which
-drives the `MTF_ALIGNMENT` factor's direction and weight.
-
-> **Note on the 1m row.** Because the base series is 5-minute candles, the 1m
-> timeframe resolves to the same 5-minute series as 5m, so those two rows
-> currently vote identically. This is existing behaviour, not something changed
-> by the layout work; it is flagged here for transparency.
+A timeframe with too few candles to warm up its indicators is reported as
+unavailable and does not vote. It is never back-filled.
 
 ---
 
 ## 3. Every factor that feeds the compass
 
-These are all the factors that can currently be pushed into the vote, in the
-order they are built in `useCompassSignal`. Each has a category, a direction, a
-weight and a confidence value.
+### Moving averages
 
-### 3.1 `MARKET_CONTEXT` — zone / structure / order-book confluence
-Source: `useMarketContextEngine`. This is the most involved factor. It runs a
-full contextual pipeline over the candles and live order flow:
+SMA and EMA over 5, 10, 20, 50, 100, 200 — twelve factors.
 
-- Data-quality assessment, then market structure analysis
-- Institutional zone detection: **Fair Value Gaps (FVG)**, **Order Blocks**,
-  **Point of Control (POC)**, swing highs/lows, liquidity levels and a
-  user-defined manual daily zone
-- Zone clustering and proximity ranking
-- Signal-factor building (structure, zones, volume, order flow, order-book
-  imbalance, EMA cloud, oscillators) with correlation collapse
-- Confluence scoring, an EMA200 master-trend gate, persistence windows, a state
-  machine and a reaction-quality filter
+Each votes **Buy** when price is above the average, **Sell** when below, and
+**Neutral** inside a tolerance band. The tolerance is `maTolerance` in
+`src/config/compass.ts`, expressed as a fraction of price, so a price sitting
+fractions of a percent from an average does not cast a false directional vote.
 
-Its `uiSummary.score` becomes the factor: **≥60 bullish, ≤40 bearish, otherwise
-neutral**. The factor's weight is the share of bullish confluence
-(`buyCount / (buyCount + sellCount) × 100`), and its confidence is the engine's
-own data-quality score. Even though this factor covers many sub-indicators, it
-enters the compass as a **single vote**.
+### Technical indicators
 
-### 3.2 `MTF_ALIGNMENT` — trend alignment across timeframes
-Source: `useMultiTimeframe`. Counts how many of the six timeframes are `BUY`
-versus `SELL`. Direction is whichever side has more votes; weight is the winning
-share (`max(buy, sell) / total × 100`). Confidence is
-`60 + |weightedScore| / 100 × 30`, i.e. higher when the timeframes agree
-strongly.
+Twelve factors, each with a standard threshold:
 
-### 3.3 `TECHNICAL_SUMMARY` — classic indicator summary
-Source: `buildIndicators` + `buildSummary` in `marketAnalysis.ts`, which covers
-RSI, MACD, momentum, moving averages and volume/volatility indicators. Each
-indicator contributes a buy/sell/neutral tally (strong readings count double);
-the score is `buy / (buy + sell) × 100`. **≥60 bullish, ≤40 bearish, otherwise
-neutral.** This factor has a **fixed weight of 20**; confidence is overall data
-quality.
-
-### 3.4 `VOLATILITY_REGIME` — volatility from real ATR
-Source: `useFundamentalIntelligence`. Computes ATR(14) as a percentage of price:
-
-| ATR % of price | Regime | Vote |
+| Indicator | Buy | Sell |
 | --- | --- | --- |
-| ≥ 1.5 | EXTREME | BEARISH, weight 10 |
-| ≥ 0.8 | HIGH | BEARISH, weight 8 |
-| ≤ 0.15 | LOW | NEUTRAL, weight 5 |
-| otherwise | NORMAL | no factor is emitted |
+| RSI (14) | < 30 | > 70 |
+| Stochastic (9,6) | %K/%D oversold | %K/%D overbought |
+| Stochastic RSI (14) | %K/%D oversold | %K/%D overbought |
+| MACD (12,26,9) | MACD above signal | MACD below signal |
+| ADX (14) with +DI/-DI | +DI > −DI with trend | −DI > +DI with trend |
+| Williams %R (14) | ≤ −80 | ≥ −20 |
+| CCI (14) | > 100 | < −100 |
+| ATR (14) | — | — |
+| Highs/Lows (14) | range expanding up | range expanding down |
+| Ultimate Oscillator | < 30 | > 70 |
+| ROC (12) | positive | negative |
+| Bull/Bear Power (13) | bull > bear | bear > bull |
 
-High volatility is treated as a bearish risk factor; low volatility is a mild
-neutral reading. Confidence 70 (high/extreme) or 65 (low).
-
-### 3.5 `HTF_TREND` — higher-timeframe trend bias
-Source: `useMacroContext`. Reads current price against an EMA200 on the base
-series, with a session-based multiplier (London/NY overlap up-weights the read;
-Asia and closed sessions down-weight it). When the resulting bias is
-bullish/bearish, a factor is emitted with direction matching the bias and a
-**fixed weight of 10** and confidence 75. A neutral bias emits no factor. (Cross-
-market inputs such as DXY and yields are **not** available on this data plan and
-are reported as flat, never invented.)
-
-### 3.6 `AGGRESSOR_DELTA` — live buy/sell pressure
-Source: `useMarketData`, from the Binance aggregated-trade tape. Compares real
-buyer-initiated volume to seller-initiated volume:
-`deltaRatio = (buyerVolume − sellerVolume) / (buyerVolume + sellerVolume)`.
-Above +0.1 → BULLISH, below −0.1 → BEARISH, otherwise NEUTRAL. Weight is
-`min(100, round(|deltaRatio| × 150))`, so a lopsided tape votes harder.
-Confidence 70. Emitted only once trades have arrived.
-
-### 3.7 `SR_ZONE_BIAS` — support/resistance proximity
-Source: `useSrReversal`. Builds support/resistance levels from previous
-session/day/weekly highs and lows, the opening range, swing highs/lows and the
-high-volume point of control. Levels **within 1% of price** are counted:
-nearby supports add to the bullish side, nearby resistances to the bearish side,
-each scaled by `strength × confidence`. Direction is whichever side outweighs
-the other; weight is `min(100, round(totalWeight / 2))`.
-
-### 3.8 `REVERSAL_SIGNAL` — price at a watched level
-Source: `useSrReversal`. Emitted only when price is **touching** a level (within
-0.1% of price) whose confidence is ≥60. Touching support votes BULLISH,
-touching resistance votes BEARISH. Weight is half the reversal confidence
-(`round(confidence / 2)`). Volume behaviour (expansion vs. exhaustion) is
-computed as supporting detail on the reversal signal, and the timeframe
-alignment of the touched level feeds its confidence.
-
-### Summary table of factors
-
-| Factor | Category | Typical weight | Direction source |
-| --- | --- | --- | --- |
-| `MARKET_CONTEXT` | ZONE_CLUSTER | bullish-confluence % | zone/structure confluence score |
-| `MTF_ALIGNMENT` | STRUCTURE | winning timeframe share | timeframe vote counts |
-| `TECHNICAL_SUMMARY` | OSCILLATOR | 20 (fixed) | indicator buy/sell tally |
-| `VOLATILITY_REGIME` | VOLATILITY | 5–10 | ATR % of price |
-| `HTF_TREND` | MACRO | 10 (fixed) | price vs EMA200 |
-| `AGGRESSOR_DELTA` | ORDER_FLOW | 0–100 | executed trade-tape imbalance |
-| `SR_ZONE_BIAS` | SUPPORT_RESISTANCE | 0–100 | nearby S/R level balance |
-| `REVERSAL_SIGNAL` | REVERSAL | 0–~45 | price touching an S/R level |
+ATR is a volatility measure, not a direction, so it votes Neutral by design. It
+is shown because the raw value matters, not because it picks a side.
 
 ---
 
-## 4. How the factors are combined
+## 4. How the votes are combined
 
-`computeLiveAnalysis` performs a **weighted vote**, not an average of averages:
+1. The twelve moving-average votes are combined into a **Moving averages** gauge
+   using `maWeights`.
+2. The twelve indicator votes are combined into a **Technical indicators** gauge
+   using `indicatorWeights`.
+3. The two gauges are combined into the **Summary** using `blockWeights`.
 
-1. Every factor's weight is added to one of four buckets according to its
-   direction: **buyWeight**, **sellWeight**, **neutralWeight** or
-   **unavailableWeight**.
-2. `totalWeight` is the sum of all four buckets (with a floor of 1 to avoid
-   dividing by zero). Neutral and unavailable factors still count toward the
-   total, so a pile of neutral factors pulls the score toward the middle.
-3. The score is:
+Each gauge reports a score from −100 to +100 and the count of Buy, Neutral and
+Sell votes behind it.
 
-   ```
-   rawScore = round(((buyWeight − sellWeight) / totalWeight) × 100 + 50)
-   ```
-
-   50 is dead neutral, 100 is maximum bullish, 0 is maximum bearish.
-
-4. The direction label comes from that same score (see §6).
-5. **Agreement** — `factorAgreement` — is `max(buyWeight, sellWeight) /
-   (buyWeight + sellWeight) × 100`. It measures how united the factors that
-   actually took a side are, weighted by their contribution. It is deliberately
-   *not* the share of factors that reported data: a set of factors that all
-   disagree must not read as 100% agreement.
-
-The factor list is rebuilt every time any underlying input changes (price,
-candles, indicators, order flow, macro/volatility context, S/R factors or
-config), so the score always reflects the newest data available.
-
----
-
-## 5. When the compass updates (real-time vs periodic)
-
-There are two clocks, and this is important:
-
-- **The needle and the live score move in real time.** `useMarketData` holds one
-  combined WebSocket and commits a coalesced snapshot to React roughly every
-  **150 ms**. Each commit can change order flow and the open candle, which
-  recomputes the live analysis and therefore the score and needle angle. In
-  practice the needle reacts within a second or two of market activity. The
-  needle animates to its new angle with a 900 ms transition.
-
-- **The "official" signal is published once per minute.** A 1-second timer in
-  `useCompassSignal` watches the minute key; when the minute rolls over it calls
-  `publishOfficialSignal`, which freezes the current reading into the official
-  snapshot and appends it to the signal history. History is stored in
-  `localStorage` and capped at 100 entries.
-
-The gauge shows the **live** score while the feed is healthy and falls back to
-the last official score when there is no live reading. Because the official
-snapshot is only republished at minute boundaries, the live needle can visibly
-differ from the most recent history entry — that is expected.
-
-Rendering is driven by data, not by a candle-close timer or a manual refresh.
-A dropped socket triggers the client's capped-backoff reconnect; on the next
-`LIVE` the hook re-seeds history, and the UI shows a reconnecting banner rather
-than presenting stale data as live.
-
-There is one staleness guard: `computeLiveAnalysis` marks a reading stale if its
-timestamp is older than 60 s (`maxDataAgeMs`). Since the live timestamp is set at
-compute time, this mainly matters for a frozen feed.
-
----
-
-## 6. Thresholds and labels
-
-The 0–100 score maps to a direction in `scoreToDirection`, using these default
-thresholds (`DEFAULT_COMPASS_CONFIG`):
+The summary score maps to a label through `labelFromScore`:
 
 | Score | Label |
 | --- | --- |
-| ≥ 75 | **Strong buy** |
-| 55 – 74 | **Buy** |
-| 45 – 54 | **Neutral** |
-| 26 – 44 | **Sell** |
-| ≤ 25 | **Strong sell** |
+| ≥ +60 | Strong Buy |
+| +20 … +59 | Buy |
+| −19 … +19 | Neutral |
+| −59 … −20 | Sell |
+| ≤ −60 | Strong Sell |
 
-The needle angle is a straight linear mapping of the same score: 0 → −90°
-(far left), 50 → 0° (straight up), 100 → +90° (far right). The colour is
-interpolated from the same score between five anchors: strong sell (red),
-sell (light red), neutral (amber), buy (teal), strong buy (green).
-
-**Confidence** is not the factor agreement. It is derived from the score itself:
-
-```
-distanceFromNeutral = |score − 50| / 50
-confidence = round(quality × (0.35 + 0.65 × distanceFromNeutral) × 100)
-```
-
-where `quality` is the overall data-quality percentage (0–100) divided by 100.
-This means a reading near neutral can never claim high confidence, and a reading
-pinned to an extreme can never claim low confidence. Data quality scales the
-ceiling without changing the shape of the curve.
-
-### The publish gate (anti-noise)
-
-An official signal is only published when **all** of these hold:
-
-- At least **3** factors have data (`minValidFactors`),
-- overall data quality is at least **40** (`minConfidence`),
-- factor agreement is at least **55%** (`minFactorAgreement`).
-
-If the gate is not met, the previous official signal is retained (and marked
-stale) rather than replaced. Other config values — `scoreThreshold`,
-`directionChangeThreshold` and `scoreToDirection`'s boundaries — come from the
-same `DEFAULT_COMPASS_CONFIG`.
+There is exactly one function that turns a score into a label, and it is derived
+from the score's sign. A positive score cannot read as Sell.
 
 ---
 
-## 7. Data sources and honesty rules
+## 5. Confluence
 
-Every input above is derived from real Binance public market data: REST-seeded
-5-minute klines plus one combined WebSocket carrying `@ticker`, `@kline_5m`,
-`@depth10@100ms` and `@aggTrade`. Nothing is simulated, and cross-market feeds
-(DXY, VIX, yields) and the economic calendar are out of scope and reported as
-unavailable rather than fabricated. See `AGENTS.md` for the project's data-
-integrity rules.
+The confluence matrix shows every timeframe's reading at once and a weighted
+overall bias. Each timeframe's score is weighted by `timeframeWeights`, with the
+trend timeframes (1h, 4h, 1D) carrying the most weight, the 1m and 5m
+deliberately light, and the weekly a slow confirmation. The matrix also reports
+how many timeframes agree and in which direction.
+
+A timeframe with no data is reported as unavailable and does not vote.
+
+The default weights are:
+
+| Timeframe | Weight | Why |
+| --- | --- | --- |
+| M1 | 0.2 | Entry timing only; far too noisy to carry a trend read |
+| M5 | 0.6 | Short-term momentum |
+| M15 | 1.0 | The intraday swing |
+| M30 | 1.2 | The intraday trend |
+| 1H | 1.6 | The trend for an intraday entry |
+| 4H | 1.8 | The swing trend |
+| 1D | 2.0 | The dominant trend |
+| 1W | 1.2 | Slow confirmation |
+
+---
+
+## 6. Entry check
+
+The confluence matrix says what the market is doing. The entry check answers the
+next question: **does the market agree with the trade I am about to take?**
+
+You pick LONG or SHORT. Every timeframe's summary is then classified as agreeing,
+disagreeing or neutral relative to that direction, and the verdict is one of:
+
+| Verdict | Meaning |
+| --- | --- |
+| Aligned | The weighted majority agrees and no higher timeframe disagrees |
+| Partial | Some agreement, but not enough — or a higher timeframe is fighting |
+| Against | The weighted majority disagrees with the direction |
+
+Agreement is weighted by the same `timeframeWeights`, and it is measured only
+across timeframes that took a side, so a neutral timeframe neither helps nor
+hurts. A single higher-timeframe disagreement (1H and above by default) is enough
+to stop the verdict being Aligned and is reported as an explicit warning — that
+is the case worth knowing about before entering.
+
+The rules live in the `entryCheck` block of `src/config/compass.ts`:
+`higherTimeframes`, `warnOnHigherTimeframeDisagreement`, `alignedShare` and
+`againstShare`. The logic is `checkEntry` in `src/core/entryCheck.ts`, pure and
+covered by `src/core/__tests__/entryCheck.test.ts`.
+
+---
+
+## 7. When the compass updates
+
+There is no candle-close poll and no manual refresh. Candles are seeded once,
+then for crypto one combined WebSocket drives everything live (`@ticker`,
+`@kline_1m`, `@depth10@100ms`, `@aggTrade`). High-frequency messages accumulate
+in refs and one coalesced snapshot commits to React state every 150 ms, so the
+compass moves within a second or two of market activity without a re-render per
+trade.
+
+A futures provider serves candles on request; its newest bar is current as of
+the last fetch, and the status is reported honestly rather than as a live tick.
+
+---
+
+## 8. Data sources and honesty rules
+
+- **Never fabricate market data.** No random walks, no synthetic order flow, no
+  placeholder prices. An unavailable figure reads as unavailable.
+- **Order flow must be real.** It is shown only when the provider genuinely has a
+  book and tape. A candle-only provider hides the panel with an explanation.
+  Order flow is never estimated from candles.
+- **Keys stay server-side.** Crypto needs none. The futures provider's key is
+  read only by the functions under `api/` and never reaches the browser.
+- **Labels follow the score.** One function, derived from the sign, asserted by
+  tests.
