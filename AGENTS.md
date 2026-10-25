@@ -42,18 +42,48 @@ src/core/candles.ts            bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts    one timeframe -> three gauges + structure + metrics
 src/core/multiTimeframe.ts     every timeframe + the confluence bias
 src/core/entryCheck.ts         does the market agree with a long/short? (pure)
+src/core/marketHours.ts        is the market still producing bars? (pure)
 src/core/providers/            MarketDataProvider interface, Binance, futures
+src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
+src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/config/compass.ts          every weight, tolerance and session setting
 src/hooks/useInstrumentFeed.ts        candles, ticks, order flow for one instrument
 src/hooks/useMultiTimeframeCompass.ts runs the engine and publishes history
+api/_lib/symbols.ts            the ONE place symbols are mapped + candidates ordered
+api/_lib/twelvedata.ts         vendor adapter: request, parse, classify error kind
+api/_lib/candleCache.ts        symbol resolution + short-lived candle cache
 api/futures/candles.ts         server-side futures candle proxy
+api/futures/status.ts          is a key configured, and what symbol resolved
+api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
+scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
 All indicator, scoring, structure, session and history logic is pure and lives
 under `src/core` so it can be unit tested without a browser. Keep it that way:
 no I/O, no clock, no React in `src/core`.
 
-### Streaming, not polling
+### Futures are polled; crypto is streamed
+
+Crypto has a real push feed, so it streams. Futures do not: the provider is
+asked for candles on a cadence tied to the timeframe, and the price is polled
+every `PRICE_POLL_INTERVAL_MS` (30s) when no tick feed is in use. Because a
+polled close is not a tick, the status reads "Delayed (polling)" — do not dress
+it as `LIVE`.
+
+The poll cadence and the server cache TTL live together in
+`src/core/providers/polling.ts`. Every indicator is computed locally from
+candles, so a refresh costs ONE request per symbol and timeframe, never one per
+indicator; the server cache lets concurrent users share that call. Keep those
+two facts true when touching the cadence — they are what keeps the credit spend
+bounded.
+
+A symbol that returns no bars is a real "no bars here", not an error: the
+resolver walks to the next candidate. A rate limit is different and stops the
+walk immediately, because the next candidate would just burn another blocked
+call. A failure that is not an entitlement problem must not be reported as one
+(see `resolveCandidate`).
+
+### Streaming, not polling (crypto)
 
 There is no candle-close poll and no manual refresh. `useInstrumentFeed` seeds
 candle history with REST calls, then for crypto one combined
@@ -132,7 +162,8 @@ The root `tsconfig.json` is solution-style (`files: []`), so `npm run typecheck`
 and a bare `tsc --noEmit` check nothing at all. Always pass
 `-p tsconfig.app.json`. `src/components/ui/*` carries pre-existing missing-module
 errors (`cmdk`, several `@radix-ui/*` packages) and is not ours to fix, hence the
-grep. `npm run lint` is broken upstream (`typescript-eslint` not installed).
+grep. `npm run lint` passes with 0 errors; the 6 remaining warnings are all
+`react-refresh` notes in the vendored `src/components/ui/*`.
 
 ## Testing indicator math
 
