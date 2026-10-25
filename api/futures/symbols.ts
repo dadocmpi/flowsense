@@ -15,9 +15,9 @@
 // Never returns the key. Never invents a result: a candidate that fails is
 // reported as failed, with the vendor's own message.
 
-import { first, resolveVendor, sendJson, vendorApiKey, type ApiRequest, type ApiResponse } from '../_lib/futuresShared';
-import { fetchTimeSeries, searchSymbols, TwelveDataError } from '../_lib/twelvedata';
-import { INSTRUMENT_SYMBOLS } from '../_lib/symbols';
+import { first, resolveVendor, sendJson, vendorApiKey, type ApiRequest, type ApiResponse } from '../_lib/futuresShared.js';
+import { fetchTimeSeries, searchSymbols, TwelveDataError } from '../_lib/twelvedata.js';
+import { INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
 
 /** One small bar is enough to prove entitlement, and costs the least. */
 const PROBE_TIMEFRAME = '1D';

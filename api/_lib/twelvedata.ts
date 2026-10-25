@@ -25,8 +25,8 @@
 // code. That is what lets the client distinguish "not entitled on your plan"
 // from "you are out of credits" from "the vendor is down".
 
-import type { Candle } from '../../src/core/types';
-import { isEntitlementError, isRateLimitError } from './symbols';
+import type { Candle } from '../../src/core/types.js';
+import { isEntitlementError, isRateLimitError } from './symbols.js';
 
 export interface TimeSeriesValue {
   datetime: string;

@@ -18,10 +18,10 @@ import {
   websocketEnabled,
   type ApiRequest,
   type ApiResponse,
-} from '../_lib/futuresShared';
-import { knownResolution } from '../_lib/candleCache';
-import { INSTRUMENT_SYMBOLS } from '../_lib/symbols';
-import { POLL_INTERVAL_MS } from '../../src/core/providers/polling';
+} from '../_lib/futuresShared.js';
+import { knownResolution } from '../_lib/candleCache.js';
+import { INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
+import { POLL_INTERVAL_MS } from '../../src/core/providers/polling.js';
 
 export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const vendor = resolveVendor();
