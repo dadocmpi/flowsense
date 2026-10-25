@@ -29,7 +29,7 @@ label and the score can never disagree.
 | Entry-check rules (higher timeframes, agreement shares) | `src/config/compass.ts` |
 | Every weight, tolerance and session setting | `src/config/compass.ts` |
 | Data entry point for one instrument | `src/hooks/useInstrumentFeed.ts` |
-| Runs the engine, publishes history | `src/hooks/useMultiTimeframeCompass.ts` |
+| Runs the multi-timeframe engine | `src/hooks/useMultiTimeframeCompass.ts` |
 
 Everything in `src/core` is pure: no I/O, no clock, no React. That is what makes
 it testable without a browser, and it is deliberate — keep it that way.

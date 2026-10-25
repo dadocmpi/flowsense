@@ -47,7 +47,7 @@ src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/config/compass.ts          every weight, tolerance and session setting
 src/hooks/useInstrumentFeed.ts        candles, ticks, order flow for one instrument
-src/hooks/useMultiTimeframeCompass.ts runs the engine and publishes history
+src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
 api/_lib/symbols.ts            the ONE place symbols are mapped + candidates ordered
 api/_lib/twelvedata.ts         vendor adapter: request, parse, classify error kind
 api/_lib/candleCache.ts        symbol resolution + short-lived candle cache
