@@ -41,6 +41,7 @@ src/core/history.ts            signal history: ordering, dedupe, relabelling
 src/core/candles.ts            bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts    one timeframe -> three gauges + structure + metrics
 src/core/multiTimeframe.ts     every timeframe + the confluence bias
+src/core/entryCheck.ts         does the market agree with a long/short? (pure)
 src/core/providers/            MarketDataProvider interface, Binance, futures
 src/config/compass.ts          every weight, tolerance and session setting
 src/hooks/useInstrumentFeed.ts        candles, ticks, order flow for one instrument
@@ -56,8 +57,8 @@ no I/O, no clock, no React in `src/core`.
 
 There is no candle-close poll and no manual refresh. `useInstrumentFeed` seeds
 candle history with REST calls, then for crypto one combined
-WebSocket carries everything live: `@ticker` (24h stats), `@kline_5m` (the open
-candle, pushed on every trade), `@depth10@100ms` and `@aggTrade`. High-frequency
+WebSocket carries everything live: `@ticker` (24h stats), `@kline_1m` (the open
+base candle, pushed on every trade), `@depth10@100ms` and `@aggTrade`. High-frequency
 stream messages accumulate in refs and one coalesced snapshot commits to React
 state every 150 ms, so the compass, price and order flow all move within a
 second or two of market activity without re-rendering on every trade.
@@ -69,13 +70,19 @@ reconnecting banner instead of presenting stale data as live.
 
 ### Timeframes are fetched, not aggregated from one series
 
-Each timeframe is requested from the provider at its own interval, so a 5m seed
-cannot cap how far back the weekly reaches. The newest bar of the mergeable
-timeframes (15m, 30m, 1h, 4h, 1D) is refreshed from the live 5m tail via
-`mergeLiveTail`, so a higher timeframe moves with the market between fetches.
-Weekly is deliberately excluded: its exchange boundary (Monday open) is not the
-epoch-based bucket, so a rebuild would put the bar at the wrong time. Do not
-"fix" that by bucketing the weekly from 5m.
+Each timeframe is requested from the provider at its own interval, so a 1m seed
+cannot cap how far back the weekly reaches. The live stream carries the 1m bar;
+the newest bar of the mergeable timeframes (5m, 15m, 30m, 1h, 4h, 1D) is
+refreshed from that 1m tail via `mergeLiveTail`, so a higher timeframe moves
+with the market between fetches.
+
+`mergeLiveTail` refuses a partial rebuild: a 1m window covers only hours, so a
+daily bucket is usually only partly observed, and rebuilding it from that tail
+would report a high/low/volume for a day that has barely started. When the base
+window does not reach the bucket open, the natively fetched bar is kept. Weekly
+is excluded entirely: its exchange boundary (Monday open) is not the epoch-based
+bucket, so a rebuild would put the bar at the wrong time. Do not "fix" that by
+bucketing the weekly from 1m.
 
 Host fallback order (REST and WS alike): `data-api.binance.vision` →
 `api.binance.com` / `stream.binance.com:9443` → `api.binance.us` /

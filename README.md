@@ -17,12 +17,19 @@ is simulated, modelled or back-filled.
 
 ## Timeframes
 
-`5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`. Each timeframe is fetched natively
-from the provider rather than aggregated from a single base series, so a 5m
-seed cannot cap how far back the weekly reaches. The newest bar of the
-mergeable timeframes (15m through 1D) is refreshed from the live 5m tail, so a
-higher timeframe moves with the market between fetches instead of freezing.
-Weekly bars are not merged, because the epoch-based bucket boundary is not the
+`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, shown as `M1`, `M5`, `M15`,
+`M30`, `1H`, `4H`, `1D`, `1W`. Each timeframe is fetched natively from the
+provider rather than aggregated from a single base series, so a 1m seed cannot
+cap how far back the weekly reaches. The live stream carries the 1m bar; the
+newest bar of the mergeable timeframes (5m through 1D) is refreshed from that
+tail, so a higher timeframe moves with the market between fetches instead of
+freezing.
+
+A merge is refused when the base window does not reach the bucket open. A 1m
+window covers only a few hours, so the current daily bucket is usually only
+partly observed; rebuilding it would report a high, low and volume for a day
+that has barely started, so the natively fetched bar is kept instead. Weekly
+bars are never merged, because the epoch-based bucket boundary is not the
 exchange's Monday open.
 
 ## The compass
@@ -56,14 +63,44 @@ All weights live in one file: `src/config/compass.ts`.
 
 - `indicatorWeights` — per-indicator weight inside the indicator gauge.
 - `maWeights` — per-period weight inside the moving-average gauge.
-- `blockWeights` — how the MA block and the indicator block combine into the
+- `gaugeBlend` — how the MA block and the indicator block combine into the
   summary.
-- `timeframeWeights` — how much each timeframe counts in the confluence bias.
-  The intraday-to-daily range (15m, 1h, 4h, 1D) carries the most weight by
-  default; the 5m is deliberately light and the weekly is a slow confirmation.
-- `maTolerance` — the Neutral band around each moving average, as a fraction of
-  price.
+- `timeframeWeights` — how much each timeframe counts in the confluence bias
+  and in the entry check. The trend timeframes (1H, 4H, 1D) carry the most
+  weight by default; M1 and M5 are deliberately light and the weekly is a slow
+  confirmation.
+- `maTolerancePercent` — the Neutral band around each moving average, as a
+  percentage of price.
+- `thresholds` — the score cut-offs behind the five labels.
+- `entryCheck` — the rules behind the LONG / SHORT entry check:
+  `higherTimeframes`, `warnOnHigherTimeframeDisagreement`, `alignedShare` and
+  `againstShare`.
 - `session` — `mode` (`RTH` or `FULL`), `timezone`, and the open times.
+
+| Timeframe | Default weight |
+| --- | --- |
+| M1 | 0.2 |
+| M5 | 0.6 |
+| M15 | 1.0 |
+| M30 | 1.2 |
+| 1H | 1.6 |
+| 4H | 1.8 |
+| 1D | 2.0 |
+| 1W | 1.2 |
+
+## Entry check
+
+The confluence matrix says what the market is doing; the entry check answers
+whether it agrees with the trade you are about to take. Pick LONG or SHORT and
+every timeframe is classified as agreeing, disagreeing or neutral. The verdict
+is **Aligned**, **Partial** or **Against**.
+
+Agreement is weighted by `timeframeWeights` and measured only across timeframes
+that took a side, so a neutral timeframe neither helps nor hurts. A single
+higher-timeframe disagreement (1H and above by default) stops the verdict being
+Aligned and raises an explicit warning — the case worth knowing about before
+entering. The logic is pure (`src/core/entryCheck.ts`) and covered by
+`src/core/__tests__/entryCheck.test.ts`.
 
 ## Confluence matrix
 
@@ -177,6 +214,7 @@ src/core/history.ts         signal history store, ordering, dedupe, relabelling
 src/core/candles.ts         bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts one timeframe → three gauges + structure + metrics
 src/core/multiTimeframe.ts  every timeframe + the confluence bias
+src/core/entryCheck.ts      does the market agree with a long/short? (pure)
 src/core/providers/         MarketDataProvider interface + Binance and futures
 src/config/compass.ts       every weight, tolerance and session setting
 src/hooks/useInstrumentFeed.ts        candles, ticks, order flow for one instrument
@@ -192,9 +230,10 @@ npm test
 ```
 
 Covers every indicator against hand-computed values, vote thresholds, the score
-mapping, label/score-sign consistency, MTF confluence, session VWAP reset,
-continuous-market windows, history ordering and dedupe, order-flow aggregation
-and market structure.
+mapping, label/score-sign consistency, MTF confluence, the entry check
+(including the higher-timeframe warning), session VWAP reset, continuous-market
+windows, history ordering and dedupe, order-flow aggregation and market
+structure.
 
 ## Commands
 
