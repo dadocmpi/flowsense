@@ -5,19 +5,28 @@
 // environment, which is why it is the implementation that ships.
 //
 // Endpoint: https://api.twelvedata.com/time_series
-//   symbol    the continuous front-month contract (GC1!, ES1!, YM1!)
-//   interval 1min, 5min, 15min, 30min, 1h, 4h, 1day, 1week
-//   apikey   FUTURES_API_KEY (server-side only)
+//   symbol    a candidate from api/_lib/symbols.ts (futures first, proxy next)
+//   interval  1min, 5min, 15min, 30min, 1h, 4h, 1day, 1week
+//   timezone  pinned to UTC, so a payload never depends on where the serverless
+//             function runs
+//   apikey    TWELVE_DATA_API_KEY (server-side only, never in the bundle)
 //
 // The response carries `values` newest-first, each with datetime/open/high/
 // low/close/volume. We reverse them to oldest-first and normalise the datetime
 // to the shared "YYYY-MM-DD HH:MM:SS" UTC form the rest of the app expects.
 //
-// A Twelve Data plan may or may not include futures; if the symbol is not
-// entitled the API answers with an error status, which is surfaced verbatim
-// rather than papered over.
+// ALL indicators are computed locally from these candles. The vendor's own
+// indicator endpoints are deliberately not used: they would cost a credit per
+// indicator per timeframe per refresh, and the compass already has tested local
+// math for every one of them.
+//
+// Twelve Data reports most failures as HTTP 200 with status:"error", so the
+// error KIND is read from the message (see classifyError) rather than the status
+// code. That is what lets the client distinguish "not entitled on your plan"
+// from "you are out of credits" from "the vendor is down".
 
 import type { Candle } from '../../src/core/types';
+import { isEntitlementError, isRateLimitError } from './symbols';
 
 export interface TimeSeriesValue {
   datetime: string;
@@ -29,7 +38,14 @@ export interface TimeSeriesValue {
 }
 
 export interface TimeSeriesResponse {
-  meta?: { symbol?: string; interval?: string; exchange?: string; currency?: string };
+  meta?: {
+    symbol?: string;
+    interval?: string;
+    exchange?: string;
+    currency?: string;
+    /** Vendor's own instrument classification, e.g. "Physical Currency". */
+    type?: string;
+  };
   values?: TimeSeriesValue[];
   status?: string;
   code?: number;
@@ -47,6 +63,26 @@ export const TWELVEDATA_INTERVALS: Record<string, string> = {
   '1D': '1day',
   '1W': '1week',
 };
+
+export type VendorErrorKind = 'ENTITLEMENT' | 'RATE_LIMIT' | 'NETWORK' | 'UPSTREAM';
+
+/** An upstream failure with the kind already worked out. */
+export class TwelveDataError extends Error {
+  kind: VendorErrorKind;
+
+  constructor(kind: VendorErrorKind, message: string) {
+    super(message);
+    this.name = 'TwelveDataError';
+    this.kind = kind;
+  }
+}
+
+/** Classify a vendor message into the kind the route maps onto ProviderError. */
+export function classifyError(message: string, status = 0): VendorErrorKind {
+  if (status === 429 || isRateLimitError(message)) return 'RATE_LIMIT';
+  if (isEntitlementError(message)) return 'ENTITLEMENT';
+  return 'UPSTREAM';
+}
 
 function num(value: unknown): number {
   const parsed = typeof value === 'string' ? Number.parseFloat(value) : typeof value === 'number' ? value : NaN;
@@ -80,11 +116,12 @@ export function normalizeDatetime(datetime: string): string {
  */
 export function parseTimeSeries(payload: TimeSeriesResponse): Candle[] {
   if (payload.status === 'error') {
-    throw new Error(payload.message ?? 'Twelve Data returned an error');
+    const message = payload.message ?? 'Twelve Data returned an error';
+    throw new TwelveDataError(classifyError(message, payload.code ?? 0), message);
   }
-  if (!Array.isArray(payload.values)) {
-    throw new Error('Twelve Data returned no values');
-  }
+  // An empty array is a real "no bars at this interval", not an error. The
+  // caller treats it as a candidate failure and moves to the next symbol.
+  if (!Array.isArray(payload.values)) return [];
 
   const candles: Candle[] = payload.values
     .map(value => ({
@@ -109,13 +146,22 @@ export interface FetchTimeSeriesParams {
   signal?: AbortSignal;
 }
 
+export interface TimeSeriesResult {
+  candles: Candle[];
+  symbol: string;
+  interval: string;
+  /** The vendor's own instrument type, when it reports one (e.g. "Physical Currency"). */
+  instrumentType?: string;
+  exchange?: string;
+}
+
 export async function fetchTimeSeries({
   symbol,
   timeframe,
   limit,
   apiKey,
   signal,
-}: FetchTimeSeriesParams): Promise<{ candles: Candle[]; symbol: string; interval: string }> {
+}: FetchTimeSeriesParams): Promise<TimeSeriesResult> {
   const interval = TWELVEDATA_INTERVALS[timeframe] ?? '5min';
   const capped = Math.max(1, Math.min(5000, limit));
   const params = new URLSearchParams({
@@ -124,12 +170,20 @@ export async function fetchTimeSeries({
     outputsize: String(capped),
     apikey: apiKey,
     format: 'JSON',
+    // Pinned so the payload does not depend on where this function runs.
+    timezone: 'UTC',
   });
 
-  const response = await fetch(`https://api.twelvedata.com/time_series?${params.toString()}`, {
-    signal,
-    headers: { Accept: 'application/json' },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`https://api.twelvedata.com/time_series?${params.toString()}`, {
+      signal,
+      headers: { Accept: 'application/json' },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new TwelveDataError('NETWORK', 'Could not reach Twelve Data');
+  }
 
   // Twelve Data signals most errors with HTTP 200 and a status field, but a
   // real HTTP failure must still be reported as one.
@@ -137,16 +191,59 @@ export async function fetchTimeSeries({
   try {
     payload = (await response.json()) as TimeSeriesResponse;
   } catch {
-    throw new Error(`Twelve Data returned HTTP ${response.status} with an unreadable body`);
+    throw new TwelveDataError('UPSTREAM', `Twelve Data returned HTTP ${response.status} with an unreadable body`);
   }
 
-  if (!response.ok && payload.status !== 'error') {
-    throw new Error(`Twelve Data returned HTTP ${response.status}`);
+  if (payload.status === 'error') {
+    const message = payload.message ?? 'Twelve Data returned an error';
+    throw new TwelveDataError(classifyError(message, response.status), message);
+  }
+
+  if (!response.ok) {
+    throw new TwelveDataError(
+      classifyError(`HTTP ${response.status}`, response.status),
+      `Twelve Data returned HTTP ${response.status}`
+    );
   }
 
   return {
     candles: parseTimeSeries(payload),
     symbol: payload.meta?.symbol ?? symbol,
     interval: payload.meta?.interval ?? interval,
+    instrumentType: payload.meta?.type,
+    exchange: payload.meta?.exchange,
   };
+}
+
+// ============================================
+// SYMBOL SEARCH (used by `npm run check:symbols`)
+// ============================================
+
+export interface SymbolSearchMatch {
+  symbol: string;
+  instrument_name?: string;
+  exchange?: string;
+  instrument_type?: string;
+  country?: string;
+  currency?: string;
+}
+
+export interface SymbolSearchResponse {
+  data?: SymbolSearchMatch[];
+  status?: string;
+  message?: string;
+}
+
+export async function searchSymbols(query: string, apiKey: string, signal?: AbortSignal): Promise<SymbolSearchMatch[]> {
+  const params = new URLSearchParams({ symbol: query, apikey: apiKey, format: 'JSON' });
+  const response = await fetch(`https://api.twelvedata.com/symbol_search?${params.toString()}`, {
+    signal,
+    headers: { Accept: 'application/json' },
+  });
+  const payload = (await response.json()) as SymbolSearchResponse;
+  if (payload.status === 'error') {
+    const message = payload.message ?? 'symbol_search failed';
+    throw new TwelveDataError(classifyError(message, response.status), message);
+  }
+  return Array.isArray(payload.data) ? payload.data : [];
 }
