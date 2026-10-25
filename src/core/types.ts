@@ -5,12 +5,13 @@
 // dependency, so the whole indicator / scoring / structure pipeline can be
 // unit tested without a browser.
 
-export type Timeframe = '5m' | '15m' | '30m' | '1h' | '4h' | '1D' | '1W';
+export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1D' | '1W';
 
 /** Ordered shortest -> longest. */
-export const TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1D', '1W'];
+export const TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1D', '1W'];
 
 export const TIMEFRAME_MINUTES: Record<Timeframe, number> = {
+  '1m': 1,
   '5m': 5,
   '15m': 15,
   '30m': 30,
@@ -20,12 +21,14 @@ export const TIMEFRAME_MINUTES: Record<Timeframe, number> = {
   '1W': 10080,
 };
 
+/** Display labels. The internal keys stay stable; only the wording changes. */
 export const TIMEFRAME_LABELS: Record<Timeframe, string> = {
-  '5m': '5m',
-  '15m': '15m',
-  '30m': '30m',
-  '1h': '1h',
-  '4h': '4h',
+  '1m': 'M1',
+  '5m': 'M5',
+  '15m': 'M15',
+  '30m': 'M30',
+  '1h': '1H',
+  '4h': '4H',
   '1D': '1D',
   '1W': '1W',
 };

@@ -37,18 +37,20 @@ import {
   type OrderFlowState,
 } from '../core/orderFlow';
 
-/** The base timeframe every other timeframe is aggregated from. */
-export const BASE_TIMEFRAME: Timeframe = '5m';
-export const BASE_INTERVAL_MINUTES = 5;
+/** The base timeframe the live tail is merged from. */
+export const BASE_TIMEFRAME: Timeframe = '1m';
+export const BASE_INTERVAL_MINUTES = 1;
 const BASE_CANDLE_LIMIT = 1000;
 /** Higher timeframes are fetched natively, so 300 bars already covers years. */
 const TIMEFRAME_CANDLE_LIMIT = 300;
 /**
  * Timeframes whose bucket boundary lines up with the base series, so their
  * newest bar can be rebuilt from the live base tail. Weekly is excluded: its
- * exchange boundary (Monday open) is not the epoch-based bucket.
+ * exchange boundary (Monday open) is not the epoch-based bucket. A daily bucket
+ * is only merged when the base window actually reaches its open — see
+ * mergeLiveTail, which refuses a partial rebuild.
  */
-const MERGEABLE_TIMEFRAMES: Timeframe[] = ['15m', '30m', '1h', '4h', '1D'];
+const MERGEABLE_TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1D'];
 /** The stream pushes far faster than a screen needs to repaint. */
 const FLUSH_MS = 200;
 /** A tick this old is reported as delayed rather than live. */

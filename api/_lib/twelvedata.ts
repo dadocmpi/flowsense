@@ -38,6 +38,7 @@ export interface TimeSeriesResponse {
 
 /** App timeframe -> Twelve Data interval. */
 export const TWELVEDATA_INTERVALS: Record<string, string> = {
+  '1m': '1min',
   '5m': '5min',
   '15m': '15min',
   '30m': '30min',
