@@ -74,6 +74,40 @@ export function resampleCandles(candles: Candle[], timeframe: Timeframe, baseMin
   return aggregateCandles(candles, minutes);
 }
 
+/**
+ * Refresh the newest bar of a higher-timeframe series from a live base series.
+ *
+ * Higher timeframes are fetched natively so they carry real history, but a
+ * native fetch cannot know about a bar that is still forming. This rebuilds
+ * just the current bucket from the base candles that fall inside it and
+ * replaces the native bar, so the higher timeframe advances with the market
+ * instead of freezing at the last fetch.
+ *
+ * Only valid when the target bucket boundaries line up with the base series'
+ * own bucketing (15m/30m/1h/4h/1D from 5m). Weekly bars are not merged: the
+ * epoch-based bucket boundary is not the exchange's Monday open, so a rebuild
+ * would put the bar at the wrong time.
+ */
+export function mergeLiveTail(nativeSeries: Candle[], baseSeries: Candle[], bucketMinutes: number): Candle[] {
+  if (nativeSeries.length === 0 || baseSeries.length === 0 || bucketMinutes <= 0) return nativeSeries;
+
+  const bucketMs = bucketMinutes * 60_000;
+  const lastBase = baseSeries[baseSeries.length - 1];
+  const lastBaseTime = parseCandleTime(lastBase.datetime);
+  if (!Number.isFinite(lastBaseTime)) return nativeSeries;
+
+  const bucketStart = Math.floor(lastBaseTime / bucketMs) * bucketMs;
+  const tail = baseSeries.filter(c => {
+    const t = parseCandleTime(c.datetime);
+    return Number.isFinite(t) && t >= bucketStart && t < bucketStart + bucketMs;
+  });
+  if (tail.length === 0) return nativeSeries;
+
+  const [rebuilt] = aggregateCandles(tail, bucketMinutes);
+  if (!rebuilt) return nativeSeries;
+  return upsertLastCandle(nativeSeries, rebuilt);
+}
+
 /** Overwrite the newest candle of a series, or append it when it is new. */
 export function upsertLastCandle(series: Candle[], candle: Candle): Candle[] {
   if (series.length === 0) return [candle];

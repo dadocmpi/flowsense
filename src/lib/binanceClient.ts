@@ -9,7 +9,7 @@
 // (HTTP 451). We try the official hosts in order and remember whichever
 // answers, so a geo-block on one domain is not fatal.
 
-import type { Candle } from './indicators';
+import type { Candle } from '../core/types';
 
 const REST_HOSTS = [
   'https://data-api.binance.vision',

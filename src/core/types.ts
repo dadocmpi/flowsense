@@ -117,6 +117,8 @@ export interface TimeframeReading {
   price: number;
   /** Number of candles the reading was computed from. */
   candleCount: number;
+  /** Whether the metrics were measured over a session or a rolling window. */
+  sessionMode: 'SESSION' | 'CONTINUOUS';
   /** False when there were not enough candles to compute anything. */
   available: boolean;
 }

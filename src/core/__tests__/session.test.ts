@@ -191,3 +191,38 @@ describe('computeTechnicalMetrics — VWAP and POC reset at the session open', (
     expect(metrics.sessionHigh).toBeNull();
   });
 });
+
+describe('computeTechnicalMetrics — CONTINUOUS markets have no session reset', () => {
+  // Two consecutive days of candles. A SESSION instrument would only measure
+  // the second day; a CONTINUOUS one (crypto) must span both, because there is
+  // no open for it to reset at.
+  const candles: Candle[] = [
+    etCandle(2024, 6, 10, 10, 0, 100, 10),
+    etCandle(2024, 6, 10, 10, 5, 102, 20),
+    etCandle(2024, 6, 11, 10, 0, 200, 30),
+    etCandle(2024, 6, 11, 10, 5, 204, 40),
+  ];
+
+  it('spans the whole series rather than resetting at the session open', () => {
+    const metrics = computeTechnicalMetrics(candles, RTH, 'CONTINUOUS');
+    expect(metrics.sessionCandles).toBe(4);
+    expect(metrics.sessionHigh).toBe(205);
+    expect(metrics.sessionLow).toBe(99);
+  });
+
+  it('reports the window start as the first candle', () => {
+    const metrics = computeTechnicalMetrics(candles, RTH, 'CONTINUOUS');
+    expect(metrics.sessionStart).toBe(Date.parse('2024-06-10T14:00:00.000Z'));
+  });
+
+  it('still resets for a SESSION instrument over the same candles', () => {
+    const metrics = computeTechnicalMetrics(candles, RTH, 'SESSION');
+    // Only 2024-06-11 10:00-10:05 ET is inside the current RTH session.
+    expect(metrics.sessionCandles).toBe(2);
+    expect(metrics.sessionLow).toBe(199);
+  });
+
+  it('defaults to SESSION so existing callers are unaffected', () => {
+    expect(computeTechnicalMetrics(candles, RTH).sessionCandles).toBe(2);
+  });
+});

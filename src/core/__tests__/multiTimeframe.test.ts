@@ -3,10 +3,10 @@
 // ============================================
 
 import { describe, expect, it } from 'vitest';
-import { computeMultiTimeframe } from '../multiTimeframe';
+import { computeMultiTimeframe, computeMultiTimeframeFromSeries } from '../multiTimeframe';
 import { computeTimeframeReading } from '../timeframeEngine';
 import { computeConfluence, isBearishLabel, isBullishLabel, labelFromScore } from '../scoring';
-import { aggregateCandles, resampleCandles, normalizeSeries, upsertLastCandle } from '../candles';
+import { aggregateCandles, mergeLiveTail, resampleCandles, normalizeSeries, upsertLastCandle } from '../candles';
 import { DEFAULT_COMPASS_CONFIG, mergeCompassConfig } from '../../config/compass';
 import { TIMEFRAMES } from '../types';
 import type { Candle } from '../types';
@@ -214,5 +214,105 @@ describe('confluence agreement', () => {
     const result = computeConfluence([{ timeframe: '1h', score: 0, available: true }], DEFAULT_COMPASS_CONFIG);
     expect(result.agreement).toBe(0);
     expect(result.direction).toBeNull();
+  });
+});
+
+describe('computeMultiTimeframeFromSeries', () => {
+  it('uses each timeframe\u2019s own series rather than aggregating one base series', () => {
+    const result = computeMultiTimeframeFromSeries({
+      '5m': ramp(400),
+      '15m': ramp(400),
+      '1h': ramp(400),
+      '1D': ramp(400),
+    });
+    const daily = result.timeframes.find(t => t.timeframe === '1D');
+    // The daily is filled from its own native series even though no 5m series
+    // could have reached back far enough to build it.
+    expect(daily?.available).toBe(true);
+    expect(daily?.candleCount).toBe(400);
+  });
+
+  it('reports a timeframe with no series as unavailable instead of back-filling it', () => {
+    const result = computeMultiTimeframeFromSeries({ '5m': ramp(400) });
+    const weekly = result.timeframes.find(t => t.timeframe === '1W');
+    expect(weekly?.available).toBe(false);
+    expect(weekly?.candleCount).toBe(0);
+  });
+
+  it('covers every timeframe exactly once', () => {
+    const result = computeMultiTimeframeFromSeries({ '5m': ramp(400) });
+    expect(result.timeframes.map(t => t.timeframe)).toEqual(TIMEFRAMES);
+  });
+
+  it('takes the price from the finest available series', () => {
+    const result = computeMultiTimeframeFromSeries({ '1h': ramp(50, 500, 1) });
+    expect(result.price).toBe(549);
+  });
+
+  it('falls back to the supplied price when no series is present', () => {
+    expect(computeMultiTimeframeFromSeries({}, DEFAULT_COMPASS_CONFIG, undefined, 1234).price).toBe(1234);
+  });
+});
+
+describe('mergeLiveTail', () => {
+  it('replaces the newest bar of a higher timeframe from the live base tail', () => {
+    // A 1h bar as the provider last reported it: close 200.
+    const native1h: Candle[] = [
+      { datetime: '2024-01-01 12:00:00', open: 190, high: 200, low: 189, close: 200, volume: 50 },
+    ];
+    // Live 5m bars inside the same 12:00-13:00 bucket, closing at 215.
+    const base: Candle[] = [
+      { datetime: '2024-01-01 12:00:00', open: 200, high: 210, low: 199, close: 205, volume: 10 },
+      { datetime: '2024-01-01 12:05:00', open: 205, high: 216, low: 204, close: 215, volume: 20 },
+    ];
+
+    const merged = mergeLiveTail(native1h, base, 60);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].datetime).toBe('2024-01-01 12:00:00');
+    expect(merged[0].close).toBe(215);
+    expect(merged[0].high).toBe(216);
+    expect(merged[0].volume).toBe(30);
+  });
+
+  it('appends a bucket the native series has not seen yet', () => {
+    const native1h: Candle[] = [
+      { datetime: '2024-01-01 12:00:00', open: 190, high: 200, low: 189, close: 200, volume: 50 },
+    ];
+    const base: Candle[] = [
+      { datetime: '2024-01-01 13:00:00', open: 200, high: 205, low: 198, close: 204, volume: 5 },
+    ];
+
+    const merged = mergeLiveTail(native1h, base, 60);
+    expect(merged).toHaveLength(2);
+    expect(merged[1].datetime).toBe('2024-01-01 13:00:00');
+    expect(merged[1].close).toBe(204);
+  });
+
+  it('leaves the series untouched when the base tail is empty', () => {
+    const native1h: Candle[] = [
+      { datetime: '2024-01-01 12:00:00', open: 190, high: 200, low: 189, close: 200, volume: 50 },
+    ];
+    expect(mergeLiveTail(native1h, [], 60)).toBe(native1h);
+  });
+
+  it('never invents a bar when the native series is empty', () => {
+    const base: Candle[] = [
+      { datetime: '2024-01-01 12:00:00', open: 200, high: 210, low: 199, close: 205, volume: 10 },
+    ];
+    expect(mergeLiveTail([], base, 60)).toEqual([]);
+  });
+
+  it('does not merge bars from a different bucket', () => {
+    const native1h: Candle[] = [
+      { datetime: '2024-01-01 11:00:00', open: 190, high: 200, low: 189, close: 200, volume: 50 },
+    ];
+    // The base tail sits in the 12:00 bucket, which the native series has not
+    // reported yet; the new bucket is appended, and the 11:00 bar is untouched.
+    const base: Candle[] = [
+      { datetime: '2024-01-01 12:00:00', open: 200, high: 210, low: 199, close: 205, volume: 10 },
+    ];
+    const merged = mergeLiveTail(native1h, base, 60);
+    expect(merged[0].close).toBe(200);
+    expect(merged[1].close).toBe(205);
   });
 });
