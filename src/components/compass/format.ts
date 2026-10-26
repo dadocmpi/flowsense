@@ -52,9 +52,3 @@ export function formatClock(ms: number | null): string {
   if (!ms) return '--';
   return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
-
-/** A signed score, e.g. "+42" / "-17". */
-export function formatScore(score: number): string {
-  const rounded = Math.round(score);
-  return `${rounded > 0 ? '+' : ''}${rounded}`;
-}

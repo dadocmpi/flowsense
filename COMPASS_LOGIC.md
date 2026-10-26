@@ -18,15 +18,12 @@ label and the score can never disagree.
 | --- | --- |
 | Indicator math (SMA, EMA, RSI, MACD, ADX, …) | `src/core/indicators.ts` |
 | Per-indicator and per-MA vote logic | `src/core/votes.ts` |
-| Gauge building, score → label, confluence | `src/core/scoring.ts` |
-| Market structure (swings, BOS, CHoCH, premium/discount) | `src/core/structure.ts` |
+| Gauge building, score → label, overall bias | `src/core/scoring.ts` |
 | Entry check: does the market agree with a long/short? | `src/core/entryCheck.ts` |
-| Session open resolution (RTH/FULL, DST-safe) | `src/core/session.ts` |
-| ATR, VWAP, session range, point of control | `src/core/metrics.ts` |
 | Candle bucketing, resampling, live-tail merge | `src/core/candles.ts` |
-| One timeframe → three gauges + structure + metrics | `src/core/timeframeEngine.ts` |
-| Every timeframe + the confluence bias | `src/core/multiTimeframe.ts` |
-| Entry-check rules (higher timeframes, agreement shares) | `src/config/compass.ts` |
+| One timeframe → gauges + blended summary | `src/core/timeframeEngine.ts` |
+| Every timeframe + the overall bias | `src/core/multiTimeframe.ts` |
+| Entry-check rules (higher timeframes, thresholds) | `src/config/compass.ts` |
 | Every weight, tolerance and session setting | `src/config/compass.ts` |
 | Data entry point for one instrument | `src/hooks/useInstrumentFeed.ts` |
 | Runs the multi-timeframe engine | `src/hooks/useMultiTimeframeCompass.ts` |
@@ -38,25 +35,12 @@ it testable without a browser, and it is deliberate — keep it that way.
 
 ## 2. Timeframes
 
-`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, displayed as
-`M1`, `M5`, `M15`, `M30`, `1H`, `4H`, `1D`, `1W`.
+`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, displayed as
+`M1`, `M5`, `M15`, `M30`, `1H`, `4H`, `1D`. There is no weekly.
 
 Each timeframe is fetched from the provider at its own interval, not aggregated
-from one base series. A 1m seed cannot reach back far enough to fill a weekly, so
+from one base series. A 1m seed cannot reach back far enough to fill a daily, so
 aggregating everything from 1m would silently leave the higher timeframes empty.
-
-The live stream carries the 1m bar. The newest bar of the mergeable timeframes
-(5m, 15m, 30m, 1h, 4h, 1D) is refreshed from that live 1m tail via
-`mergeLiveTail`, so a higher timeframe advances with the market between fetches.
-Weekly is deliberately excluded: its exchange boundary (the Monday open) is not
-the epoch-based bucket, so a rebuild would place the bar at the wrong time.
-
-`mergeLiveTail` also refuses a partial rebuild. A 1m window covers only a few
-hours, so the current daily bucket is usually only partly observed; rebuilding
-it from that tail would report a high, low and volume for a day that has barely
-started. When the base window does not reach the bucket open, the natively
-fetched bar is kept instead — real but unadvanced, rather than replaced with a
-wrong one.
 
 A timeframe with too few candles to warm up its indicators is reported as
 unavailable and does not vote. It is never back-filled.
@@ -70,8 +54,8 @@ unavailable and does not vote. It is never back-filled.
 SMA and EMA over 5, 10, 20, 50, 100, 200 — twelve factors.
 
 Each votes **Buy** when price is above the average, **Sell** when below, and
-**Neutral** inside a tolerance band. The tolerance is `maTolerance` in
-`src/config/compass.ts`, expressed as a fraction of price, so a price sitting
+**Neutral** inside a tolerance band. The tolerance is `maTolerancePercent` in
+`src/config/compass.ts`, expressed as a percentage of price, so a price sitting
 fractions of a percent from an average does not cast a false directional vote.
 
 ### Technical indicators
@@ -94,17 +78,20 @@ Twelve factors, each with a standard threshold:
 | Bull/Bear Power (13) | bull > bear | bear > bull |
 
 ATR is a volatility measure, not a direction, so it votes Neutral by design. It
-is shown because the raw value matters, not because it picks a side.
+is present as a context reading, not because it picks a side.
+
+Only the blended summary is displayed; the individual votes exist inside the
+scoring logic.
 
 ---
 
 ## 4. How the votes are combined
 
-1. The twelve moving-average votes are combined into a **Moving averages** gauge
+1. The twelve moving-average votes are combined into a **moving averages** gauge
    using `maWeights`.
-2. The twelve indicator votes are combined into a **Technical indicators** gauge
-   using `indicatorWeights`.
-3. The two gauges are combined into the **Summary** using `blockWeights`.
+2. The twelve indicator votes are combined into an **indicators** gauge using
+   `indicatorWeights`.
+3. The two gauges are combined into the **summary** using `gaugeBlend`.
 
 Each gauge reports a score from −100 to +100 and the count of Buy, Neutral and
 Sell votes behind it.
@@ -124,13 +111,14 @@ from the score's sign. A positive score cannot read as Sell.
 
 ---
 
-## 5. Confluence
+## 5. The overall bias
 
-The confluence matrix shows every timeframe's reading at once and a weighted
-overall bias. Each timeframe's score is weighted by `timeframeWeights`, with the
-trend timeframes (1h, 4h, 1D) carrying the most weight, the 1m and 5m
-deliberately light, and the weekly a slow confirmation. The matrix also reports
-how many timeframes agree and in which direction.
+The compass shows one timeframe at a time; the left list shows all seven with
+their labels and scores, plus an overall bias line. The bias is the weighted
+combination of every timeframe's summary score, using `timeframeWeights`, with
+the trend timeframes (1h, 4h, 1D) carrying the most weight, the 1m and 5m
+deliberately light. The line also reports how many timeframes agree with the
+bias and in which direction.
 
 A timeframe with no data is reported as unavailable and does not vote.
 
@@ -145,59 +133,49 @@ The default weights are:
 | 1H | 1.6 | The trend for an intraday entry |
 | 4H | 1.8 | The swing trend |
 | 1D | 2.0 | The dominant trend |
-| 1W | 1.2 | Slow confirmation |
 
 ---
 
 ## 6. Entry check
 
-The confluence matrix says what the market is doing. The entry check answers the
-next question: **does the market agree with the trade I am about to take?**
+The compass says what the market is doing. The entry check answers the next
+question: **does the market agree with the trade I am about to take?**
 
 You pick LONG or SHORT. Every timeframe's summary is then classified as agreeing,
 disagreeing or neutral relative to that direction, and the verdict is one of:
 
 | Verdict | Meaning |
 | --- | --- |
-| Aligned | The weighted majority agrees and no higher timeframe disagrees |
-| Partial | Some agreement, but not enough — or a higher timeframe is fighting |
-| Against | The weighted majority disagrees with the direction |
+| ALIGNED | At least 5 of 7 timeframes agree and no higher timeframe disagrees |
+| PARTIAL | Some agreement, but not enough — or a higher timeframe is fighting |
+| AGAINST | At most 3 agree, or most higher timeframes disagree |
 
-Agreement is weighted by the same `timeframeWeights`, and it is measured only
-across timeframes that took a side, so a neutral timeframe neither helps nor
-hurts. A single higher-timeframe disagreement (1H and above by default) is enough
-to stop the verdict being Aligned and is reported as an explicit warning — that
-is the case worth knowing about before entering.
+Neutral counts as not agreeing but is never shown as disagreeing. A single
+higher-timeframe disagreement (1H and above by default) is enough to stop the
+verdict being ALIGNED and is reported as an explicit warning — that is the case
+worth knowing about before entering.
 
 The rules live in the `entryCheck` block of `src/config/compass.ts`:
-`higherTimeframes`, `warnOnHigherTimeframeDisagreement`, `alignedShare` and
-`againstShare`. The logic is `checkEntry` in `src/core/entryCheck.ts`, pure and
-covered by `src/core/__tests__/entryCheck.test.ts`.
+`higherTimeframes`, `minAligned`, `maxAlignedForAgainst` and
+`warnOnHigherTimeframeDisagreement`. The logic is `checkEntry` in
+`src/core/entryCheck.ts`, pure and covered by
+`src/core/__tests__/entryCheck.test.ts`.
 
 ---
 
 ## 7. When the compass updates
 
-There is no candle-close poll and no manual refresh. Candles are seeded once,
-then for crypto one combined WebSocket drives everything live (`@ticker`,
-`@kline_1m`, `@depth10@100ms`, `@aggTrade`). High-frequency messages accumulate
-in refs and one coalesced snapshot commits to React state every 150 ms, so the
-compass moves within a second or two of market activity without a re-render per
-trade.
-
-A futures provider serves candles on request; its newest bar is current as of
-the last fetch, and the status is reported honestly rather than as a live tick.
+There is no candle-close poll and no manual refresh. The provider serves candles
+on request; the newest bar is current as of the last fetch, and the status is
+reported honestly rather than as a live tick.
 
 ---
 
 ## 8. Data sources and honesty rules
 
-- **Never fabricate market data.** No random walks, no synthetic order flow, no
+- **Never fabricate market data.** No random walks, no synthetic series, no
   placeholder prices. An unavailable figure reads as unavailable.
-- **Order flow must be real.** It is shown only when the provider genuinely has a
-  book and tape. A candle-only provider hides the panel with an explanation.
-  Order flow is never estimated from candles.
-- **Keys stay server-side.** Crypto needs none. The futures provider's key is
-  read only by the functions under `api/` and never reaches the browser.
+- **Keys stay server-side.** The futures provider's key is read only by the
+  functions under `api/` and never reaches the browser.
 - **Labels follow the score.** One function, derived from the sign, asserted by
   tests.

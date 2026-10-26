@@ -85,11 +85,6 @@ export function setFuturesConfigured(value: boolean | null): void {
   configuredCache = value;
 }
 
-/** True when the server says a browser-safe live feed is available. */
-export function futuresLiveStreamEnabled(): boolean {
-  return liveStreamCache === true;
-}
-
 export function resolvedSourceFor(instrumentId: string): ResolvedSource | undefined {
   return resolvedCache.get(instrumentId);
 }

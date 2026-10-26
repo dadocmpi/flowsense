@@ -81,13 +81,3 @@ export interface MarketDataProvider {
   /** Optional live price feed. */
   subscribeTicks?(instrument: Instrument, handlers: TickHandlers): Subscription;
 }
-
-/** What the UI needs to describe a source honestly. */
-export interface ProviderStatus {
-  id: ProviderId;
-  label: string;
-  configured: boolean;
-  capabilities: ProviderCapabilities;
-  /** Why it is not configured, for the data-source panel. */
-  note?: string;
-}

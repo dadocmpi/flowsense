@@ -1,13 +1,11 @@
 export * from './types';
-export * from './registry';
+export { providerForInstrument } from './registry';
 export {
   futuresProvider,
   probeFuturesProvider,
   setFuturesConfigured,
   resolvedSourceFor,
-  futuresLiveStreamEnabled,
   clearFuturesCaches,
-  pollCandles,
 } from './futures';
 export {
   POLL_INTERVAL_MS,
