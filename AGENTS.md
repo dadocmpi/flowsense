@@ -25,19 +25,16 @@ arithmetic over one. Nothing is simulated.
 ```
 src/core/indicators.ts         pure indicator math, no I/O
 src/core/votes.ts              per-indicator and per-MA vote logic
-src/core/scoring.ts            gauges, score -> label mapping, confluence
-src/core/structure.ts          swing highs/lows, BOS, CHoCH, premium/discount
-src/core/session.ts            session open resolution (RTH/FULL), DST-safe
-src/core/metrics.ts            ATR, VWAP, session range, point of control
+src/core/scoring.ts            gauge building, score -> label mapping
 src/core/candles.ts            bucketing, resampling, live-tail merge
-src/core/timeframeEngine.ts    one timeframe -> three gauges + structure + metrics
-src/core/multiTimeframe.ts     every timeframe + the confluence bias
+src/core/timeframeEngine.ts    one timeframe -> the summary gauge
+src/core/multiTimeframe.ts     every timeframe the entry check reads
 src/core/entryCheck.ts         does the market agree with a long/short? (pure)
 src/core/marketHours.ts        is the market still producing bars? (pure)
 src/core/providers/            MarketDataProvider interface + the futures provider
 src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
-src/config/compass.ts          every weight, tolerance and session setting
+src/config/compass.ts          every weight and tolerance setting
 src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
 api/_lib/symbols.ts            the ONE place symbols are mapped + candidates ordered
@@ -49,9 +46,9 @@ api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
-All indicator, scoring, structure, session and history logic is pure and lives
-under `src/core` so it can be unit tested without a browser. Keep it that way:
-no I/O, no clock, no React in `src/core`.
+All indicator, scoring and history logic is pure and lives under `src/core` so
+it can be unit tested without a browser. Keep it that way: no I/O, no clock, no
+React in `src/core`.
 
 ### The futures feed is polled, or streamed when the server offers it
 
@@ -97,30 +94,40 @@ with the market between fetches.
 `mergeLiveTail` refuses a partial rebuild: a 1m window covers only hours, so a
 daily bucket is usually only partly observed, and rebuilding it from that tail
 would report a high/low/volume for a day that has barely started. When the base
-window does not reach the bucket open, the natively fetched bar is kept. Weekly
-is excluded entirely: its exchange boundary (Monday open) is not the epoch-based
-bucket, so a rebuild would put the bar at the wrong time. Do not "fix" that by
-bucketing the weekly from 1m.
+window does not reach the bucket open, the natively fetched bar is kept.
 
 ## UI
 
-The top bar holds the price and the asset tabs only. The removed "DATA: LIVE",
-"CANDLES IN" countdown and REFRESH button were obsolete once the feed became
-continuous — do not re-add them. Debug-style internals (raw data-quality
-percentages, last-bar timestamps, candle counts) belong in a secondary section
-below the primary view, not in the primary view.
+The screen is a single compass. There is exactly ONE gauge: the Summary. The
+moving-average and indicator blocks still feed its score, but they are not drawn
+as gauges of their own, and the vote-count line ("B 7 · N 16 · S 1") is gone.
+Do not re-add them: the compass shows the needle, the label and the score, and
+nothing else.
+
+Seven small timeframe buttons (M1 M5 M15 M30 1H 4H 1D) sit directly above the
+compass and are pure selectors — no labels, scores or reading colours on them.
+The top bar holds the logo, the asset buttons, the live price with its daily
+change, the status dot and the last update time, and nothing else.
+
+The Technical metrics section, the Market structure block, the Timeframe detail
+section and the Multi-timeframe confluence block were all removed. Their code
+(`src/core/metrics.ts`, `src/core/structure.ts`, `src/core/session.ts`, the ATR /
+VWAP / POC helpers and `computeConfluence`) is deleted — do not bring any of it
+back, and do not reintroduce a 1W timeframe.
+
+All seven timeframes are still computed even though only one is drawn, because
+the entry check reads every one of them. Keep it that way.
 
 Every panel is permanently expanded. Do not add collapsible/show-hide controls,
 accordions or any other click-to-reveal wrapper: all data must be visible on
-page load. Put secondary or debug content in its own always-visible section
-instead of hiding it.
+page load.
 
 ## Score and labels
 
 The score runs from -100 to +100 and its label is always derived from the score
 through `labelFromScore`, so a positive score can never read Sell. Mapping:
 >= +60 Strong Buy, +20..+59 Buy, -19..+19 Neutral, -59..-20 Sell, <= -60 Strong
-Sell. Every weight, tolerance and session setting lives in
+Sell. Every weight and tolerance setting lives in
 `src/config/compass.ts` — change them there, not inline.
 
 ## Commands
