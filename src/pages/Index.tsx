@@ -45,9 +45,30 @@ function statusOf(feed: ReturnType<typeof useInstrumentFeed>): { label: string; 
   return { label: 'Connecting', tone: 'bg-white/40' };
 }
 
+const ENTRY_DIRECTION_KEY = 'flowsense.entryDirection';
+
+/** The last direction the user chose, so the panel opens on it again. */
+function readStoredDirection(): EntryDirection {
+  try {
+    return localStorage.getItem(ENTRY_DIRECTION_KEY) === 'SHORT' ? 'SHORT' : 'LONG';
+  } catch {
+    return 'LONG';
+  }
+}
+
 const Index: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string>(DEFAULT_INSTRUMENT_ID);
-  const [entryDirection, setEntryDirection] = useState<EntryDirection>('LONG');
+  const [entryDirection, setEntryDirection] = useState<EntryDirection>(readStoredDirection);
+
+  const chooseDirection = (direction: EntryDirection) => {
+    setEntryDirection(direction);
+    try {
+      localStorage.setItem(ENTRY_DIRECTION_KEY, direction);
+    } catch {
+      // A browser that blocks storage is not a reason to lose the choice for
+      // this session.
+    }
+  };
   const instrument: Instrument = useMemo(
     () => findInstrument(selectedId) ?? findInstrument(DEFAULT_INSTRUMENT_ID)!,
     [selectedId]
@@ -207,7 +228,7 @@ const Index: React.FC = () => {
         {/* RIGHT: the entry check */}
         <section className="flex min-h-0 flex-col rounded-2xl border border-white/[0.06] bg-[#0b0c10] p-5">
           {entryCheck ? (
-            <EntryCheckPanel result={entryCheck} direction={entryDirection} onDirectionChange={setEntryDirection} />
+            <EntryCheckPanel result={entryCheck} direction={entryDirection} onDirectionChange={chooseDirection} />
           ) : (
             <p className="m-auto text-body italic text-white/40">Entry check unavailable.</p>
           )}

@@ -35,14 +35,14 @@ export const CompassGauge: React.FC<CompassGaugeProps> = ({ gauge, title }) => {
   const describeArc = (radius: number) => `M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`;
 
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex w-full max-w-[820px] flex-col items-center">
       {title && (
         <span className="text-label font-semibold uppercase tracking-[0.3em] text-white/40">{title}</span>
       )}
 
       <svg
         viewBox={`0 0 ${WIDTH} ${height}`}
-        className="w-full max-w-[640px]"
+        className="w-full"
         role="img"
         aria-label={`${title ? `${title}: ` : ''}${labelShort(gauge.label)} (score ${Math.round(score)})`}
       >
