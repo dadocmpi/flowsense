@@ -22,9 +22,8 @@ function candle(close: number, index: number, volume = 100): Candle {
   };
 }
 
-/** A 5-minute series long enough to fill the longest timeframe that can be
- *  aggregated from it (the weekly needs 30 weekly bars, which a 5m series
- *  cannot supply in a test, so only the reachable timeframes are asserted). */
+/** A 5-minute series long enough to fill the longer timeframes that can be
+ *  aggregated from it (only the reachable timeframes are asserted). */
 function ramp(length: number, start = 100, step = 0.5): Candle[] {
   return Array.from({ length }, (_, i) => candle(start + i * step, i));
 }
@@ -136,13 +135,13 @@ describe('computeMultiTimeframe', () => {
     expect(result.price).toBe(candles[candles.length - 1].close);
   });
 
-  it('marks short timeframes available and the weekly unavailable on a short base', () => {
+  it('marks short timeframes available and longer ones unavailable on a short base', () => {
     const result = computeMultiTimeframe(ramp(500), 5, DEFAULT_COMPASS_CONFIG);
     const byTf = new Map(result.timeframes.map(t => [t.timeframe, t]));
     expect(byTf.get('5m')!.available).toBe(true);
     expect(byTf.get('1h')!.available).toBe(true);
-    // 500 x 5m is under two days, so the weekly cannot have 30 bars.
-    expect(byTf.get('1W')!.available).toBe(false);
+    // 500 x 5m is under two days, so the daily cannot have 30 bars.
+    expect(byTf.get('1D')!.available).toBe(false);
   });
 
   it('produces a positive confluence bias on a sustained uptrend', () => {
@@ -168,7 +167,7 @@ describe('computeMultiTimeframe', () => {
 
   it('honours a custom timeframe weight table', () => {
     const heavy5m = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      timeframeWeights: { '1m': 0, '5m': 100, '15m': 0, '30m': 0, '1h': 0, '4h': 0, '1D': 0, '1W': 0 },
+      timeframeWeights: { '1m': 0, '5m': 100, '15m': 0, '30m': 0, '1h': 0, '4h': 0, '1D': 0 },
     });
     const readings = [
       { timeframe: '5m', score: 90, available: true },
@@ -218,9 +217,9 @@ describe('computeMultiTimeframeFromSeries', () => {
 
   it('reports a timeframe with no series as unavailable instead of back-filling it', () => {
     const result = computeMultiTimeframeFromSeries({ '5m': ramp(400) });
-    const weekly = result.timeframes.find(t => t.timeframe === '1W');
-    expect(weekly?.available).toBe(false);
-    expect(weekly?.candleCount).toBe(0);
+    const fourHour = result.timeframes.find(t => t.timeframe === '4h');
+    expect(fourHour?.available).toBe(false);
+    expect(fourHour?.candleCount).toBe(0);
   });
 
   it('covers every timeframe exactly once', () => {

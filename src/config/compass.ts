@@ -148,12 +148,11 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     '1h': 1.6,
     '4h': 1.8,
     '1D': 2.0,
-    '1W': 1.2,
   },
 
   entryCheck: {
     // 1H and above is "the trend" for an intraday entry.
-    higherTimeframes: ['1h', '4h', '1D', '1W'],
+    higherTimeframes: ['1h', '4h', '1D'],
     warnOnHigherTimeframeDisagreement: true,
     // A majority of the weighted directional vote, plus agreement from the
     // higher timeframes, is what earns ALIGNED.
