@@ -18,8 +18,6 @@
 //   candles   yes
 //   ticks     yes, but only through a live feed the server is willing to expose;
 //             otherwise the feed polls REST and the UI shows a "polling" badge
-//   orderFlow NO  — a price feed and a candle feed cannot produce a real order
-//             book or a real aggressor split, so futures never show one
 //
 // The provider reports WHICH symbol answered and whether it is a proxy. A proxy
 // is never presented as the futures contract.
@@ -87,11 +85,6 @@ export function setFuturesConfigured(value: boolean | null): void {
   configuredCache = value;
 }
 
-/** True when the server says a browser-safe live feed is available. */
-export function futuresLiveStreamEnabled(): boolean {
-  return liveStreamCache === true;
-}
-
 export function resolvedSourceFor(instrumentId: string): ResolvedSource | undefined {
   return resolvedCache.get(instrumentId);
 }
@@ -118,7 +111,7 @@ function rememberResolution(instrumentId: string, payload: FuturesRouteResponse)
 export const futuresProvider: MarketDataProvider = {
   id: 'futures',
   label: 'Twelve Data (server-proxied)',
-  capabilities: { candles: true, ticks: true, orderFlow: false },
+  capabilities: { candles: true, ticks: true },
 
   isConfigured: () => configuredCache === true,
 

@@ -1,40 +1,48 @@
 # FlowSense
 
-Multi-timeframe market compass. **Gold futures (GC), S&P 500 futures (ES) and
-Dow Jones futures (YM) are the default instruments**; Binance USDT spot pairs
-remain available as a secondary group.
+A single-screen, multi-timeframe market compass. **Gold futures (GC), S&P 500
+futures (ES) and Dow Jones futures (YM) are the instruments**, sourced from
+Twelve Data through a server-side route so the API key never reaches the
+browser. Gold is the default.
 
 Every number is either a provider response or arithmetic over one. Where a
 figure is not available the app shows an explicit unavailable state — nothing
 is simulated, modelled or back-filled.
 
-## Instrument groups
+## The screen
 
-| Group | Instruments | Candle source | Order flow |
-| --- | --- | --- | --- |
-| Futures (default) | GC, ES, YM | Twelve Data, via a server-side API route (key never reaches the browser) | Not available — hidden with an explanation |
-| Crypto | BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, LINK, LTC | Binance public REST + WebSocket | Real: book depth, trade tape, aggressor split |
+One 1920x1080 view, no scrolling. Dark theme, large type.
+
+- **Top bar** — brand; asset buttons (GOLD, S&P 500, DOW JONES); timeframe
+  buttons (M1, M5, M15, M30, 1H, 4H, 1D, default M15) that drive the main
+  compass; on the right the live price, daily change, a status dot
+  (live / delayed / closed) and the last update time.
+- **Left** — the one and only list of all seven timeframes. Each row shows the
+  timeframe, its colour-coded label and its score; clicking a row selects it
+  for the compass. A single line at the bottom gives the overall bias, e.g.
+  "Overall bias: Sell, 5 of 7 aligned".
+- **Centre** — one large compass (gauge with needle) for the selected asset and
+  timeframe, with the big label and the score from −100 to +100.
+- **Right** — the entry check (below).
+- **Bottom** — one small line with the data source, the symbol actually used
+  (and "proxy" when it is not the futures contract) and the last update time.
+
+Timeframes appear in exactly one place: the left list.
 
 ## Timeframes
 
-`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, shown as `M1`, `M5`, `M15`,
-`M30`, `1H`, `4H`, `1D`, `1W`. Each timeframe is fetched natively from the
-provider rather than aggregated from a single base series, so a 1m seed cannot
-cap how far back the weekly reaches. The live stream carries the 1m bar; the
-newest bar of the mergeable timeframes (5m through 1D) is refreshed from that
-tail, so a higher timeframe moves with the market between fetches instead of
-freezing.
+`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, shown as `M1`, `M5`, `M15`, `M30`,
+`1H`, `4H`, `1D`. There is no weekly.
 
-A merge is refused when the base window does not reach the bucket open. A 1m
-window covers only a few hours, so the current daily bucket is usually only
-partly observed; rebuilding it would report a high, low and volume for a day
-that has barely started, so the natively fetched bar is kept instead. Weekly
-bars are never merged, because the epoch-based bucket boundary is not the
-exchange's Monday open.
+Each timeframe is fetched from the provider at its own interval, not aggregated
+from one base series, so a 1m seed cannot cap how far back the higher
+timeframes reach. A timeframe with too few candles to warm up its indicators is
+reported as unavailable and does not vote. It is never back-filled.
 
 ## The compass
 
-Three gauges per timeframe, in the style of a technical summary:
+For each timeframe the compass is a weighted vote across a fixed set of factors.
+Two blocks are combined into a score from −100 to +100:
 
 1. **Moving averages** — SMA and EMA over 5, 10, 20, 50, 100, 200. Each votes
    Buy above the average, Sell below, Neutral inside a tolerance band.
@@ -42,7 +50,9 @@ Three gauges per timeframe, in the style of a technical summary:
    MACD(12,26,9), ADX(14) with +DI/-DI, Williams %R(14), CCI(14), ATR(14),
    Highs/Lows(14), Ultimate Oscillator, ROC and Bull/Bear Power(13), each with a
    standard threshold vote.
-3. **Summary** — the two blocks combined into a score from −100 to +100.
+
+Only the blended summary is displayed; the individual votes exist inside the
+scoring logic.
 
 Score to label mapping, applied everywhere and asserted by tests:
 
@@ -54,28 +64,21 @@ Score to label mapping, applied everywhere and asserted by tests:
 | −59 … −20 | Sell |
 | ≤ −60 | Strong Sell |
 
-The label is always derived from the score's sign, so a positive score can
-never read as Sell.
+The label is always derived from the score through `labelFromScore`, so a
+positive score can never read as Sell.
 
 ### Weights
 
 All weights live in one file: `src/config/compass.ts`.
 
-- `indicatorWeights` — per-indicator weight inside the indicator gauge.
-- `maWeights` — per-period weight inside the moving-average gauge.
-- `gaugeBlend` — how the MA block and the indicator block combine into the
-  summary.
-- `timeframeWeights` — how much each timeframe counts in the confluence bias
-  and in the entry check. The trend timeframes (1H, 4H, 1D) carry the most
-  weight by default; M1 and M5 are deliberately light and the weekly is a slow
-  confirmation.
-- `maTolerancePercent` — the Neutral band around each moving average, as a
-  percentage of price.
+- `indicatorWeights` — per-indicator weight inside the indicator block.
+- `maWeights` — per-period weight inside the moving-average block.
+- `gaugeBlend` — how the MA block and the indicator block combine.
+- `timeframeWeights` — how much each timeframe counts in the overall bias. The
+  trend timeframes (1H, 4H, 1D) carry the most weight; M1 and M5 are light.
+- `maTolerancePercent` — the Neutral band around each moving average.
 - `thresholds` — the score cut-offs behind the five labels.
-- `entryCheck` — the rules behind the LONG / SHORT entry check:
-  `higherTimeframes`, `warnOnHigherTimeframeDisagreement`, `alignedShare` and
-  `againstShare`.
-- `session` — `mode` (`RTH` or `FULL`), `timezone`, and the open times.
+- `entryCheck` — the rules behind the LONG / SHORT entry check.
 
 | Timeframe | Default weight |
 | --- | --- |
@@ -86,60 +89,40 @@ All weights live in one file: `src/config/compass.ts`.
 | 1H | 1.6 |
 | 4H | 1.8 |
 | 1D | 2.0 |
-| 1W | 1.2 |
 
 ## Entry check
 
-The confluence matrix says what the market is doing; the entry check answers
-whether it agrees with the trade you are about to take. Pick LONG or SHORT and
-every timeframe is classified as agreeing, disagreeing or neutral. The verdict
-is **Aligned**, **Partial** or **Against**.
+The compass says what the market is doing; the entry check answers whether it
+agrees with the trade you are about to take.
 
-Agreement is weighted by `timeframeWeights` and measured only across timeframes
-that took a side, so a neutral timeframe neither helps nor hurts. A single
-higher-timeframe disagreement (1H and above by default) stops the verdict being
-Aligned and raises an explicit warning — the case worth knowing about before
-entering. The logic is pure (`src/core/entryCheck.ts`) and covered by
+Pick LONG or SHORT (the last choice is remembered). The verdict is one word:
+
+| Verdict | Meaning |
+| --- | --- |
+| ALIGNED | At least `minAligned` (5 of 7) timeframes agree and no higher timeframe disagrees |
+| AGAINST | At most `maxAlignedForAgainst` (3) agree, or most higher timeframes disagree |
+| PARTIAL | Anything in between |
+
+Under the verdict the panel shows the count ("5 of 7 timeframes aligned") and
+then only the timeframes that disagree, as small tags. A neutral timeframe
+counts as not agreeing but is never shown as disagreeing. When 1H or higher
+disagrees, one short warning line appears. Nothing else is shown.
+
+The rules live in the `entryCheck` block of `src/config/compass.ts`
+(`higherTimeframes`, `minAligned`, `maxAlignedForAgainst`,
+`warnOnHigherTimeframeDisagreement`). The logic is `checkEntry` in
+`src/core/entryCheck.ts`, pure and covered by
 `src/core/__tests__/entryCheck.test.ts`.
 
-## Confluence matrix
-
-A compact row shows every timeframe's reading at once, plus a confluence
-bias: how many timeframes agree, in which direction, and a weighted score. A
-timeframe with no data is reported as unavailable and does not vote.
-
-## Market structure
-
-Per timeframe, a lightweight Smart Money Concepts read: the last break of
-structure (BOS), the last change of character (CHoCH), and whether price sits
-in the premium or discount half of the last swing range. Pure function in
-`src/core/structure.ts`.
-
-## Technical metrics
-
-ATR(14), VWAP, session high/low and the volume point of control. For an
-instrument with a session (`SESSION`), VWAP, the range and the POC reset at the
-session open — `RTH` or `FULL`, selected in config. Crypto trades continuously
-and has no open to reset at, so its window is the fetched series and the panel
-labels it as a window rather than a session.
-
-## Data providers
+## Data provider
 
 Candles come through a provider abstraction (`MarketDataProvider` in
-`src/core/providers/types.ts`):
+`src/core/providers/types.ts`). Futures are the only source:
 
-```ts
-getCandles(instrument, timeframe, limit, signal): Promise<Candle[]>
-subscribeTicks(instrument, handlers): StreamHandle
-subscribeOrderFlow?(instrument, handlers): StreamHandle   // optional
-```
-
-- **Binance** (`src/core/providers/binance.ts`) — crypto, browser-direct, no
-  key. Implements both ticks and order flow.
 - **Futures / Twelve Data** (`src/core/providers/futures.ts`) — GC/ES/YM,
   proxied through `/api/futures/candles` so the key stays server-side. Candles
-  plus a polled price; order flow is not offered and the panel says so rather
-  than estimating.
+  plus a polled price. Because a polled close is not a tick, the status reads
+  "Delayed", never "Live".
 
 ### Twelve Data configuration
 
@@ -158,7 +141,7 @@ the serverless functions under `api/`, never by the browser bundle.
 | `FUTURES_ROLL_ADJUSTMENT` | no | `none` | Adjustment across a roll. |
 | `FUTURES_PROVIDER` | no | — | Legacy; setting the key alone selects Twelve Data. |
 
-Until `TWELVE_DATA_API_KEY` is set, futures instruments render a "no data source
+Until `TWELVE_DATA_API_KEY` is set, the instruments render a "no data source
 configured" state and no numbers at all. `/api/futures/status` reports whether
 the key is present and which symbol is resolved for each instrument.
 
@@ -174,8 +157,8 @@ instrument carries an ordered candidate list in `api/_lib/symbols.ts`:
 | YM | `YM1!` E-mini Dow | `DJI` index | `DIA` ETF |
 
 The server walks the list, uses the first symbol that returns candles, and
-remembers it. **A proxy is always labelled a proxy** — in the header and in the
-page footer — and never presented as the futures contract.
+remembers it. **A proxy is always labelled a proxy** — in the footer — and never
+presented as the futures contract.
 
 To see what your own plan entitles:
 
@@ -235,30 +218,26 @@ Keep the key server-side — the browser must never see it. The client provider 
 npm install && npm run dev   # → http://localhost:8080/
 ```
 
-Crypto needs no key, no `.env` and no server-side component. Futures needs
-`TWELVE_DATA_API_KEY`. Locally, the `api/` functions run under `vercel dev`;
-`npm run dev` serves the front end only, so the futures tabs will report no
-configured source unless you use `vercel dev`.
+`npm run dev` serves the front end only, so the futures instruments report no
+configured source unless you also run the `api/` functions (under `vercel dev`)
+or point the app at a harness that serves `/api/futures/*`.
 
 ## Layout
 
 ```
 src/core/indicators.ts      pure indicator math, no I/O
 src/core/votes.ts           per-indicator and per-MA vote logic
-src/core/scoring.ts         gauge building, score → label mapping, confluence
-src/core/structure.ts       swing highs/lows, BOS, CHoCH, premium/discount
-src/core/session.ts         session open resolution, VWAP/POC window
-src/core/metrics.ts         ATR, VWAP, session range, point of control
+src/core/scoring.ts         gauge building, score → label mapping, overall bias
 src/core/marketHours.ts     is the market still producing bars? (pure)
 src/core/candles.ts         bucketing, resampling, live-tail merge
-src/core/timeframeEngine.ts one timeframe → three gauges + structure + metrics
-src/core/multiTimeframe.ts  every timeframe + the confluence bias
+src/core/timeframeEngine.ts one timeframe → gauges + blended summary
+src/core/multiTimeframe.ts  every timeframe + the overall bias
 src/core/entryCheck.ts      does the market agree with a long/short? (pure)
-src/core/providers/         MarketDataProvider interface + Binance and futures
-src/core/providers/polling.ts   poll cadence and server cache TTLs
+src/core/providers/         MarketDataProvider interface + futures provider
+src/core/providers/polling.ts       poll cadence and server cache TTLs
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
-src/config/compass.ts       every weight, tolerance and session setting
-src/hooks/useInstrumentFeed.ts        candles, ticks, order flow for one instrument
+src/config/compass.ts       every weight, tolerance and entry-check rule
+src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
 api/_lib/symbols.ts         the one place symbols are mapped and candidates ordered
 api/_lib/twelvedata.ts      vendor adapter: request, parse, classify errors
@@ -276,11 +255,10 @@ npm test
 ```
 
 Covers every indicator against hand-computed values, vote thresholds, the score
-mapping, label/score-sign consistency, MTF confluence, the entry check
-(including the higher-timeframe warning), session VWAP reset, continuous-market
-windows, history ordering and dedupe, order-flow aggregation, market structure,
-market-open detection, the poll cadence, the vendor adapter (parsing, error
-classification), symbol resolution and fallback, and the WebSocket frame parser.
+mapping, label/score-sign consistency, multi-timeframe bias, the entry check
+(including the higher-timeframe warning), market-open detection, the poll
+cadence, the vendor adapter (parsing, error classification), symbol resolution
+and fallback, and the WebSocket frame parser.
 
 ## Commands
 
@@ -309,26 +287,3 @@ npx tsc -p api/tsconfig.json --noEmit     # the serverless functions
 `npm run lint` passes with 0 errors; its 6 warnings are all `react-refresh`
 notes in the vendored `src/components/ui/*`, the same files that carry the
 pre-existing type errors above.
-
-## Streaming
-
-The crypto feed seeds candle history with REST calls, then one combined
-WebSocket drives everything live: `@ticker`, `@kline_5m`, `@depth10@100ms` and
-`@aggTrade`. High-frequency messages accumulate in refs and one coalesced
-snapshot commits to React state every 150 ms, so the compass, the price and the
-order flow all move within a second or two of market activity without a
-re-render per trade. A dropped socket triggers capped-backoff reconnect, and on
-the next `LIVE` the hook re-seeds klines to refill the series; the UI shows a
-reconnecting banner instead of presenting stale data as live.
-
-Binance runs several regional domains and blocks some of them from some
-locations (HTTP 451). The client tries the official hosts in order —
-`data-api.binance.vision`, `api.binance.com`, `api.binance.us` — and remembers
-whichever answers, so a geo-block on one domain is not fatal. If every host is
-blocked the app shows a `GEO_BLOCKED` error instead of inventing data.
-
-A futures provider serves candles on request, refreshed on a cadence tied to
-the timeframe, plus a polled price when no tick feed is available. Because a
-polled close is not a tick, the status reads "Delayed (polling)" rather than
-"Live", and a market that has stopped producing bars is labelled "Market
-closed" instead of continuing to present the last reading as current.

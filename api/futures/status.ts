@@ -55,10 +55,7 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
     configured: Boolean(vendor) && hasKey,
     provider: vendor,
     roll: { method: rollMethod(), adjustment: rollAdjustment() },
-    // Real order flow is a separate capability. This source provides candles
-    // only, so the client must not offer an order-flow panel for futures.
-    capabilities: { candles: true, ticks: false, orderFlow: false },
-    // The vendor WebSocket carries price ticks only; it is not order flow.
+    capabilities: { candles: true, ticks: websocketEnabled() },
     websocket: websocketEnabled(),
     pollIntervalsMs: POLL_INTERVAL_MS,
     instruments,

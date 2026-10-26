@@ -1,9 +1,13 @@
 // ============================================
 // ENTRY CHECK PANEL
 // ============================================
-// The actionable read: pick LONG or SHORT and see whether the timeframes back
-// it. Every number shown here comes from checkEntry in core/entryCheck, so the
-// panel cannot disagree with the confluence matrix above it.
+// Pick LONG or SHORT and see whether the timeframes back it. Every number
+// shown here comes from checkEntry in core/entryCheck, so the panel cannot
+// disagree with the timeframe list.
+//
+// Deliberately minimal: the verdict word, the alignment count, the timeframes
+// that disagree, and — when the higher timeframes fight the trade — one short
+// warning. Nothing else.
 
 import React from 'react';
 import type { EntryCheckResult, EntryDirection } from '../../core/entryCheck';
@@ -15,99 +19,69 @@ interface EntryCheckPanelProps {
   onDirectionChange: (direction: EntryDirection) => void;
 }
 
-const VERDICT_STYLE: Record<EntryCheckResult['verdict'], { text: string; ring: string; word: string }> = {
-  ALIGNED: { text: 'text-[#26a69a]', ring: 'border-[#26a69a]/40 bg-[#26a69a]/10', word: 'Aligned' },
-  PARTIAL: { text: 'text-amber-400', ring: 'border-amber-500/40 bg-amber-500/10', word: 'Partial' },
-  AGAINST: { text: 'text-[#ef5350]', ring: 'border-[#ef5350]/40 bg-[#ef5350]/10', word: 'Against' },
-};
-
-const STANCE_STYLE: Record<string, string> = {
-  AGREE: 'border-[#26a69a]/40 bg-[#26a69a]/10 text-[#4db6ac]',
-  DISAGREE: 'border-[#ef5350]/40 bg-[#ef5350]/10 text-[#e57373]',
-  NEUTRAL: 'border-white/[0.08] bg-white/[0.02] text-white/50',
-  UNAVAILABLE: 'border-white/[0.06] bg-transparent text-white/25',
-};
-
-const STANCE_WORD: Record<string, string> = {
-  AGREE: 'Agrees',
-  DISAGREE: 'Disagrees',
-  NEUTRAL: 'Neutral',
-  UNAVAILABLE: 'No data',
+const VERDICT_STYLE: Record<EntryCheckResult['verdict'], { text: string; word: string }> = {
+  ALIGNED: { text: 'text-[#26a69a]', word: 'ALIGNED' },
+  PARTIAL: { text: 'text-amber-400', word: 'PARTIAL' },
+  AGAINST: { text: 'text-[#ef5350]', word: 'AGAINST' },
 };
 
 export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({ result, direction, onDirectionChange }) => {
   const style = VERDICT_STYLE[result.verdict];
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-full flex-col gap-6">
       {/* Direction switch */}
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-micro font-semibold uppercase tracking-wider text-white/40">Checking a</span>
-        <div className="inline-flex overflow-hidden rounded-lg border border-white/[0.08]">
-          {(['LONG', 'SHORT'] as EntryDirection[]).map(option => (
+      <div className="grid grid-cols-2 gap-3">
+        {(['LONG', 'SHORT'] as EntryDirection[]).map(option => {
+          const isActive = direction === option;
+          const activeClass = option === 'LONG' ? 'bg-[#26a69a] text-black' : 'bg-[#ef5350] text-black';
+          return (
             <button
               key={option}
               type="button"
               onClick={() => onDirectionChange(option)}
-              aria-pressed={direction === option}
+              aria-pressed={isActive}
               className={cn(
-                'px-4 py-1.5 text-label font-bold transition-colors',
-                direction === option
-                  ? option === 'LONG'
-                    ? 'bg-[#26a69a] text-black'
-                    : 'bg-[#ef5350] text-black'
-                  : 'bg-white/[0.02] text-white/60 hover:bg-white/[0.05] hover:text-white'
+                'rounded-xl py-4 text-2xl font-black tracking-wide transition-colors',
+                isActive ? activeClass : 'border border-white/[0.08] bg-white/[0.02] text-white/50 hover:text-white'
               )}
             >
               {option}
             </button>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
       {/* Verdict */}
-      <div className={cn('rounded-xl border px-4 py-4', style.ring)}>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
-          <div className="flex items-baseline gap-3">
-            <span className={cn('text-headline font-black leading-none', style.text)}>{style.word}</span>
-            <span className="text-label text-white/50">
-              {result.aligned} agree · {result.opposing} disagree · {result.neutral} neutral
-              {result.unavailable > 0 && ` · ${result.unavailable} no data`}
-            </span>
+      <div className="flex flex-col items-center gap-3">
+        <span className={cn('text-7xl font-black leading-none tracking-tight', style.text)}>{style.word}</span>
+        <span className="text-3xl font-bold text-white/85">
+          {result.aligned} of {result.total} timeframes aligned
+        </span>
+      </div>
+
+      {/* Disagreeing timeframes only */}
+      <div className="min-h-[3rem]">
+        {result.disagreeing.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {result.disagreeing.map(frame => (
+              <span
+                key={frame.timeframe}
+                className="rounded-lg border border-[#ef5350]/40 bg-[#ef5350]/10 px-3 py-1.5 text-xl font-bold text-[#e57373]"
+              >
+                {frame.label}
+              </span>
+            ))}
           </div>
-          <span className="font-mono text-body text-white/60">{Math.round(result.share * 100)}% agree</span>
-        </div>
-
-        <p className="mt-2 text-body text-white/75">{result.message}</p>
-
-        {result.higherTimeframeWarning && (
-          <p className="mt-2 text-body font-semibold text-amber-400">
-            ⚠ Higher timeframe conflict: {result.higherConflicts.map(frame => frame.label).join(', ')}
-            {result.higherConflicts.length === 1 ? ' disagrees' : ' disagree'} with this {direction.toLowerCase()}.
-          </p>
+        ) : (
+          <p className="text-xl font-bold text-[#4db6ac]">All timeframes agree</p>
         )}
       </div>
 
-      {/* Per-timeframe stance */}
-      <div className="flex flex-wrap gap-2">
-        {result.timeframes.map(frame => (
-          <div
-            key={frame.timeframe}
-            className={cn('flex flex-col items-center gap-0.5 rounded-lg border px-3 py-2', STANCE_STYLE[frame.stance])}
-          >
-            <span className="text-label font-bold">{frame.label}</span>
-            <span className="text-micro">{STANCE_WORD[frame.stance]}</span>
-            {frame.higher && frame.stance !== 'UNAVAILABLE' && (
-              <span className="text-[0.5625rem] uppercase tracking-wide text-white/30">higher</span>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <p className="text-label text-white/40">
-        Agreement is weighted by timeframe, so higher timeframes carry more. Weights and rules live in{' '}
-        <span className="font-mono text-white/60">src/config/compass.ts</span>.
-      </p>
+      {/* One short warning when the higher timeframes fight the trade */}
+      {result.higherTimeframeWarning && (
+        <p className="text-xl font-bold text-amber-400">Higher timeframes against</p>
+      )}
     </div>
   );
 };

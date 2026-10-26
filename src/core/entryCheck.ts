@@ -3,8 +3,7 @@
 // ============================================
 // "Does the market agree with the trade I am about to take?"
 //
-// Given a LONG or SHORT direction and every timeframe's reading, this answers
-// three things, in plain language:
+// Given a LONG or SHORT direction and every timeframe's reading, this answers:
 //
 //   * how many timeframes agree with the direction
 //   * which ones disagree
@@ -14,9 +13,8 @@
 // (the entryCheck block in src/config/compass.ts) and unit tested without a
 // browser or a market.
 //
-// Agreement is measured on the timeframes that actually took a side, weighted
-// by the configured timeframe weights. A neutral timeframe neither helps nor
-// hurts: it is not counted as agreement, and it is not counted as opposition.
+// A neutral timeframe counts as "not agreeing" but is never shown as
+// disagreeing: it took no side, so it is not evidence against the trade.
 
 import type { ScoreLabel, Timeframe } from './types';
 import { TIMEFRAME_LABELS } from './types';
@@ -57,18 +55,14 @@ export interface EntryCheckResult {
   unavailable: number;
   /** Timeframes considered at all (available ones). */
   total: number;
-  /** Weighted share of the directional vote that agrees, 0..1. */
-  share: number;
   /** Every timeframe with its stance, in the order supplied. */
   timeframes: EntryCheckTimeframe[];
-  /** The disagreeing timeframes, for highlighting. */
+  /** The disagreeing timeframes, for the small tags. */
   disagreeing: EntryCheckTimeframe[];
   /** Higher timeframes that disagree. Drives the warning. */
   higherConflicts: EntryCheckTimeframe[];
   /** True when a higher timeframe disagrees and the rule is enabled. */
   higherTimeframeWarning: boolean;
-  /** A short, plain-language summary of the verdict. */
-  message: string;
 }
 
 /** Which way a label points relative to the chosen direction. */
@@ -83,9 +77,9 @@ function stanceFor(label: ScoreLabel, direction: EntryDirection): EntryCheckTime
 /**
  * Judge whether the timeframes agree with a LONG or SHORT entry.
  *
- * ALIGNED  the weighted majority agrees AND no higher timeframe disagrees
- * PARTIAL  some agreement, but not enough — or a higher timeframe is fighting
- * AGAINST  the weighted majority disagrees with the direction
+ * ALIGNED  at least `minAligned` timeframes agree AND no higher timeframe disagrees
+ * AGAINST  at most `maxAlignedForAgainst` agree, OR most higher timeframes disagree
+ * PARTIAL  anything in between
  */
 export function checkEntry(
   direction: EntryDirection,
@@ -103,50 +97,34 @@ export function checkEntry(
     higher: higherSet.has(reading.timeframe),
   }));
 
-  let alignedWeight = 0;
-  let opposingWeight = 0;
   let aligned = 0;
   let opposing = 0;
   let neutral = 0;
   let unavailable = 0;
 
   for (const frame of timeframes) {
-    const weight = config.timeframeWeights[frame.timeframe] ?? 0;
-    if (frame.stance === 'UNAVAILABLE') {
-      unavailable += 1;
-      continue;
-    }
-    if (frame.stance === 'NEUTRAL') {
-      neutral += 1;
-      continue;
-    }
-    if (frame.stance === 'AGREE') {
-      aligned += 1;
-      alignedWeight += weight;
-    } else {
-      opposing += 1;
-      opposingWeight += weight;
-    }
+    if (frame.stance === 'UNAVAILABLE') unavailable += 1;
+    else if (frame.stance === 'NEUTRAL') neutral += 1;
+    else if (frame.stance === 'AGREE') aligned += 1;
+    else opposing += 1;
   }
-
-  const directionalWeight = alignedWeight + opposingWeight;
-  const share = directionalWeight === 0 ? 0 : alignedWeight / directionalWeight;
 
   const disagreeing = timeframes.filter(frame => frame.stance === 'DISAGREE');
   const higherConflicts = disagreeing.filter(frame => frame.higher);
 
-  // A higher timeframe fighting the trade is the one case worth a hard warning,
-  // so it is reported separately from the raw count.
+  // A higher timeframe fighting the trade is the one case worth a hard warning.
   const higherTimeframeWarning =
     rules.warnOnHigherTimeframeDisagreement && higherConflicts.length > 0;
 
+  // A majority of the higher timeframes fighting the trade is enough to call
+  // it AGAINST on its own. The denominator is the configured higher set, so
+  // with the default three (1H, 4H, 1D) two disagreements are needed.
+  const higherMajorityAgainst = higherConflicts.length * 2 > higherSet.size;
+
   let verdict: EntryVerdict;
-  if (directionalWeight === 0) {
-    // Nothing has taken a side, so there is nothing to agree or disagree with.
-    verdict = 'PARTIAL';
-  } else if (share < rules.againstShare) {
+  if (aligned <= rules.maxAlignedForAgainst || higherMajorityAgainst) {
     verdict = 'AGAINST';
-  } else if (share >= rules.alignedShare && !higherTimeframeWarning) {
+  } else if (aligned >= rules.minAligned && !higherTimeframeWarning) {
     verdict = 'ALIGNED';
   } else {
     verdict = 'PARTIAL';
@@ -160,41 +138,9 @@ export function checkEntry(
     neutral,
     unavailable,
     total: aligned + opposing + neutral,
-    share,
     timeframes,
     disagreeing,
     higherConflicts,
     higherTimeframeWarning,
-    message: describeVerdict(verdict, direction, aligned, opposing, neutral, higherConflicts),
   };
-}
-
-function describeVerdict(
-  verdict: EntryVerdict,
-  direction: EntryDirection,
-  aligned: number,
-  opposing: number,
-  neutral: number,
-  higherConflicts: EntryCheckTimeframe[]
-): string {
-  const side = direction === 'LONG' ? 'long' : 'short';
-
-  if (verdict === 'ALIGNED') {
-    return `${aligned} of ${aligned + opposing + neutral} timeframes back the ${side} setup.`;
-  }
-
-  if (verdict === 'AGAINST') {
-    return `${opposing} of ${aligned + opposing + neutral} timeframes oppose this ${side}. The market disagrees.`;
-  }
-
-  if (aligned + opposing === 0) {
-    return 'No timeframe has taken a side yet — nothing to align with.';
-  }
-
-  if (higherConflicts.length > 0) {
-    const names = higherConflicts.map(frame => frame.label).join(', ');
-    return `Mixed, and ${names} disagree${higherConflicts.length === 1 ? 's' : ''} with this ${side}.`;
-  }
-
-  return `Mixed: ${aligned} agree, ${opposing} disagree, ${neutral} neutral. Not a clean ${side}.`;
 }

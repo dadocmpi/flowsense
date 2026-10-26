@@ -19,16 +19,11 @@ export function formatCandleTime(ms: number): string {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-/**
- * Aggregate candles into larger buckets. Volume is summed and the taker-buy
- * split is summed only when at least one source candle actually carried it —
- * higher timeframes must never invent an aggressor split they were not given.
- */
+/** Aggregate candles into larger buckets. Volume is summed. */
 export function aggregateCandles(candles: Candle[], bucketMinutes: number): Candle[] {
   if (bucketMinutes <= 0 || candles.length === 0) return [];
 
   const buckets = new Map<number, Candle>();
-  const hasSplit = new Map<number, boolean>();
 
   for (const candle of candles) {
     const time = parseCandleTime(candle.datetime);
@@ -38,8 +33,7 @@ export function aggregateCandles(candles: Candle[], bucketMinutes: number): Cand
     const existing = buckets.get(bucketStart);
 
     if (!existing) {
-      buckets.set(bucketStart, { ...candle, takerBuyVolume: candle.takerBuyVolume });
-      hasSplit.set(bucketStart, candle.takerBuyVolume !== undefined);
+      buckets.set(bucketStart, { ...candle });
       continue;
     }
 
@@ -47,20 +41,11 @@ export function aggregateCandles(candles: Candle[], bucketMinutes: number): Cand
     existing.low = Math.min(existing.low, candle.low);
     existing.close = candle.close;
     existing.volume += candle.volume;
-
-    if (candle.takerBuyVolume !== undefined) {
-      existing.takerBuyVolume = (existing.takerBuyVolume ?? 0) + candle.takerBuyVolume;
-      hasSplit.set(bucketStart, true);
-    }
   }
 
   return [...buckets.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([time, candle]) => ({
-      ...candle,
-      datetime: formatCandleTime(time),
-      ...(hasSplit.get(time) ? {} : { takerBuyVolume: undefined }),
-    }));
+    .map(([time, candle]) => ({ ...candle, datetime: formatCandleTime(time) }));
 }
 
 /**
@@ -90,9 +75,7 @@ export function resampleCandles(candles: Candle[], timeframe: Timeframe, baseMin
  * — real but unadvanced — rather than replaced with a wrong one.
  *
  * Only valid when the target bucket boundaries line up with the base series'
- * own bucketing. Weekly bars are not merged: the epoch-based bucket boundary is
- * not the exchange's Monday open, so a rebuild would put the bar at the wrong
- * time.
+ * own bucketing.
  */
 export function mergeLiveTail(nativeSeries: Candle[], baseSeries: Candle[], bucketMinutes: number): Candle[] {
   if (nativeSeries.length === 0 || baseSeries.length === 0 || bucketMinutes <= 0) return nativeSeries;

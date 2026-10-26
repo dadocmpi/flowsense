@@ -28,17 +28,11 @@ export function useMultiTimeframeCompass(
   const reading = useMemo(
     () =>
       Object.keys(feed.seriesByTimeframe).length > 0
-        ? computeMultiTimeframeFromSeries(
-            feed.seriesByTimeframe,
-            config,
-            undefined,
-            feed.price,
-            feed.instrument.sessionMode
-          )
+        ? computeMultiTimeframeFromSeries(feed.seriesByTimeframe, config, undefined, feed.price)
         : null,
     // feed.revision bumps whenever the provider updates the candle series.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [feed.seriesByTimeframe, feed.price, feed.revision, config, feed.instrument.sessionMode]
+    [feed.seriesByTimeframe, feed.price, feed.revision, config]
   );
 
   return { reading, selected, setSelected };
