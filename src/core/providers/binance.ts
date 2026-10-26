@@ -31,6 +31,7 @@ import {
 
 /** App timeframe -> Binance interval. The names happen to coincide. */
 const BINANCE_INTERVALS: Record<Timeframe, string> = {
+  '1m': '1m',
   '5m': '5m',
   '15m': '15m',
   '30m': '30m',
@@ -90,10 +91,10 @@ export const binanceProvider: MarketDataProvider = {
         onKline: payload => {
           if (!handlers.onCandle) return;
           const candle = candleFromKline(payload);
-          if (candle) handlers.onCandle(inferTimeframe(payload) ?? '5m', candle);
+          if (candle) handlers.onCandle(inferTimeframe(payload) ?? '1m', candle);
         },
       },
-      BINANCE_INTERVALS['5m']
+      BINANCE_INTERVALS['1m']
     );
     return { close: () => handle.close() };
   },
@@ -151,6 +152,7 @@ function inferTimeframe(payload: Record<string, unknown>): Timeframe | null {
   if (typeof k !== 'object' || k === null) return null;
   const interval = (k as Record<string, unknown>).i;
   const map: Record<string, Timeframe> = {
+    '1m': '1m',
     '5m': '5m',
     '15m': '15m',
     '30m': '30m',

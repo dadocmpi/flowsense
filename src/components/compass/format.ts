@@ -91,10 +91,3 @@ export function formatClock(ms: number | null): string {
   if (!ms) return '--';
   return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
-
-/** YYYY-MM-DD HH:MM local, so a row is never ambiguous about its day. */
-export function formatDateTime(ms: number): string {
-  const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}

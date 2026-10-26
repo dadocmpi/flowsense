@@ -9,6 +9,7 @@
 import React from 'react';
 import type { MultiTimeframeReading } from '../../core/multiTimeframe';
 import type { Timeframe } from '../../core/types';
+import { TIMEFRAME_LABELS } from '../../core/types';
 import { labelShort, scoreColor } from './format';
 import { cn } from '@/lib/utils';
 
@@ -43,7 +44,9 @@ export const ConfluenceMatrix: React.FC<ConfluenceMatrixProps> = ({ reading, sel
                   : 'border-white/[0.06] bg-white/[0.02] hover:border-white/15 hover:bg-white/[0.04]'
               )}
             >
-              <span className="text-label font-bold text-white/70">{frame.timeframe}</span>
+              <span className="text-label font-bold text-white/70">
+                {TIMEFRAME_LABELS[frame.timeframe] ?? frame.timeframe}
+              </span>
               {frame.available ? (
                 <>
                   <span className="text-body font-bold" style={{ color }}>

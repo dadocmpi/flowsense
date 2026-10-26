@@ -7,13 +7,11 @@
 //   3. the selected timeframe's three gauges, vote tables and structure read
 //   4. technical metrics for the selected instrument
 //   5. order flow, only where the provider has real order flow
-//   6. signal history for the selected instrument and timeframe
-//   7. data source and scope, stating what is real and what is unavailable
 //
 // No panel is collapsible: everything is visible on load.
 
-import React, { useMemo, useState } from 'react';
-import { useInstrumentFeed, BASE_TIMEFRAME, isFeedFresh } from '../hooks/useInstrumentFeed';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useInstrumentFeed } from '../hooks/useInstrumentFeed';
 import { useMultiTimeframeCompass } from '../hooks/useMultiTimeframeCompass';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { ConfluenceMatrix } from '../components/compass/ConfluenceMatrix';
@@ -22,10 +20,11 @@ import { VoteTable } from '../components/compass/VoteTable';
 import { TimeframeCard } from '../components/compass/TimeframeCard';
 import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPanel';
 import { OrderFlowPanel } from '../components/compass/OrderFlowPanel';
-import { SignalHistoryPanel } from '../components/compass/SignalHistoryPanel';
+import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { DEFAULT_INSTRUMENT_ID, findInstrument, instrumentsByGroup, type Instrument } from '../core/instruments';
-import { providerForInstrument } from '../core/providers';
+import { probeFuturesProvider, providerForInstrument } from '../core/providers';
+import { checkEntry, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import { formatClock, formatNumber } from '../components/compass/format';
 import { cn } from '@/lib/utils';
@@ -41,12 +40,17 @@ const ERROR_TITLES: Record<string, string> = {
   UNKNOWN: 'Unexpected error',
 };
 
+/** Shown instead of "no data source configured" when the route itself is unreachable. */
+const UNREACHABLE_TITLE = 'Data source unreachable';
+
 const STATUS_TEXT: Record<string, string> = {
   CONNECTING: 'Connecting',
   LIVE: 'Live',
   RECONNECTING: 'Reconnecting',
   OFFLINE: 'Offline',
-  UNAVAILABLE: 'Snapshot',
+  // The provider has candles but no live feed; the price is a REST poll, so it
+  // is delayed by definition and must not be dressed as a live tick.
+  UNAVAILABLE: 'Delayed (polling)',
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -54,34 +58,86 @@ const STATUS_TONE: Record<string, string> = {
   LIVE: 'text-[#26a69a]',
   RECONNECTING: 'text-amber-400',
   OFFLINE: 'text-[#ef5350]',
-  UNAVAILABLE: 'text-white/50',
+  UNAVAILABLE: 'text-amber-400',
 };
+
+/** "GC1! · Gold futures (continuous)" — the symbol and what it really is. */
+function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null {
+  const resolved = feed.resolvedSource;
+  if (!resolved) return null;
+  const symbol = resolved.vendorSymbol ?? resolved.symbol;
+  return `${symbol} · ${resolved.description}`;
+}
 
 const Index: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string>(DEFAULT_INSTRUMENT_ID);
+  const [entryDirection, setEntryDirection] = useState<EntryDirection>('LONG');
   const instrument: Instrument = useMemo(
     () => findInstrument(selectedId) ?? findInstrument(DEFAULT_INSTRUMENT_ID)!,
     [selectedId]
   );
 
   const feed = useInstrumentFeed(instrument);
-  const { reading, selected, setSelected, history } = useMultiTimeframeCompass(feed);
+  const { reading, selected, setSelected } = useMultiTimeframeCompass(feed);
+
+  // Whether the futures source is configured is a server-side fact. The feed
+  // only asks for the selected instrument, so ask once here too: otherwise the
+  // selector would mark every futures tab unavailable until it is opened.
+  const [futuresConfigured, setFuturesConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    probeFuturesProvider(controller.signal)
+      .then(result => {
+        if (active) setFuturesConfigured(result.configured);
+      })
+      .catch(() => {
+        if (active) setFuturesConfigured(false);
+      });
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, []);
 
   // Which instruments currently have a configured source, for the selector.
+  // A futures entry stays `undefined` until the probe answers: marking every
+  // futures tab unavailable before we know would be a guess, not a fact.
   const availability = useMemo(() => {
-    const map: Record<string, boolean> = {};
-    for (const candidate of [...instrumentsByGroup('FUTURES'), ...instrumentsByGroup('CRYPTO')]) {
+    const map: Record<string, boolean | undefined> = {};
+    for (const candidate of instrumentsByGroup('CRYPTO')) {
       const provider = providerForInstrument(candidate);
       map[candidate.id] = provider ? provider.isConfigured() : false;
     }
+    for (const candidate of instrumentsByGroup('FUTURES')) {
+      map[candidate.id] = futuresConfigured ?? undefined;
+    }
     // The selected instrument's own feed has the freshest answer.
-    map[instrument.id] = feed.configured;
+    if (feed.configured) map[instrument.id] = true;
     return map;
-  }, [instrument.id, feed.configured]);
+  }, [instrument.id, feed.configured, futuresConfigured]);
 
   const frame = reading?.timeframes.find(t => t.timeframe === selected) ?? null;
-  const fresh = isFeedFresh(feed.lastUpdate);
   const pricePrecision = instrument.precision;
+
+  // The entry check reads every timeframe's summary, so it answers "does the
+  // market agree with the trade I am about to take?" across the whole board.
+  const entryCheck = useMemo(
+    () =>
+      reading
+        ? checkEntry(
+            entryDirection,
+            reading.timeframes.map(tf => ({
+              timeframe: tf.timeframe,
+              label: tf.summary.label,
+              score: tf.summary.score,
+              available: tf.available,
+            })),
+            DEFAULT_COMPASS_CONFIG
+          )
+        : null,
+    [reading, entryDirection]
+  );
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
@@ -113,8 +169,34 @@ const Index: React.FC = () => {
                 </span>
                 <span className="font-mono text-white/40">{formatClock(feed.lastUpdate)}</span>
               </span>
+              {/* A closed market is stated plainly: the reading below it is the
+                  last real one, not a live one. */}
+              {feed.market.state === 'CLOSED' && (
+                <span className="font-bold text-amber-400" title={feed.market.reason}>
+                  Market closed
+                </span>
+              )}
             </div>
           </div>
+
+          {/* What we are really reading. A proxy is called a proxy, never the
+              futures contract. */}
+          {sourceDetail(feed) && (
+            <div className="flex flex-wrap items-center gap-2 text-label text-white/45">
+              <span className="uppercase tracking-wider text-white/30">Source</span>
+              <span className="font-mono text-white/70">{feed.sourceLabel}</span>
+              <span className="text-white/25">·</span>
+              <span className="font-mono text-white/70">{sourceDetail(feed)}</span>
+              {feed.resolvedSource?.kind === 'proxy' && (
+                <span
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
+                  title="This is a proxy for the futures contract, not the contract itself."
+                >
+                  Proxy
+                </span>
+              )}
+            </div>
+          )}
 
           <InstrumentSelector selectedId={instrument.id} onSelect={handleSelect} availability={availability} />
         </div>
@@ -123,18 +205,30 @@ const Index: React.FC = () => {
       <main className="mx-auto flex max-w-[1400px] flex-col gap-panel px-4 py-6 sm:px-8 sm:py-8">
         {/* ── Unavailable / error state ────────────────────────────────── */}
         {!feed.configured && !feed.isLoading && (
-          <Section title={ERROR_TITLES.NOT_CONFIGURED} subtitle={instrument.id}>
+          <Section
+            title={feed.sourceReachable ? ERROR_TITLES.NOT_CONFIGURED : UNREACHABLE_TITLE}
+            subtitle={instrument.id}
+          >
             <div className="flex flex-col gap-2">
               <p className="text-body text-white/70">
                 {feed.unavailableReason ??
                   feed.error?.message ??
                   'This instrument has no configured data source.'}
               </p>
-              <p className="text-label text-white/45">
-                FlowSense shows nothing rather than a fabricated number. See{' '}
-                <span className="font-mono text-white/70">Data source and scope</span> at the bottom of this page for
-                how to configure a source.
-              </p>
+              {feed.sourceReachable ? (
+                <p className="text-label text-white/45">
+                  FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500 and Dow need{' '}
+                  <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
+                  environment.
+                </p>
+              ) : (
+                <p className="text-label text-white/45">
+                  The server route that holds the API key did not answer. On a local dev server the{' '}
+                  <span className="font-mono text-white/70">api/</span> functions are not running — use{' '}
+                  <span className="font-mono text-white/70">vercel dev</span>. In production this is a network or
+                  deployment problem, not a missing key.
+                </p>
+              )}
             </div>
           </Section>
         )}
@@ -157,6 +251,13 @@ const Index: React.FC = () => {
             </p>
           )}
         </Section>
+
+        {/* ── Entry check ──────────────────────────────────────────────── */}
+        {entryCheck && (
+          <Section title="Entry check" subtitle={`${instrument.id} · does the market agree?`}>
+            <EntryCheckPanel result={entryCheck} direction={entryDirection} onDirectionChange={setEntryDirection} />
+          </Section>
+        )}
 
         {/* ── Selected timeframe: gauges, tables, structure ────────────── */}
         {frame && (
@@ -215,127 +316,20 @@ const Index: React.FC = () => {
           {feed.orderFlowAvailable ? (
             <OrderFlowPanel flow={feed.orderFlow} precision={pricePrecision} quote={instrument.quote} />
           ) : (
-            <p className="text-body text-white/60">
-              No real order flow for {instrument.id}. {feed.sourceLabel} provides candles only, and order flow is
-              never estimated from candles — so this panel stays empty rather than showing a synthetic book or tape.
-              Real order flow is available on the Binance crypto pairs.
-            </p>
+            <div className="flex flex-col gap-2 text-body text-white/60">
+              <p>
+                No real order flow for {instrument.id}. {feed.sourceLabel} provides candles
+                {feed.feedMode === 'POLL' ? ' and a polled price' : ''} only, and order flow is never estimated from
+                candles — so this panel stays empty rather than showing a synthetic book or tape.
+              </p>
+              <p className="text-label text-white/45">
+                Real order flow — order book depth, trade tape and a genuine aggressor split — is available on the
+                Binance crypto pairs, where the exchange publishes it directly.
+              </p>
+            </div>
           )}
         </Section>
 
-        {/* ── Signal history ───────────────────────────────────────────── */}
-        <Section title="Signal history" subtitle={`${instrument.id} · ${selected}`}>
-          <SignalHistoryPanel
-            history={history}
-            instrumentId={instrument.id}
-            timeframe={selected}
-            precision={pricePrecision}
-          />
-        </Section>
-
-        {/* ── Data source and scope ────────────────────────────────────── */}
-        <Section title="Data source and scope" subtitle="What is real, and what is not available">
-          <div className="space-y-6 text-body text-white/70">
-            <div>
-              <h3 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">
-                Current instrument
-              </h3>
-              <dl className="grid grid-cols-1 gap-x-8 gap-y-2 sm:grid-cols-2">
-                <Line label="Instrument" value={`${instrument.name} (${instrument.id})`} />
-                <Line label="Exchange" value={instrument.exchange} />
-                <Line label="Source" value={feed.sourceLabel} />
-                <Line
-                  label="Continuous contract"
-                  value={
-                    instrument.continuousSymbol
-                      ? `${instrument.continuousSymbol} (${instrument.roll?.method ?? 'frontMonth'})`
-                      : 'Not applicable'
-                  }
-                />
-                <Line
-                  label="Timeframes"
-                  value={`${BASE_TIMEFRAME} base, plus each timeframe fetched natively`}
-                />
-                <Line
-                  label="Last update"
-                  value={
-                    feed.lastUpdate ? `${formatClock(feed.lastUpdate)}${fresh ? '' : ' (not streaming)'}` : 'Unavailable'
-                  }
-                />
-              </dl>
-            </div>
-
-            <div>
-              <h3 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">
-                Futures — Gold, S&P 500, Dow Jones
-              </h3>
-              <ul className="space-y-1.5">
-                <li>
-                  <strong className="text-white/90">Real:</strong> OHLCV candles from the configured futures
-                  provider, requested as a continuous front-month contract. All seven timeframes, the compass, the
-                  confluence matrix and the session VWAP / POC are computed from those candles.
-                </li>
-                <li>
-                  <strong className="text-white/90">Not available:</strong> order book depth, trade tape and
-                  buy/sell split. A candle feed cannot produce a genuine aggressor split, so the order-flow panel is
-                  empty for futures rather than estimated.
-                </li>
-                <li>
-                  <strong className="text-white/90">Requires configuration:</strong> a server-side API key. Until{' '}
-                  <span className="font-mono text-white/80">FUTURES_PROVIDER</span> and{' '}
-                  <span className="font-mono text-white/80">FUTURES_API_KEY</span> are set, futures instruments show
-                  a &ldquo;no data source configured&rdquo; state and no numbers at all.
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">
-                Crypto — Binance USDT pairs
-              </h3>
-              <ul className="space-y-1.5">
-                <li>
-                  <strong className="text-white/90">Real:</strong> candles, a live combined WebSocket stream
-                  (ticker, open kline, partial book depth, aggregated trades) and a genuine per-candle taker-buy
-                  split. No API key is used or needed.
-                </li>
-                <li>
-                  <strong className="text-white/90">Order flow:</strong> the depth panel and tape come from
-                  Binance&rsquo;s own book and trades, with the exchange&rsquo;s aggressor flag deciding each
-                  trade&rsquo;s side.
-                </li>
-                <li>
-                  <strong className="text-white/90">Caveat:</strong> the live buy/sell split covers trades received
-                  since the stream opened, not the whole session; the candle-window cumulative delta is a separate
-                  figure and is labelled as such.
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h3 className="mb-1 text-label font-semibold uppercase tracking-wider text-white/40">
-                Session boundary
-              </h3>
-              <p>
-                For futures, VWAP, the session high/low and the volume point of control reset at the start of the
-                current session ({DEFAULT_COMPASS_CONFIG.session.mode === 'RTH'
-                  ? 'regular trading hours'
-                  : 'full session'}
-                , {DEFAULT_COMPASS_CONFIG.session.timezone}). The reset time is shown next to the metrics.
-              </p>
-              <p className="mt-2">
-                Crypto trades continuously and has no session open, so its VWAP, range and POC are measured over the
-                fetched candle window instead — the panel labels the window start rather than implying a session that
-                does not exist.
-              </p>
-            </div>
-
-            <p className="border-t border-white/[0.06] pt-4 text-label text-white/45">
-              Every number on this page is either a provider response or arithmetic over one. Where a figure is not
-              available it reads as unavailable — nothing here is simulated.
-            </p>
-          </div>
-        </Section>
       </main>
 
       <footer className="border-t border-white/[0.04] px-4 py-6 sm:px-8">
@@ -346,14 +340,5 @@ const Index: React.FC = () => {
     </div>
   );
 };
-
-function Line({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-white/[0.04] py-1.5">
-      <dt className="text-white/45">{label}</dt>
-      <dd className="font-mono text-white/85">{value}</dd>
-    </div>
-  );
-}
 
 export default Index;

@@ -29,6 +29,25 @@ export interface SessionConfig {
   fullOpenMinutes: number;
 }
 
+export interface EntryCheckConfig {
+  /**
+   * Timeframes treated as "higher" for the higher-timeframe rule. The default
+   * starts at 1H: an intraday entry that fights the 1H-and-above trend is the
+   * one worth warning about.
+   */
+  higherTimeframes: Timeframe[];
+  /** Warn (and never report ALIGNED) when a higher timeframe disagrees. */
+  warnOnHigherTimeframeDisagreement: boolean;
+  /**
+   * Share of the weighted directional vote that must agree before the verdict
+   * can be ALIGNED. Measured only across timeframes that actually took a side,
+   * so a neutral timeframe neither helps nor hurts.
+   */
+  alignedShare: number;
+  /** Below this share the verdict is AGAINST rather than PARTIAL. */
+  againstShare: number;
+}
+
 export interface CompassConfig {
   /**
    * Tolerance band, as a percentage of price, inside which a price-vs-level
@@ -53,6 +72,9 @@ export interface CompassConfig {
 
   /** How each timeframe's reading contributes to the multi-timeframe confluence. */
   timeframeWeights: Record<Timeframe, number>;
+
+  /** Rules behind the LONG / SHORT entry check. */
+  entryCheck: EntryCheckConfig;
 
   /** Score -> label cut-offs on the -100..+100 scale. */
   thresholds: {
@@ -115,16 +137,28 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     indicators: 1.0,
   },
 
-  // Higher timeframes dominate the confluence bias, but the intraday swings
-  // still matter: 15m, 1h, 4h and 1D carry the most weight.
+  // M1 is deliberately light: it is noisy and useful mainly for entry timing,
+  // not for the trend read. M5 and M15 are medium; M30 and above carry the
+  // trend and dominate the confluence bias.
   timeframeWeights: {
-    '5m': 0.4,
+    '1m': 0.2,
+    '5m': 0.6,
     '15m': 1.0,
-    '30m': 0.8,
-    '1h': 1.2,
-    '4h': 1.4,
-    '1D': 1.4,
-    '1W': 0.6,
+    '30m': 1.2,
+    '1h': 1.6,
+    '4h': 1.8,
+    '1D': 2.0,
+    '1W': 1.2,
+  },
+
+  entryCheck: {
+    // 1H and above is "the trend" for an intraday entry.
+    higherTimeframes: ['1h', '4h', '1D', '1W'],
+    warnOnHigherTimeframeDisagreement: true,
+    // A majority of the weighted directional vote, plus agreement from the
+    // higher timeframes, is what earns ALIGNED.
+    alignedShare: 0.6,
+    againstShare: 0.4,
   },
 
   thresholds: {
@@ -160,6 +194,7 @@ export function mergeCompassConfig(
     indicatorWeights: { ...base.indicatorWeights, ...(override.indicatorWeights ?? {}) },
     gaugeBlend: { ...base.gaugeBlend, ...(override.gaugeBlend ?? {}) },
     timeframeWeights: { ...base.timeframeWeights, ...(override.timeframeWeights ?? {}) },
+    entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
     session: { ...base.session, ...(override.session ?? {}) },
   };

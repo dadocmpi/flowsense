@@ -43,22 +43,35 @@ export type FuturesVendor = 'twelvedata';
 export function resolveVendor(): FuturesVendor | null {
   const raw = (process.env.FUTURES_PROVIDER ?? '').trim().toLowerCase();
   if (raw === 'twelvedata') return 'twelvedata';
+  // Setting the provider's own key is enough to mean "use Twelve Data", so a
+  // deployment does not have to set both variables to get started.
+  if (raw === '' && (process.env.TWELVE_DATA_API_KEY ?? '').trim().length > 0) return 'twelvedata';
   // An unset provider is not an error; it means "not configured yet".
   return null;
 }
 
 export function vendorApiKey(): string | null {
-  const key = (process.env.FUTURES_API_KEY ?? '').trim();
+  // TWELVE_DATA_API_KEY is the name the provider's own docs use; FUTURES_API_KEY
+  // is kept as a fallback so an existing deployment does not break.
+  const key = (process.env.TWELVE_DATA_API_KEY ?? process.env.FUTURES_API_KEY ?? '').trim();
   return key.length > 0 ? key : null;
 }
 
 /**
- * Optional per-instrument symbol override, so a deployment can point at
- * whichever continuous contract its vendor expects without a code change.
- * Example: FUTURES_SYMBOL_GC=GC1!
+ * Whether the vendor's WebSocket is usable on this plan.
+ *
+ * Defaults to enabled: if the plan has no WebSocket entitlement the connection
+ * simply fails and the client falls back to polling, which is a graceful
+ * outcome. Setting TWELVE_DATA_WS=false skips the attempt entirely.
  */
+export function websocketEnabled(): boolean {
+  const raw = (process.env.TWELVE_DATA_WS ?? 'true').trim().toLowerCase();
+  return raw !== 'false' && raw !== '0' && raw !== 'off';
+}
+
+/** Optional per-instrument symbol override, pinning the first candidate. */
 export function symbolOverride(instrumentId: string): string | null {
-  const value = (process.env[`FUTURES_SYMBOL_${instrumentId.toUpperCase()}`] ?? '').trim();
+  const value = (process.env[`TWELVE_DATA_SYMBOL_${instrumentId.toUpperCase()}`] ?? '').trim();
   return value.length > 0 ? value : null;
 }
 

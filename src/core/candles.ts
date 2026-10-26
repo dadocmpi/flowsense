@@ -83,10 +83,16 @@ export function resampleCandles(candles: Candle[], timeframe: Timeframe, baseMin
  * replaces the native bar, so the higher timeframe advances with the market
  * instead of freezing at the last fetch.
  *
+ * The rebuild is only allowed when the base series actually reaches the bucket
+ * open. With a 1m base covering a few hours, a daily bucket is only partially
+ * observed: rebuilding it from that tail would report a high, low and volume
+ * for a day that has barely started. In that case the native bar is left alone
+ * — real but unadvanced — rather than replaced with a wrong one.
+ *
  * Only valid when the target bucket boundaries line up with the base series'
- * own bucketing (15m/30m/1h/4h/1D from 5m). Weekly bars are not merged: the
- * epoch-based bucket boundary is not the exchange's Monday open, so a rebuild
- * would put the bar at the wrong time.
+ * own bucketing. Weekly bars are not merged: the epoch-based bucket boundary is
+ * not the exchange's Monday open, so a rebuild would put the bar at the wrong
+ * time.
  */
 export function mergeLiveTail(nativeSeries: Candle[], baseSeries: Candle[], bucketMinutes: number): Candle[] {
   if (nativeSeries.length === 0 || baseSeries.length === 0 || bucketMinutes <= 0) return nativeSeries;
@@ -97,6 +103,12 @@ export function mergeLiveTail(nativeSeries: Candle[], baseSeries: Candle[], buck
   if (!Number.isFinite(lastBaseTime)) return nativeSeries;
 
   const bucketStart = Math.floor(lastBaseTime / bucketMs) * bucketMs;
+
+  // Coverage guard: the base window must start at or before the bucket open,
+  // otherwise the tail is a partial view of the bucket.
+  const firstBaseTime = parseCandleTime(baseSeries[0].datetime);
+  if (!Number.isFinite(firstBaseTime) || firstBaseTime > bucketStart) return nativeSeries;
+
   const tail = baseSeries.filter(c => {
     const t = parseCandleTime(c.datetime);
     return Number.isFinite(t) && t >= bucketStart && t < bucketStart + bucketMs;

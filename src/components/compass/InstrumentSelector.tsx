@@ -16,8 +16,11 @@ import { cn } from '@/lib/utils';
 interface InstrumentSelectorProps {
   selectedId: string;
   onSelect: (id: string) => void;
-  /** Which instruments have a configured provider, keyed by instrument id. */
-  availability: Record<string, boolean>;
+  /**
+   * Which instruments have a configured provider, keyed by instrument id.
+   * `undefined` means "not known yet" — rendered as neutral, not as unavailable.
+   */
+  availability: Record<string, boolean | undefined>;
 }
 
 const GROUPS: Array<{ group: InstrumentGroup; label: string; instruments: Instrument[] }> = [
@@ -36,10 +39,13 @@ export const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({ selected
           <div className="flex flex-wrap items-center gap-1.5">
             {instruments.map(instrument => {
               const isSelected = selectedId === instrument.id;
-              const isAvailable = availability[instrument.id] !== false;
-              const title = isAvailable
-                ? instrument.name
-                : `${instrument.name} — no data source configured`;
+              const known = availability[instrument.id];
+              // Only a confirmed `false` earns the unavailable marker. An
+              // unknown state shows nothing rather than a warning we cannot back.
+              const isUnavailable = known === false;
+              const title = isUnavailable
+                ? `${instrument.name} — no data source configured`
+                : instrument.name;
 
               return (
                 <button
@@ -56,7 +62,7 @@ export const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({ selected
                   )}
                 >
                   <span className="font-mono">{instrument.shortLabel}</span>
-                  {!isAvailable && (
+                  {isUnavailable && (
                     <span
                       className={cn(
                         'h-1.5 w-1.5 rounded-full',

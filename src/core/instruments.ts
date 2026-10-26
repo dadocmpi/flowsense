@@ -15,6 +15,25 @@ export type InstrumentGroup = 'FUTURES' | 'CRYPTO';
 export type ProviderId = 'binance' | 'futures';
 
 /**
+ * What the app is ACTUALLY reading for an instrument, once the server has
+ * resolved a symbol. A futures plan may not entitle the contract itself, so the
+ * app can be reading a spot or ETF proxy — and the UI must say so rather than
+ * implying it is the futures contract.
+ */
+export interface ResolvedSource {
+  /** The symbol the vendor was asked for, e.g. "ES1!" or "SPY". */
+  symbol: string;
+  /** The symbol the vendor echoed back, when it differs. */
+  vendorSymbol?: string;
+  kind: 'futures' | 'proxy';
+  /** Plain-English label, e.g. "S&P 500 index (proxy)". */
+  description: string;
+  /** Vendor-reported instrument classification, when present. */
+  instrumentType?: string;
+  exchange?: string;
+}
+
+/**
  * How the continuous contract is assembled for a futures instrument.
  *
  *  - `frontMonth`    follow the exchange's front month, switching on the roll
@@ -36,7 +55,7 @@ export interface ContractRoll {
 }
 
 export interface Instrument {
-  /** Stable id used in history keys and URLs. */
+  /** Stable id used in URLs and display. */
   id: string;
   name: string;
   group: InstrumentGroup;

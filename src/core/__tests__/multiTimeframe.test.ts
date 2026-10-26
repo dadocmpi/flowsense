@@ -184,7 +184,7 @@ describe('computeMultiTimeframe', () => {
 
   it('honours a custom timeframe weight table', () => {
     const heavy5m = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      timeframeWeights: { '5m': 100, '15m': 0, '30m': 0, '1h': 0, '4h': 0, '1D': 0, '1W': 0 },
+      timeframeWeights: { '1m': 0, '5m': 100, '15m': 0, '30m': 0, '1h': 0, '4h': 0, '1D': 0, '1W': 0 },
     });
     const readings = [
       { timeframe: '5m', score: 90, available: true },
@@ -314,5 +314,39 @@ describe('mergeLiveTail', () => {
     const merged = mergeLiveTail(native1h, base, 60);
     expect(merged[0].close).toBe(200);
     expect(merged[1].close).toBe(205);
+  });
+
+  it('refuses a partial rebuild when the base window starts inside the bucket', () => {
+    // A 1m base covers a few hours, so the current daily bucket is usually only
+    // partly observed. Rebuilding it would report a high, low and volume for a
+    // day that has barely started, so the native bar must be left alone.
+    const nativeDaily: Candle[] = [
+      { datetime: '2024-01-01 00:00:00', open: 100, high: 130, low: 95, close: 120, volume: 9000 },
+    ];
+    // The base window begins at 18:00, well after the 00:00 daily open.
+    const base: Candle[] = [
+      { datetime: '2024-01-01 18:00:00', open: 118, high: 121, low: 117, close: 120, volume: 40 },
+      { datetime: '2024-01-01 18:01:00', open: 120, high: 122, low: 119, close: 121, volume: 30 },
+    ];
+
+    const merged = mergeLiveTail(nativeDaily, base, 1440);
+    // Untouched: still the native bar, not a 70-volume partial day.
+    expect(merged).toEqual(nativeDaily);
+  });
+
+  it('merges once the base window reaches the bucket open', () => {
+    const nativeDaily: Candle[] = [
+      { datetime: '2024-01-01 00:00:00', open: 100, high: 130, low: 95, close: 120, volume: 9000 },
+    ];
+    // The base window now starts at the daily open, so a rebuild is complete.
+    const base: Candle[] = [
+      { datetime: '2024-01-01 00:00:00', open: 100, high: 130, low: 95, close: 120, volume: 9000 },
+      { datetime: '2024-01-01 00:01:00', open: 120, high: 124, low: 119, close: 123, volume: 25 },
+    ];
+
+    const merged = mergeLiveTail(nativeDaily, base, 1440);
+    expect(merged[0].close).toBe(123);
+    expect(merged[0].high).toBe(130);
+    expect(merged[0].volume).toBe(9025);
   });
 });

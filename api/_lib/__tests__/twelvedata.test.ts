@@ -5,7 +5,7 @@
 // tested against the vendor's own documented response shape.
 
 import { describe, expect, it } from 'vitest';
-import { normalizeDatetime, parseTimeSeries, TWELVEDATA_INTERVALS } from '../twelvedata';
+import { classifyError, normalizeDatetime, parseTimeSeries, TwelveDataError, TWELVEDATA_INTERVALS } from '../twelvedata';
 
 describe('TWELVEDATA_INTERVALS', () => {
   it('maps every app timeframe the UI offers', () => {
@@ -71,8 +71,10 @@ describe('parseTimeSeries', () => {
     expect(() => parseTimeSeries({ status: 'error', message: 'symbol not found' })).toThrow('symbol not found');
   });
 
-  it('throws when there are no values', () => {
-    expect(() => parseTimeSeries({})).toThrow(/no values/i);
+  it('returns nothing when there is no values array', () => {
+    // An absent or empty value list is a real "no bars here", not an error: the
+    // resolver walks to the next candidate rather than failing the request.
+    expect(parseTimeSeries({})).toEqual([]);
   });
 
   it('drops bars without a usable close rather than inventing one', () => {
@@ -89,5 +91,35 @@ describe('parseTimeSeries', () => {
 
   it('returns nothing for an empty value list', () => {
     expect(parseTimeSeries({ values: [] })).toEqual([]);
+  });
+});
+
+describe('classifyError', () => {
+  it('maps a 429 onto RATE_LIMIT regardless of wording', () => {
+    expect(classifyError('something odd', 429)).toBe('RATE_LIMIT');
+  });
+
+  it('maps credit wording onto RATE_LIMIT', () => {
+    expect(classifyError('You have run out of credits')).toBe('RATE_LIMIT');
+  });
+
+  it('maps entitlement wording onto ENTITLEMENT', () => {
+    expect(classifyError('not entitled to this symbol')).toBe('ENTITLEMENT');
+  });
+
+  it('falls back to UPSTREAM for anything else', () => {
+    expect(classifyError('internal server error')).toBe('UPSTREAM');
+  });
+});
+
+describe('parseTimeSeries error kind', () => {
+  it('throws a typed error carrying the classified kind', () => {
+    try {
+      parseTimeSeries({ status: 'error', message: 'not entitled to this symbol' });
+      throw new Error('expected a throw');
+    } catch (error) {
+      expect(error).toBeInstanceOf(TwelveDataError);
+      expect((error as TwelveDataError).kind).toBe('ENTITLEMENT');
+    }
   });
 });
