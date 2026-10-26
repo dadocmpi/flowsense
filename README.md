@@ -1,19 +1,17 @@
 # FlowSense
 
 Multi-timeframe market compass. **Gold futures (GC), S&P 500 futures (ES) and
-Dow Jones futures (YM) are the default instruments**; Binance USDT spot pairs
-remain available as a secondary group.
+Dow Jones futures (YM)** are the instruments this app ships.
 
 Every number is either a provider response or arithmetic over one. Where a
 figure is not available the app shows an explicit unavailable state — nothing
 is simulated, modelled or back-filled.
 
-## Instrument groups
+## Instruments
 
-| Group | Instruments | Candle source | Order flow |
-| --- | --- | --- | --- |
-| Futures (default) | GC, ES, YM | Twelve Data, via a server-side API route (key never reaches the browser) | Not available — hidden with an explanation |
-| Crypto | BTC, ETH, SOL, BNB, XRP, DOGE, ADA, AVAX, LINK, LTC | Binance public REST + WebSocket | Real: book depth, trade tape, aggressor split |
+| Instruments | Candle source |
+| --- | --- |
+| GC, ES, YM | Twelve Data, via a server-side API route (key never reaches the browser) |
 
 ## Timeframes
 
@@ -117,11 +115,9 @@ in the premium or discount half of the last swing range. Pure function in
 
 ## Technical metrics
 
-ATR(14), VWAP, session high/low and the volume point of control. For an
-instrument with a session (`SESSION`), VWAP, the range and the POC reset at the
-session open — `RTH` or `FULL`, selected in config. Crypto trades continuously
-and has no open to reset at, so its window is the fetched series and the panel
-labels it as a window rather than a session.
+ATR(14), VWAP, session high/low and the volume point of control. VWAP, the
+range and the POC reset at the session open — `RTH` or `FULL`, selected in
+config.
 
 ## Data providers
 
@@ -130,16 +126,12 @@ Candles come through a provider abstraction (`MarketDataProvider` in
 
 ```ts
 getCandles(instrument, timeframe, limit, signal): Promise<Candle[]>
-subscribeTicks(instrument, handlers): StreamHandle
-subscribeOrderFlow?(instrument, handlers): StreamHandle   // optional
+subscribeTicks?(instrument, handlers): StreamHandle   // optional
 ```
 
-- **Binance** (`src/core/providers/binance.ts`) — crypto, browser-direct, no
-  key. Implements both ticks and order flow.
 - **Futures / Twelve Data** (`src/core/providers/futures.ts`) — GC/ES/YM,
   proxied through `/api/futures/candles` so the key stays server-side. Candles
-  plus a polled price; order flow is not offered and the panel says so rather
-  than estimating.
+  plus a polled price (or a browser-safe stream when the server offers one).
 
 ### Twelve Data configuration
 
@@ -235,10 +227,9 @@ Keep the key server-side — the browser must never see it. The client provider 
 npm install && npm run dev   # → http://localhost:8080/
 ```
 
-Crypto needs no key, no `.env` and no server-side component. Futures needs
-`TWELVE_DATA_API_KEY`. Locally, the `api/` functions run under `vercel dev`;
-`npm run dev` serves the front end only, so the futures tabs will report no
-configured source unless you use `vercel dev`.
+Futures need `TWELVE_DATA_API_KEY`. Locally, the `api/` functions run under
+`vercel dev`; `npm run dev` serves the front end only, so the futures tabs will
+report no configured source unless you use `vercel dev`.
 
 ## Layout
 
@@ -254,11 +245,11 @@ src/core/candles.ts         bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts one timeframe → three gauges + structure + metrics
 src/core/multiTimeframe.ts  every timeframe + the confluence bias
 src/core/entryCheck.ts      does the market agree with a long/short? (pure)
-src/core/providers/         MarketDataProvider interface + Binance and futures
+src/core/providers/         MarketDataProvider interface + the futures provider
 src/core/providers/polling.ts   poll cadence and server cache TTLs
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/config/compass.ts       every weight, tolerance and session setting
-src/hooks/useInstrumentFeed.ts        candles, ticks, order flow for one instrument
+src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
 api/_lib/symbols.ts         the one place symbols are mapped and candidates ordered
 api/_lib/twelvedata.ts      vendor adapter: request, parse, classify errors
@@ -277,10 +268,10 @@ npm test
 
 Covers every indicator against hand-computed values, vote thresholds, the score
 mapping, label/score-sign consistency, MTF confluence, the entry check
-(including the higher-timeframe warning), session VWAP reset, continuous-market
-windows, history ordering and dedupe, order-flow aggregation, market structure,
-market-open detection, the poll cadence, the vendor adapter (parsing, error
-classification), symbol resolution and fallback, and the WebSocket frame parser.
+(including the higher-timeframe warning), session VWAP reset, history ordering
+and dedupe, market structure, market-open detection, the poll cadence, the
+vendor adapter (parsing, error classification), symbol resolution and fallback,
+and the WebSocket frame parser.
 
 ## Commands
 
@@ -312,23 +303,13 @@ pre-existing type errors above.
 
 ## Streaming
 
-The crypto feed seeds candle history with REST calls, then one combined
-WebSocket drives everything live: `@ticker`, `@kline_5m`, `@depth10@100ms` and
-`@aggTrade`. High-frequency messages accumulate in refs and one coalesced
-snapshot commits to React state every 150 ms, so the compass, the price and the
-order flow all move within a second or two of market activity without a
-re-render per trade. A dropped socket triggers capped-backoff reconnect, and on
-the next `LIVE` the hook re-seeds klines to refill the series; the UI shows a
-reconnecting banner instead of presenting stale data as live.
-
-Binance runs several regional domains and blocks some of them from some
-locations (HTTP 451). The client tries the official hosts in order —
-`data-api.binance.vision`, `api.binance.com`, `api.binance.us` — and remembers
-whichever answers, so a geo-block on one domain is not fatal. If every host is
-blocked the app shows a `GEO_BLOCKED` error instead of inventing data.
-
 A futures provider serves candles on request, refreshed on a cadence tied to
 the timeframe, plus a polled price when no tick feed is available. Because a
 polled close is not a tick, the status reads "Delayed (polling)" rather than
 "Live", and a market that has stopped producing bars is labelled "Market
 closed" instead of continuing to present the last reading as current.
+
+When the server exposes a browser-safe price stream, the client uses it and the
+status can reach `LIVE`; otherwise the price is polled over REST. A dropped
+socket triggers capped-backoff reconnect, and the UI shows a reconnecting
+banner instead of presenting stale data as live.

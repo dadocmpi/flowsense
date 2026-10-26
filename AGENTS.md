@@ -2,31 +2,23 @@
 
 ## What this app is
 
-FlowSense: a React + TypeScript + Vite multi-timeframe market compass. Gold,
-S&P 500 and Dow futures (GC/ES/YM) are the default instruments; Binance USDT
-spot pairs are a secondary group. Every number is a provider response or
+FlowSense: a React + TypeScript + Vite multi-timeframe market compass for Gold,
+S&P 500 and Dow futures (GC/ES/YM). Every number is a provider response or
 arithmetic over one. Nothing is simulated.
 
 ## Hard rules
 
-- **Never fabricate market data.** No random walks, no synthetic order flow, no
+- **Never fabricate market data.** No random walks, no synthetic values, no
   placeholder prices that look real. If data is unavailable, show an honest
   unavailable state (`--`, `DATA: UNAVAILABLE`) and an error kind.
-- **Only ship markets we can source honestly.** Crypto comes from Binance's
-  public API. Futures come from a configured provider. An instrument with no
-  configured source shows "no data source configured" and no numbers at all —
-  never a placeholder that looks real.
-- **Keys stay server-side.** Crypto needs no key. The futures provider's key is
-  read only by the functions under `api/` and must never reach the browser.
-  Verify the bundle stays credential-free:
-  `grep -c "apikey" dist/assets/*.js` → must be 0. (A `FUTURES_API_KEY` hit in
-  the bundle is fine only as the env-var *name* in help text, never a value.)
-- **Order flow must be real.** Every bid, ask, trade and buy/sell percentage must
-  come from the provider's own book and tape. Order flow is offered only by a
-  provider that genuinely has it; a candle-only provider hides the panel with an
-  explanation. Never estimate order flow from candles, and never reintroduce
-  hardcoded values such as a fixed 50/50 buyer/seller split or a constant
-  `volumeDelta` — an earlier version did exactly that, and it was a lie in the UI.
+- **Only ship markets we can source honestly.** Futures come from a configured
+  provider. An instrument with no configured source shows "no data source
+  configured" and no numbers at all — never a placeholder that looks real.
+- **Keys stay server-side.** The futures provider's key is read only by the
+  functions under `api/` and must never reach the browser. Verify the bundle
+  stays credential-free: `grep -c "apikey" dist/assets/*.js` → must be 0. (A
+  `FUTURES_API_KEY` hit in the bundle is fine only as the env-var *name* in help
+  text, never a value.)
 
 ## Architecture
 
@@ -42,11 +34,11 @@ src/core/timeframeEngine.ts    one timeframe -> three gauges + structure + metri
 src/core/multiTimeframe.ts     every timeframe + the confluence bias
 src/core/entryCheck.ts         does the market agree with a long/short? (pure)
 src/core/marketHours.ts        is the market still producing bars? (pure)
-src/core/providers/            MarketDataProvider interface, Binance, futures
+src/core/providers/            MarketDataProvider interface + the futures provider
 src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/config/compass.ts          every weight, tolerance and session setting
-src/hooks/useInstrumentFeed.ts        candles, ticks, order flow for one instrument
+src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
 api/_lib/symbols.ts            the ONE place symbols are mapped + candidates ordered
 api/_lib/twelvedata.ts         vendor adapter: request, parse, classify error kind
@@ -61,13 +53,13 @@ All indicator, scoring, structure, session and history logic is pure and lives
 under `src/core` so it can be unit tested without a browser. Keep it that way:
 no I/O, no clock, no React in `src/core`.
 
-### Futures are polled; crypto is streamed
+### The futures feed is polled, or streamed when the server offers it
 
-Crypto has a real push feed, so it streams. Futures do not: the provider is
-asked for candles on a cadence tied to the timeframe, and the price is polled
-every `PRICE_POLL_INTERVAL_MS` (30s) when no tick feed is in use. Because a
-polled close is not a tick, the status reads "Delayed (polling)" — do not dress
-it as `LIVE`.
+The provider is asked for candles on a cadence tied to the timeframe, and the
+price is polled every `PRICE_POLL_INTERVAL_MS` (30s) when no tick feed is in
+use. Because a polled close is not a tick, the status reads "Delayed (polling)"
+— do not dress it as `LIVE`. When the server exposes a browser-safe price
+stream, `subscribeTicks` uses it instead and the status can reach `LIVE`.
 
 The poll cadence and the server cache TTL live together in
 `src/core/providers/polling.ts`. Every indicator is computed locally from
@@ -82,20 +74,17 @@ walk immediately, because the next candidate would just burn another blocked
 call. A failure that is not an entitlement problem must not be reported as one
 (see `resolveCandidate`).
 
-### Streaming, not polling (crypto)
+### Streaming, not polling
 
 There is no candle-close poll and no manual refresh. `useInstrumentFeed` seeds
-candle history with REST calls, then for crypto one combined
-WebSocket carries everything live: `@ticker` (24h stats), `@kline_1m` (the open
-base candle, pushed on every trade), `@depth10@100ms` and `@aggTrade`. High-frequency
-stream messages accumulate in refs and one coalesced snapshot commits to React
-state every 150 ms, so the compass, price and order flow all move within a
-second or two of market activity without re-rendering on every trade.
+candle history with REST calls, then the provider's live feed carries updates:
+high-frequency messages accumulate in refs and one coalesced snapshot commits to
+React state every 200 ms, so the compass and price move within a second or two of
+market activity without re-rendering on every tick.
 
 Do not reintroduce a refresh timer, a countdown, or an interval tied to candle
-close. A dropped socket triggers the client's capped-backoff reconnect; on the
-next `LIVE` the hook re-seeds klines to refill the series, and the UI shows a
-reconnecting banner instead of presenting stale data as live.
+close. A dropped socket triggers the client's capped-backoff reconnect; the UI
+shows a reconnecting banner instead of presenting stale data as live.
 
 ### Timeframes are fetched, not aggregated from one series
 
@@ -113,13 +102,6 @@ is excluded entirely: its exchange boundary (Monday open) is not the epoch-based
 bucket, so a rebuild would put the bar at the wrong time. Do not "fix" that by
 bucketing the weekly from 1m.
 
-Host fallback order (REST and WS alike): `data-api.binance.vision` →
-`api.binance.com` / `stream.binance.com:9443` → `api.binance.us` /
-`stream.binance.us:9443`. Some regions get HTTP 451 on the main domains; the
-client remembers the first host that answers. `data-api.binance.vision` and
-`data-stream.binance.vision` are the official public market-data mirrors and are
-the most reliable choice.
-
 ## UI
 
 The top bar holds the price and the asset tabs only. The removed "DATA: LIVE",
@@ -132,13 +114,6 @@ Every panel is permanently expanded. Do not add collapsible/show-hide controls,
 accordions or any other click-to-reveal wrapper: all data must be visible on
 page load. Put secondary or debug content in its own always-visible section
 instead of hiding it.
-
-## Real aggressor flow
-
-- `aggTrade.m === true` means the **buyer was the maker**, so the seller
-  aggressed → `SELL`. This is the exchange's own flag, not an inference.
-- Kline field 9 is taker-buy base volume, a genuine per-candle aggressor split.
-  `aggregateCandles` sums it so higher timeframes keep the split.
 
 ## Score and labels
 

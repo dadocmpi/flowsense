@@ -11,20 +11,11 @@ import type { SessionConfig } from '../config/compass';
 /**
  * ATR(14), session VWAP, session high/low and the volume point of control.
  *
- * For an instrument with a session (`SESSION`), VWAP, the session range and
- * the POC are measured over the candles of the CURRENT session only, so they
- * reset at the session open (see session.ts). ATR is a rolling reading and is
- * deliberately not session-bound.
- *
- * A 24/7 market (`CONTINUOUS`) has no open to reset at, so the window is the
- * whole fetched series and the reported start is the first candle — labelled
- * as a window, not a session, in the UI.
+ * VWAP, the session range and the POC are measured over the candles of the
+ * CURRENT session only, so they reset at the session open (see session.ts).
+ * ATR is a rolling reading and is deliberately not session-bound.
  */
-export function computeTechnicalMetrics(
-  candles: Candle[],
-  session: SessionConfig,
-  sessionMode: 'SESSION' | 'CONTINUOUS' = 'SESSION'
-): TechnicalMetrics {
+export function computeTechnicalMetrics(candles: Candle[], session: SessionConfig): TechnicalMetrics {
   const empty: TechnicalMetrics = {
     atr: null,
     vwap: null,
@@ -37,18 +28,14 @@ export function computeTechnicalMetrics(
   };
   if (candles.length === 0) return empty;
 
-  const isContinuous = sessionMode === 'CONTINUOUS';
-  const measured = isContinuous ? candles : candlesInCurrentSession(candles, session);
+  const measured = candlesInCurrentSession(candles, session);
   const window = measured.length > 0 ? measured : candles;
 
   const profile = volumeProfile(window, 40);
   const poc = pointOfControl(profile);
 
   const lastMs = parseCandleTime(candles[candles.length - 1].datetime);
-  const firstMs = parseCandleTime(candles[0].datetime);
-  const sessionStart = isContinuous
-    ? (Number.isFinite(firstMs) ? firstMs : null)
-    : (Number.isFinite(lastMs) ? sessionStartMs(lastMs, session) : null);
+  const sessionStart = Number.isFinite(lastMs) ? sessionStartMs(lastMs, session) : null;
 
   return {
     atr: atr(candles, 14),

@@ -46,22 +46,6 @@ describe('aggregateCandles', () => {
     expect(aggregated[0].volume).toBe(30);
   });
 
-  it('keeps the taker-buy split when the source candles have it', () => {
-    const fiveMin = [
-      { ...candle(100, 0, 10), takerBuyVolume: 6 },
-      { ...candle(101, 1, 10), takerBuyVolume: 4 },
-      { ...candle(102, 2, 10), takerBuyVolume: 5 },
-    ];
-    const aggregated = aggregateCandles(fiveMin, 15);
-    expect(aggregated[0].takerBuyVolume).toBe(15);
-  });
-
-  it('never invents a taker-buy split that was not provided', () => {
-    const fiveMin = [candle(100, 0, 10), candle(101, 1, 10)];
-    const aggregated = aggregateCandles(fiveMin, 15);
-    expect(aggregated[0].takerBuyVolume).toBeUndefined();
-  });
-
   it('returns nothing for an empty series or a zero bucket', () => {
     expect(aggregateCandles([], 15)).toEqual([]);
     expect(aggregateCandles([candle(100, 0)], 0)).toEqual([]);

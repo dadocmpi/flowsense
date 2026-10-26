@@ -20,15 +20,12 @@ export function formatCandleTime(ms: number): string {
 }
 
 /**
- * Aggregate candles into larger buckets. Volume is summed and the taker-buy
- * split is summed only when at least one source candle actually carried it —
- * higher timeframes must never invent an aggressor split they were not given.
+ * Aggregate candles into larger buckets. Volume is summed.
  */
 export function aggregateCandles(candles: Candle[], bucketMinutes: number): Candle[] {
   if (bucketMinutes <= 0 || candles.length === 0) return [];
 
   const buckets = new Map<number, Candle>();
-  const hasSplit = new Map<number, boolean>();
 
   for (const candle of candles) {
     const time = parseCandleTime(candle.datetime);
@@ -38,8 +35,7 @@ export function aggregateCandles(candles: Candle[], bucketMinutes: number): Cand
     const existing = buckets.get(bucketStart);
 
     if (!existing) {
-      buckets.set(bucketStart, { ...candle, takerBuyVolume: candle.takerBuyVolume });
-      hasSplit.set(bucketStart, candle.takerBuyVolume !== undefined);
+      buckets.set(bucketStart, { ...candle });
       continue;
     }
 
@@ -47,11 +43,6 @@ export function aggregateCandles(candles: Candle[], bucketMinutes: number): Cand
     existing.low = Math.min(existing.low, candle.low);
     existing.close = candle.close;
     existing.volume += candle.volume;
-
-    if (candle.takerBuyVolume !== undefined) {
-      existing.takerBuyVolume = (existing.takerBuyVolume ?? 0) + candle.takerBuyVolume;
-      hasSplit.set(bucketStart, true);
-    }
   }
 
   return [...buckets.entries()]
@@ -59,7 +50,6 @@ export function aggregateCandles(candles: Candle[], bucketMinutes: number): Cand
     .map(([time, candle]) => ({
       ...candle,
       datetime: formatCandleTime(time),
-      ...(hasSplit.get(time) ? {} : { takerBuyVolume: undefined }),
     }));
 }
 

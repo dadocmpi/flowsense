@@ -6,7 +6,6 @@
 //   2. the multi-timeframe confluence matrix
 //   3. the selected timeframe's three gauges, vote tables and structure read
 //   4. technical metrics for the selected instrument
-//   5. order flow, only where the provider has real order flow
 //
 // No panel is collapsible: everything is visible on load.
 
@@ -19,11 +18,10 @@ import { CompassGauge } from '../components/compass/CompassGauge';
 import { VoteTable } from '../components/compass/VoteTable';
 import { TimeframeCard } from '../components/compass/TimeframeCard';
 import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPanel';
-import { OrderFlowPanel } from '../components/compass/OrderFlowPanel';
 import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
-import { DEFAULT_INSTRUMENT_ID, findInstrument, instrumentsByGroup, type Instrument } from '../core/instruments';
-import { probeFuturesProvider, providerForInstrument } from '../core/providers';
+import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
+import { probeFuturesProvider } from '../core/providers';
 import { checkEntry, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import { formatClock, formatNumber } from '../components/compass/format';
@@ -105,11 +103,7 @@ const Index: React.FC = () => {
   // futures tab unavailable before we know would be a guess, not a fact.
   const availability = useMemo(() => {
     const map: Record<string, boolean | undefined> = {};
-    for (const candidate of instrumentsByGroup('CRYPTO')) {
-      const provider = providerForInstrument(candidate);
-      map[candidate.id] = provider ? provider.isConfigured() : false;
-    }
-    for (const candidate of instrumentsByGroup('FUTURES')) {
+    for (const candidate of ALL_INSTRUMENTS) {
       map[candidate.id] = futuresConfigured ?? undefined;
     }
     // The selected instrument's own feed has the freshest answer.
@@ -304,31 +298,11 @@ const Index: React.FC = () => {
                   quote={instrument.quote}
                   session={DEFAULT_COMPASS_CONFIG.session}
                   timeframe={selected}
-                  sessionMode={frame.sessionMode}
                 />
               </Section>
             )}
           </>
         )}
-
-        {/* ── Order flow, only where the provider has it ───────────────── */}
-        <Section title="Order flow" subtitle={`${instrument.id} · ${feed.sourceLabel}`}>
-          {feed.orderFlowAvailable ? (
-            <OrderFlowPanel flow={feed.orderFlow} precision={pricePrecision} quote={instrument.quote} />
-          ) : (
-            <div className="flex flex-col gap-2 text-body text-white/60">
-              <p>
-                No real order flow for {instrument.id}. {feed.sourceLabel} provides candles
-                {feed.feedMode === 'POLL' ? ' and a polled price' : ''} only, and order flow is never estimated from
-                candles — so this panel stays empty rather than showing a synthetic book or tape.
-              </p>
-              <p className="text-label text-white/45">
-                Real order flow — order book depth, trade tape and a genuine aggressor split — is available on the
-                Binance crypto pairs, where the exchange publishes it directly.
-              </p>
-            </div>
-          )}
-        </Section>
 
       </main>
 

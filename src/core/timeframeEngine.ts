@@ -22,8 +22,7 @@ const EMPTY_READING_BASE = {
 export function computeTimeframeReading(
   timeframe: Timeframe,
   candles: Candle[],
-  config: CompassConfig = DEFAULT_COMPASS_CONFIG,
-  sessionMode: 'SESSION' | 'CONTINUOUS' = 'SESSION'
+  config: CompassConfig = DEFAULT_COMPASS_CONFIG
 ): TimeframeReading {
   const price = candles.length > 0 ? candles[candles.length - 1].close : 0;
   const available = candles.length >= config.minCandles;
@@ -35,10 +34,9 @@ export function computeTimeframeReading(
       indicators: { ...EMPTY_READING_BASE, details: [] },
       summary: { ...EMPTY_READING_BASE, details: [] },
       structure: analyzeMarketStructure(candles),
-      metrics: computeTechnicalMetrics(candles, config.session, sessionMode),
+      metrics: computeTechnicalMetrics(candles, config.session),
       price,
       candleCount: candles.length,
-      sessionMode,
       available: false,
     };
   }
@@ -53,10 +51,9 @@ export function computeTimeframeReading(
     indicators,
     summary,
     structure: analyzeMarketStructure(candles),
-    metrics: computeTechnicalMetrics(candles, config.session, sessionMode),
+    metrics: computeTechnicalMetrics(candles, config.session),
     price,
     candleCount: candles.length,
-    sessionMode,
     available: true,
   };
 }

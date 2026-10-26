@@ -41,12 +41,6 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
-  /**
-   * Base-asset volume initiated by buyers (Binance kline field 9). Populated
-   * only where the provider genuinely reports an aggressor split; undefined
-   * means "not available", never "assume half".
-   */
-  takerBuyVolume?: number;
 }
 
 /** A single Buy / Neutral / Sell vote, whatever produced it. */
@@ -120,8 +114,6 @@ export interface TimeframeReading {
   price: number;
   /** Number of candles the reading was computed from. */
   candleCount: number;
-  /** Whether the metrics were measured over a session or a rolling window. */
-  sessionMode: 'SESSION' | 'CONTINUOUS';
   /** False when there were not enough candles to compute anything. */
   available: boolean;
 }
