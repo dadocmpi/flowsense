@@ -153,13 +153,3 @@ export function buildSummaryGauge(
 export function needleAngleFromScore(score: number): number {
   return (clampScore(score) / 100) * 90;
 }
-
-/**
- * Confidence in a reading: how far the score sits from neutral, damped by how
- * much of the block was actually available.
- */
-export function confidenceFromGauge(gauge: GaugeReading, expectedVotes: number): number {
-  const distance = Math.abs(gauge.score) / 100;
-  const coverage = expectedVotes <= 0 ? 1 : Math.min(1, gauge.details.length / expectedVotes);
-  return Math.round(Math.min(1, distance * coverage) * 100);
-}

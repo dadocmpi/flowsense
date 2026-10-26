@@ -10,7 +10,6 @@ import {
   buildGauge,
   buildSummaryGauge,
   clampScore,
-  confidenceFromGauge,
   isBearishLabel,
   isBullishLabel,
   labelFromScore,
@@ -264,26 +263,5 @@ describe('needleAngleFromScore', () => {
   it('points the same way as the score sign', () => {
     expect(needleAngleFromScore(30)).toBeGreaterThan(0);
     expect(needleAngleFromScore(-30)).toBeLessThan(0);
-  });
-});
-
-describe('confidenceFromGauge', () => {
-  const details = (n: number): VoteDetail[] => Array.from({ length: n }, (_, i) => detail(`d${i}`, 'BUY'));
-
-  it('rises with distance from neutral', () => {
-    const weak = confidenceFromGauge({ score: 10, label: 'NEUTRAL', tally: { buy: 1, neutral: 1, sell: 1 }, details: details(12) }, 12);
-    const strong = confidenceFromGauge({ score: 90, label: 'STRONG_BUY', tally: { buy: 12, neutral: 0, sell: 0 }, details: details(12) }, 12);
-    expect(strong).toBeGreaterThan(weak);
-    expect(strong).toBe(90);
-  });
-
-  it('is 0 at neutral', () => {
-    expect(confidenceFromGauge({ score: 0, label: 'NEUTRAL', tally: { buy: 0, neutral: 0, sell: 0 }, details: details(12) }, 12)).toBe(0);
-  });
-
-  it('is damped when only part of the block was available', () => {
-    const full = confidenceFromGauge({ score: 60, label: 'STRONG_BUY', tally: { buy: 12, neutral: 0, sell: 0 }, details: details(12) }, 12);
-    const partial = confidenceFromGauge({ score: 60, label: 'STRONG_BUY', tally: { buy: 6, neutral: 0, sell: 0 }, details: details(6) }, 12);
-    expect(partial).toBeLessThan(full);
   });
 });
