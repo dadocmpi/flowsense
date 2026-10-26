@@ -9,7 +9,7 @@ import { classifyError, normalizeDatetime, parseTimeSeries, TwelveDataError, TWE
 
 describe('TWELVEDATA_INTERVALS', () => {
   it('maps every app timeframe the UI offers', () => {
-    for (const timeframe of ['5m', '15m', '30m', '1h', '4h', '1D']) {
+    for (const timeframe of ['1m', '5m', '15m', '30m', '1h', '4h', '1D']) {
       expect(TWELVEDATA_INTERVALS[timeframe]).toBeTruthy();
     }
     expect(TWELVEDATA_INTERVALS['1D']).toBe('1day');
