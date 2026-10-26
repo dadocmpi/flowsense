@@ -10,11 +10,9 @@ import { TIMEFRAMES, TIMEFRAME_MINUTES } from './types';
 import { DEFAULT_COMPASS_CONFIG, type CompassConfig } from '../config/compass';
 import { resampleCandles } from './candles';
 import { computeTimeframeReading } from './timeframeEngine';
-import { computeConfluence, type ConfluenceResult } from './scoring';
 
 export interface MultiTimeframeReading {
   timeframes: TimeframeReading[];
-  confluence: ConfluenceResult;
   /** Price the reading was taken at (last close of the base series). */
   price: number;
   baseCandleCount: number;
@@ -32,10 +30,6 @@ export function computeMultiTimeframe(
 
   return {
     timeframes: readings,
-    confluence: computeConfluence(
-      readings.map(r => ({ timeframe: r.timeframe, score: r.summary.score, available: r.available })),
-      config
-    ),
     price: baseCandles.length > 0 ? baseCandles[baseCandles.length - 1].close : 0,
     baseCandleCount: baseCandles.length,
   };
@@ -72,10 +66,6 @@ export function computeMultiTimeframeFromSeries(
 
   return {
     timeframes: readings,
-    confluence: computeConfluence(
-      readings.map(r => ({ timeframe: r.timeframe, score: r.summary.score, available: r.available })),
-      config
-    ),
     price,
     baseCandleCount: readings.reduce((acc, r) => acc + r.candleCount, 0),
   };

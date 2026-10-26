@@ -1,13 +1,13 @@
 // ============================================
-// MULTI-TIMEFRAME ENGINE + CONFLUENCE TESTS
+// MULTI-TIMEFRAME ENGINE TESTS
 // ============================================
 
 import { describe, expect, it } from 'vitest';
 import { computeMultiTimeframe, computeMultiTimeframeFromSeries } from '../multiTimeframe';
 import { computeTimeframeReading } from '../timeframeEngine';
-import { computeConfluence, isBearishLabel, isBullishLabel, labelFromScore } from '../scoring';
+import { isBearishLabel, isBullishLabel, labelFromScore } from '../scoring';
 import { aggregateCandles, mergeLiveTail, resampleCandles, normalizeSeries, upsertLastCandle } from '../candles';
-import { DEFAULT_COMPASS_CONFIG, mergeCompassConfig } from '../../config/compass';
+import { DEFAULT_COMPASS_CONFIG } from '../../config/compass';
 import { TIMEFRAMES } from '../types';
 import type { Candle } from '../types';
 
@@ -142,61 +142,6 @@ describe('computeMultiTimeframe', () => {
     expect(byTf.get('1h')!.available).toBe(true);
     // 500 x 5m is under two days, so the daily cannot have 30 bars.
     expect(byTf.get('1D')!.available).toBe(false);
-  });
-
-  it('produces a positive confluence bias on a sustained uptrend', () => {
-    const result = computeMultiTimeframe(ramp(3000, 100, 0.5), 5, DEFAULT_COMPASS_CONFIG);
-    expect(result.confluence.bias).toBeGreaterThan(0);
-    expect(result.confluence.direction).toBe('BULLISH');
-    expect(result.confluence.available).toBeGreaterThan(0);
-  });
-
-  it('produces a negative confluence bias on a sustained downtrend', () => {
-    const result = computeMultiTimeframe(ramp(3000, 2000, -0.5), 5, DEFAULT_COMPASS_CONFIG);
-    expect(result.confluence.bias).toBeLessThan(0);
-    expect(result.confluence.direction).toBe('BEARISH');
-  });
-
-  it('keeps the confluence label consistent with the confluence bias', () => {
-    for (const step of [-1, -0.25, 0, 0.25, 1]) {
-      const result = computeMultiTimeframe(ramp(3000, 1000, step), 5, DEFAULT_COMPASS_CONFIG);
-      if (result.confluence.bias > 0) expect(isBearishLabel(result.confluence.label)).toBe(false);
-      if (result.confluence.bias < 0) expect(isBullishLabel(result.confluence.label)).toBe(false);
-    }
-  });
-
-  it('honours a custom timeframe weight table', () => {
-    const heavy5m = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      timeframeWeights: { '1m': 0, '5m': 100, '15m': 0, '30m': 0, '1h': 0, '4h': 0, '1D': 0 },
-    });
-    const readings = [
-      { timeframe: '5m', score: 90, available: true },
-      { timeframe: '1D', score: -90, available: true },
-    ];
-    expect(computeConfluence(readings, heavy5m).bias).toBe(90);
-    expect(computeConfluence(readings, DEFAULT_COMPASS_CONFIG).bias).toBeLessThan(0);
-  });
-});
-
-describe('confluence agreement', () => {
-  it('counts how many timeframes back the bias', () => {
-    const result = computeConfluence(
-      [
-        { timeframe: '15m', score: 80, available: true },
-        { timeframe: '1h', score: 70, available: true },
-        { timeframe: '4h', score: -60, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    expect(result.directional).toBe(3);
-    expect(result.agreement).toBeGreaterThan(50);
-    expect(result.direction).toBe('BULLISH');
-  });
-
-  it('reports zero agreement when nothing is directional', () => {
-    const result = computeConfluence([{ timeframe: '1h', score: 0, available: true }], DEFAULT_COMPASS_CONFIG);
-    expect(result.agreement).toBe(0);
-    expect(result.direction).toBeNull();
   });
 });
 

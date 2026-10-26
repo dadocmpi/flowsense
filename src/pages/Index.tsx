@@ -13,7 +13,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useInstrumentFeed } from '../hooks/useInstrumentFeed';
 import { useMultiTimeframeCompass } from '../hooks/useMultiTimeframeCompass';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
-import { ConfluenceMatrix } from '../components/compass/ConfluenceMatrix';
 import { CompassGauge } from '../components/compass/CompassGauge';
 import { VoteTable } from '../components/compass/VoteTable';
 import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
@@ -232,17 +231,6 @@ const Index: React.FC = () => {
             <p className="text-body text-white/70">{feed.error.message}</p>
           </Section>
         )}
-
-        {/* ── Confluence matrix ────────────────────────────────────────── */}
-        <Section title="Multi-timeframe confluence" subtitle={`${instrument.id} · all timeframes`}>
-          {reading ? (
-            <ConfluenceMatrix reading={reading} selected={selected} onSelect={setSelected} />
-          ) : (
-            <p className="py-8 text-center text-body italic text-white/45">
-              {feed.isLoading ? 'Loading candles…' : 'No candles available for this instrument.'}
-            </p>
-          )}
-        </Section>
 
         {/* ── Entry check ──────────────────────────────────────────────── */}
         {entryCheck && (
