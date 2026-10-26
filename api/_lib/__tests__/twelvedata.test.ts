@@ -60,11 +60,18 @@ describe('parseTimeSeries', () => {
     });
   });
 
-  it('does not attach a taker-buy split, because the vendor does not report one', () => {
+  it('parses exactly the OHLCV fields, adding nothing else', () => {
     const candles = parseTimeSeries({
       values: [{ datetime: '2024-06-10', open: '1', high: '2', low: '1', close: '2', volume: '10' }],
     });
-    expect(candles[0].takerBuyVolume).toBeUndefined();
+    expect(candles[0]).toEqual({
+      datetime: '2024-06-10 00:00:00',
+      open: 1,
+      high: 2,
+      low: 1,
+      close: 2,
+      volume: 10,
+    });
   });
 
   it('throws the vendor message when the API reports an error', () => {

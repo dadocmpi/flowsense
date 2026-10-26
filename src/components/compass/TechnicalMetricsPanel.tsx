@@ -19,11 +19,6 @@ interface TechnicalMetricsPanelProps {
   session: SessionConfig;
   /** Timeframe the metrics were measured on. */
   timeframe: string;
-  /**
-   * `SESSION` resets the window at the exchange open; `CONTINUOUS` markets
-   * have no open, so the window is the fetched series.
-   */
-  sessionMode: 'SESSION' | 'CONTINUOUS';
 }
 
 function Row({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -49,9 +44,7 @@ export const TechnicalMetricsPanel: React.FC<TechnicalMetricsPanelProps> = ({
   quote,
   session,
   timeframe,
-  sessionMode,
 }) => {
-  const isContinuous = sessionMode === 'CONTINUOUS';
   const sessionStart = metrics.sessionStart
     ? new Date(metrics.sessionStart).toLocaleString([], {
         month: 'short',
@@ -64,19 +57,9 @@ export const TechnicalMetricsPanel: React.FC<TechnicalMetricsPanelProps> = ({
   return (
     <div>
       <p className="mb-3 text-label text-white/45">
-        {isContinuous ? (
-          <>
-            Measured on {timeframe} candles over the fetched window
-            {sessionStart ? ` (from ${sessionStart})` : ''}. This market trades continuously, so there is no session
-            open to reset at.
-          </>
-        ) : (
-          <>
-            Measured on {timeframe} candles over the current {MODE_TEXT[session.mode]}
-            {sessionStart ? ` (opened ${sessionStart}, ${session.timezone})` : ''}. VWAP and the point of control
-            reset at that boundary.
-          </>
-        )}
+        Measured on {timeframe} candles over the current {MODE_TEXT[session.mode]}
+        {sessionStart ? ` (opened ${sessionStart}, ${session.timezone})` : ''}. VWAP and the point of control reset at
+        that boundary.
       </p>
 
       <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
@@ -87,7 +70,7 @@ export const TechnicalMetricsPanel: React.FC<TechnicalMetricsPanelProps> = ({
             hint="rolling"
           />
           <Row
-            label={isContinuous ? 'VWAP (window)' : 'Session VWAP'}
+            label="Session VWAP"
             value={metrics.vwap !== null ? formatNumber(metrics.vwap, precision) : 'Unavailable'}
           />
           <Row
@@ -97,15 +80,15 @@ export const TechnicalMetricsPanel: React.FC<TechnicalMetricsPanelProps> = ({
         </div>
         <div>
           <Row
-            label={isContinuous ? 'Window high' : 'Session high'}
+            label="Session high"
             value={metrics.sessionHigh !== null ? formatNumber(metrics.sessionHigh, precision) : 'Unavailable'}
           />
           <Row
-            label={isContinuous ? 'Window low' : 'Session low'}
+            label="Session low"
             value={metrics.sessionLow !== null ? formatNumber(metrics.sessionLow, precision) : 'Unavailable'}
           />
           <Row
-            label={isContinuous ? 'Candles in window' : 'Candles in session'}
+            label="Candles in session"
             value={metrics.sessionCandles > 0 ? String(metrics.sessionCandles) : 'Unavailable'}
           />
         </div>

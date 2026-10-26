@@ -178,26 +178,24 @@ covered by `src/core/__tests__/entryCheck.test.ts`.
 
 ## 7. When the compass updates
 
-There is no candle-close poll and no manual refresh. Candles are seeded once,
-then for crypto one combined WebSocket drives everything live (`@ticker`,
-`@kline_1m`, `@depth10@100ms`, `@aggTrade`). High-frequency messages accumulate
-in refs and one coalesced snapshot commits to React state every 150 ms, so the
-compass moves within a second or two of market activity without a re-render per
-trade.
+There is no candle-close poll and no manual refresh. Candles are seeded with
+REST calls, then the provider's live feed carries updates; high-frequency
+messages accumulate in refs and one coalesced snapshot commits to React state
+every 200 ms, so the compass moves within a second or two of market activity
+without a re-render per tick.
 
-A futures provider serves candles on request; its newest bar is current as of
+The futures provider serves candles on request; its newest bar is current as of
 the last fetch, and the status is reported honestly rather than as a live tick.
+When the server exposes a browser-safe price stream the price can reach `LIVE`;
+otherwise it is polled and labelled "Delayed (polling)".
 
 ---
 
 ## 8. Data sources and honesty rules
 
-- **Never fabricate market data.** No random walks, no synthetic order flow, no
+- **Never fabricate market data.** No random walks, no synthetic values, no
   placeholder prices. An unavailable figure reads as unavailable.
-- **Order flow must be real.** It is shown only when the provider genuinely has a
-  book and tape. A candle-only provider hides the panel with an explanation.
-  Order flow is never estimated from candles.
-- **Keys stay server-side.** Crypto needs none. The futures provider's key is
-  read only by the functions under `api/` and never reaches the browser.
+- **Keys stay server-side.** The futures provider's key is read only by the
+  functions under `api/` and never reaches the browser.
 - **Labels follow the score.** One function, derived from the sign, asserted by
   tests.
