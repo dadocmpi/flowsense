@@ -30,10 +30,10 @@ one. Nothing is simulated.
 src/core/types.ts              Timeframe union + candle/gauge types
 src/core/indicators.ts         pure indicator math, no I/O
 src/core/votes.ts              per-indicator and per-MA vote logic
-src/core/scoring.ts            gauges, score -> label mapping, confluence
+src/core/scoring.ts            gauges, score -> label mapping, overall bias
 src/core/candles.ts            bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts    one timeframe -> the gauges
-src/core/multiTimeframe.ts     every timeframe + the confluence bias
+src/core/multiTimeframe.ts     every timeframe + the overall bias
 src/core/entryCheck.ts         does the market agree with a long/short? (pure)
 src/core/marketHours.ts        is the market still producing bars? (pure)
 src/core/instruments.ts        the futures catalog (Gold, S&P 500, Dow)
@@ -52,7 +52,7 @@ api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
-All indicator, scoring, structure and history logic is pure and lives under
+All indicator, scoring and history logic is pure and lives under
 `src/core` so it can be unit tested without a browser. Keep it that way: no I/O,
 no clock, no React in `src/core`.
 
