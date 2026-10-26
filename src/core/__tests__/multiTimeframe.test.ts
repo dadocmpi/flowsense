@@ -1,13 +1,13 @@
 // ============================================
-// MULTI-TIMEFRAME ENGINE + CONFLUENCE TESTS
+// MULTI-TIMEFRAME ENGINE TESTS
 // ============================================
 
 import { describe, expect, it } from 'vitest';
 import { computeMultiTimeframe, computeMultiTimeframeFromSeries } from '../multiTimeframe';
 import { computeTimeframeReading } from '../timeframeEngine';
-import { computeConfluence, isBearishLabel, isBullishLabel, labelFromScore } from '../scoring';
+import { isBearishLabel, isBullishLabel, labelFromScore } from '../scoring';
 import { aggregateCandles, mergeLiveTail, resampleCandles, normalizeSeries, upsertLastCandle } from '../candles';
-import { DEFAULT_COMPASS_CONFIG, mergeCompassConfig } from '../../config/compass';
+import { DEFAULT_COMPASS_CONFIG } from '../../config/compass';
 import { TIMEFRAMES } from '../types';
 import type { Candle } from '../types';
 
@@ -22,9 +22,8 @@ function candle(close: number, index: number, volume = 100): Candle {
   };
 }
 
-/** A 5-minute series long enough to fill the longest timeframe that can be
- *  aggregated from it (the weekly needs 30 weekly bars, which a 5m series
- *  cannot supply in a test, so only the reachable timeframes are asserted). */
+/** A 5-minute series long enough to fill the longer timeframes that can be
+ *  aggregated from it (only the reachable timeframes are asserted). */
 function ramp(length: number, start = 100, step = 0.5): Candle[] {
   return Array.from({ length }, (_, i) => candle(start + i * step, i));
 }
@@ -136,68 +135,13 @@ describe('computeMultiTimeframe', () => {
     expect(result.price).toBe(candles[candles.length - 1].close);
   });
 
-  it('marks short timeframes available and the weekly unavailable on a short base', () => {
+  it('marks short timeframes available and longer ones unavailable on a short base', () => {
     const result = computeMultiTimeframe(ramp(500), 5, DEFAULT_COMPASS_CONFIG);
     const byTf = new Map(result.timeframes.map(t => [t.timeframe, t]));
     expect(byTf.get('5m')!.available).toBe(true);
     expect(byTf.get('1h')!.available).toBe(true);
-    // 500 x 5m is under two days, so the weekly cannot have 30 bars.
-    expect(byTf.get('1W')!.available).toBe(false);
-  });
-
-  it('produces a positive confluence bias on a sustained uptrend', () => {
-    const result = computeMultiTimeframe(ramp(3000, 100, 0.5), 5, DEFAULT_COMPASS_CONFIG);
-    expect(result.confluence.bias).toBeGreaterThan(0);
-    expect(result.confluence.direction).toBe('BULLISH');
-    expect(result.confluence.available).toBeGreaterThan(0);
-  });
-
-  it('produces a negative confluence bias on a sustained downtrend', () => {
-    const result = computeMultiTimeframe(ramp(3000, 2000, -0.5), 5, DEFAULT_COMPASS_CONFIG);
-    expect(result.confluence.bias).toBeLessThan(0);
-    expect(result.confluence.direction).toBe('BEARISH');
-  });
-
-  it('keeps the confluence label consistent with the confluence bias', () => {
-    for (const step of [-1, -0.25, 0, 0.25, 1]) {
-      const result = computeMultiTimeframe(ramp(3000, 1000, step), 5, DEFAULT_COMPASS_CONFIG);
-      if (result.confluence.bias > 0) expect(isBearishLabel(result.confluence.label)).toBe(false);
-      if (result.confluence.bias < 0) expect(isBullishLabel(result.confluence.label)).toBe(false);
-    }
-  });
-
-  it('honours a custom timeframe weight table', () => {
-    const heavy5m = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      timeframeWeights: { '1m': 0, '5m': 100, '15m': 0, '30m': 0, '1h': 0, '4h': 0, '1D': 0, '1W': 0 },
-    });
-    const readings = [
-      { timeframe: '5m', score: 90, available: true },
-      { timeframe: '1D', score: -90, available: true },
-    ];
-    expect(computeConfluence(readings, heavy5m).bias).toBe(90);
-    expect(computeConfluence(readings, DEFAULT_COMPASS_CONFIG).bias).toBeLessThan(0);
-  });
-});
-
-describe('confluence agreement', () => {
-  it('counts how many timeframes back the bias', () => {
-    const result = computeConfluence(
-      [
-        { timeframe: '15m', score: 80, available: true },
-        { timeframe: '1h', score: 70, available: true },
-        { timeframe: '4h', score: -60, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    expect(result.directional).toBe(3);
-    expect(result.agreement).toBeGreaterThan(50);
-    expect(result.direction).toBe('BULLISH');
-  });
-
-  it('reports zero agreement when nothing is directional', () => {
-    const result = computeConfluence([{ timeframe: '1h', score: 0, available: true }], DEFAULT_COMPASS_CONFIG);
-    expect(result.agreement).toBe(0);
-    expect(result.direction).toBeNull();
+    // 500 x 5m is under two days, so the daily cannot have 30 bars.
+    expect(byTf.get('1D')!.available).toBe(false);
   });
 });
 
@@ -218,9 +162,9 @@ describe('computeMultiTimeframeFromSeries', () => {
 
   it('reports a timeframe with no series as unavailable instead of back-filling it', () => {
     const result = computeMultiTimeframeFromSeries({ '5m': ramp(400) });
-    const weekly = result.timeframes.find(t => t.timeframe === '1W');
-    expect(weekly?.available).toBe(false);
-    expect(weekly?.candleCount).toBe(0);
+    const fourHour = result.timeframes.find(t => t.timeframe === '4h');
+    expect(fourHour?.available).toBe(false);
+    expect(fourHour?.candleCount).toBe(0);
   });
 
   it('covers every timeframe exactly once', () => {

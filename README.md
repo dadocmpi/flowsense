@@ -15,24 +15,25 @@ is simulated, modelled or back-filled.
 
 ## Timeframes
 
-`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, shown as `M1`, `M5`, `M15`,
-`M30`, `1H`, `4H`, `1D`, `1W`. Each timeframe is fetched natively from the
-provider rather than aggregated from a single base series, so a 1m seed cannot
-cap how far back the weekly reaches. The live stream carries the 1m bar; the
-newest bar of the mergeable timeframes (5m through 1D) is refreshed from that
-tail, so a higher timeframe moves with the market between fetches instead of
-freezing.
+`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, shown as `M1`, `M5`, `M15`, `M30`,
+`1H`, `4H`, `1D`. Each timeframe is fetched natively from the provider rather
+than aggregated from a single base series, so a 1m seed cannot cap how far back
+the daily reaches. The live stream carries the 1m bar; the newest bar of the
+mergeable timeframes (5m through 1D) is refreshed from that tail, so a higher
+timeframe moves with the market between fetches instead of freezing.
 
 A merge is refused when the base window does not reach the bucket open. A 1m
 window covers only a few hours, so the current daily bucket is usually only
 partly observed; rebuilding it would report a high, low and volume for a day
-that has barely started, so the natively fetched bar is kept instead. Weekly
-bars are never merged, because the epoch-based bucket boundary is not the
-exchange's Monday open.
+that has barely started, so the natively fetched bar is kept instead.
+
+All seven timeframes are always computed, even though only the selected one is
+drawn on the compass, because the entry check reads every one of them.
 
 ## The compass
 
-Three gauges per timeframe, in the style of a technical summary:
+One gauge per timeframe: the **Summary**, a score from −100 to +100 built from
+two internal blocks:
 
 1. **Moving averages** — SMA and EMA over 5, 10, 20, 50, 100, 200. Each votes
    Buy above the average, Sell below, Neutral inside a tolerance band.
@@ -40,7 +41,10 @@ Three gauges per timeframe, in the style of a technical summary:
    MACD(12,26,9), ADX(14) with +DI/-DI, Williams %R(14), CCI(14), ATR(14),
    Highs/Lows(14), Ultimate Oscillator, ROC and Bull/Bear Power(13), each with a
    standard threshold vote.
-3. **Summary** — the two blocks combined into a score from −100 to +100.
+
+Both blocks still feed the summary score exactly as before; they are simply not
+drawn as separate gauges. The screen shows the summary gauge, its label and its
+score, and nothing else about the vote breakdown.
 
 Score to label mapping, applied everywhere and asserted by tests:
 
@@ -63,17 +67,15 @@ All weights live in one file: `src/config/compass.ts`.
 - `maWeights` — per-period weight inside the moving-average gauge.
 - `gaugeBlend` — how the MA block and the indicator block combine into the
   summary.
-- `timeframeWeights` — how much each timeframe counts in the confluence bias
-  and in the entry check. The trend timeframes (1H, 4H, 1D) carry the most
-  weight by default; M1 and M5 are deliberately light and the weekly is a slow
-  confirmation.
+- `timeframeWeights` — how much each timeframe counts in the entry check. The
+  trend timeframes (1H, 4H, 1D) carry the most weight by default; M1 and M5 are
+  deliberately light.
 - `maTolerancePercent` — the Neutral band around each moving average, as a
   percentage of price.
 - `thresholds` — the score cut-offs behind the five labels.
 - `entryCheck` — the rules behind the LONG / SHORT entry check:
   `higherTimeframes`, `warnOnHigherTimeframeDisagreement`, `alignedShare` and
   `againstShare`.
-- `session` — `mode` (`RTH` or `FULL`), `timezone`, and the open times.
 
 | Timeframe | Default weight |
 | --- | --- |
@@ -84,14 +86,13 @@ All weights live in one file: `src/config/compass.ts`.
 | 1H | 1.6 |
 | 4H | 1.8 |
 | 1D | 2.0 |
-| 1W | 1.2 |
 
 ## Entry check
 
-The confluence matrix says what the market is doing; the entry check answers
-whether it agrees with the trade you are about to take. Pick LONG or SHORT and
-every timeframe is classified as agreeing, disagreeing or neutral. The verdict
-is **Aligned**, **Partial** or **Against**.
+The compass says what the market is doing; the entry check answers whether it
+agrees with the trade you are about to take. Pick LONG or SHORT and every
+timeframe is classified as agreeing, disagreeing or neutral. The verdict is
+**Aligned**, **Partial** or **Against**.
 
 Agreement is weighted by `timeframeWeights` and measured only across timeframes
 that took a side, so a neutral timeframe neither helps nor hurts. A single
@@ -99,25 +100,6 @@ higher-timeframe disagreement (1H and above by default) stops the verdict being
 Aligned and raises an explicit warning — the case worth knowing about before
 entering. The logic is pure (`src/core/entryCheck.ts`) and covered by
 `src/core/__tests__/entryCheck.test.ts`.
-
-## Confluence matrix
-
-A compact row shows every timeframe's reading at once, plus a confluence
-bias: how many timeframes agree, in which direction, and a weighted score. A
-timeframe with no data is reported as unavailable and does not vote.
-
-## Market structure
-
-Per timeframe, a lightweight Smart Money Concepts read: the last break of
-structure (BOS), the last change of character (CHoCH), and whether price sits
-in the premium or discount half of the last swing range. Pure function in
-`src/core/structure.ts`.
-
-## Technical metrics
-
-ATR(14), VWAP, session high/low and the volume point of control. VWAP, the
-range and the POC reset at the session open — `RTH` or `FULL`, selected in
-config.
 
 ## Data providers
 
@@ -236,19 +218,16 @@ report no configured source unless you use `vercel dev`.
 ```
 src/core/indicators.ts      pure indicator math, no I/O
 src/core/votes.ts           per-indicator and per-MA vote logic
-src/core/scoring.ts         gauge building, score → label mapping, confluence
-src/core/structure.ts       swing highs/lows, BOS, CHoCH, premium/discount
-src/core/session.ts         session open resolution, VWAP/POC window
-src/core/metrics.ts         ATR, VWAP, session range, point of control
+src/core/scoring.ts         gauge building, score → label mapping
 src/core/marketHours.ts     is the market still producing bars? (pure)
 src/core/candles.ts         bucketing, resampling, live-tail merge
-src/core/timeframeEngine.ts one timeframe → three gauges + structure + metrics
-src/core/multiTimeframe.ts  every timeframe + the confluence bias
+src/core/timeframeEngine.ts one timeframe → the summary gauge
+src/core/multiTimeframe.ts  every timeframe the entry check reads
 src/core/entryCheck.ts      does the market agree with a long/short? (pure)
 src/core/providers/         MarketDataProvider interface + the futures provider
 src/core/providers/polling.ts   poll cadence and server cache TTLs
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
-src/config/compass.ts       every weight, tolerance and session setting
+src/config/compass.ts       every weight and tolerance setting
 src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
 api/_lib/symbols.ts         the one place symbols are mapped and candidates ordered
@@ -267,11 +246,10 @@ npm test
 ```
 
 Covers every indicator against hand-computed values, vote thresholds, the score
-mapping, label/score-sign consistency, MTF confluence, the entry check
-(including the higher-timeframe warning), session VWAP reset, history ordering
-and dedupe, market structure, market-open detection, the poll cadence, the
-vendor adapter (parsing, error classification), symbol resolution and fallback,
-and the WebSocket frame parser.
+mapping, label/score-sign consistency, the entry check (including the
+higher-timeframe warning), history ordering and dedupe, market-open detection,
+the poll cadence, the vendor adapter (parsing, error classification), symbol
+resolution and fallback, and the WebSocket frame parser.
 
 ## Commands
 

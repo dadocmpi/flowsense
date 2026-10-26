@@ -47,13 +47,6 @@ describe('marketState', () => {
     expect(result.toleranceMs).toBe(3 * 1440 * 60_000);
   });
 
-  it('calls a weekly series closed only after three weeks of silence', () => {
-    const recent = marketState([candleAt('2024-06-03 00:00:00')], '1W', NOW);
-    expect(recent.state).toBe('OPEN');
-    const old = marketState([candleAt('2024-04-01 00:00:00')], '1W', NOW);
-    expect(old.state).toBe('CLOSED');
-  });
-
   it('exposes the tolerance it applied, so the UI can explain itself', () => {
     const result = marketState([candleAt('2024-06-10 11:59:00')], '15m', NOW);
     expect(result.toleranceMs).toBe(15 * CLOSED_AFTER_BARS * 60_000);

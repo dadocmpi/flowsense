@@ -5,10 +5,10 @@
 // dependency, so the whole indicator / scoring / structure pipeline can be
 // unit tested without a browser.
 
-export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1D' | '1W';
+export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1D';
 
 /** Ordered shortest -> longest. */
-export const TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1D', '1W'];
+export const TIMEFRAMES: Timeframe[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1D'];
 
 export const TIMEFRAME_MINUTES: Record<Timeframe, number> = {
   '1m': 1,
@@ -18,7 +18,6 @@ export const TIMEFRAME_MINUTES: Record<Timeframe, number> = {
   '1h': 60,
   '4h': 240,
   '1D': 1440,
-  '1W': 10080,
 };
 
 /** Display labels. The internal keys stay stable; only the wording changes. */
@@ -30,7 +29,6 @@ export const TIMEFRAME_LABELS: Record<Timeframe, string> = {
   '1h': '1H',
   '4h': '4H',
   '1D': '1D',
-  '1W': '1W',
 };
 
 export interface Candle {
@@ -73,43 +71,13 @@ export interface GaugeReading {
   details: VoteDetail[];
 }
 
-export interface MarketStructure {
-  swingHigh: number | null;
-  swingLow: number | null;
-  /** Last break of structure direction. */
-  lastBos: 'BULLISH' | 'BEARISH' | null;
-  /** Last change of character direction. */
-  lastChoch: 'BULLISH' | 'BEARISH' | null;
-  /** Where price sits in the last swing range. */
-  zone: 'PREMIUM' | 'DISCOUNT' | 'EQUILIBRIUM' | 'UNKNOWN';
-  /** 0-100, position within the range (0 = at the low, 100 = at the high). */
-  rangePosition: number | null;
-  rangeHigh: number | null;
-  rangeLow: number | null;
-}
-
-export interface TechnicalMetrics {
-  atr: number | null;
-  vwap: number | null;
-  sessionHigh: number | null;
-  sessionLow: number | null;
-  pointOfControl: number | null;
-  /** Candle volume at the point of control. */
-  pointOfControlVolume: number | null;
-  /** Number of candles in the measured session. */
-  sessionCandles: number;
-  /** Open time of the session the metrics were measured over. */
-  sessionStart: number | null;
-}
-
 export interface TimeframeReading {
   timeframe: Timeframe;
-  /** The three Investing-style gauges for this timeframe. */
+  /** The two component gauges for this timeframe. */
   movingAverages: GaugeReading;
   indicators: GaugeReading;
+  /** The combined gauge shown on screen. */
   summary: GaugeReading;
-  structure: MarketStructure;
-  metrics: TechnicalMetrics;
   /** Last close used for the reading. */
   price: number;
   /** Number of candles the reading was computed from. */

@@ -105,7 +105,7 @@ export const FUTURES_INSTRUMENTS: Instrument[] = [
     providerSymbol: 'YM',
     continuousSymbol: 'YM1!',
     roll: { method: 'frontMonth', adjustment: 'none' },
-    shortLabel: 'Dow',
+    shortLabel: 'Dow Jones',
   },
 ];
 

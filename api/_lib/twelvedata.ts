@@ -6,7 +6,7 @@
 //
 // Endpoint: https://api.twelvedata.com/time_series
 //   symbol    a candidate from api/_lib/symbols.ts (futures first, proxy next)
-//   interval  1min, 5min, 15min, 30min, 1h, 4h, 1day, 1week
+//   interval  1min, 5min, 15min, 30min, 1h, 4h, 1day
 //   timezone  pinned to UTC, so a payload never depends on where the serverless
 //             function runs
 //   apikey    TWELVE_DATA_API_KEY (server-side only, never in the bundle)
@@ -61,7 +61,6 @@ export const TWELVEDATA_INTERVALS: Record<string, string> = {
   '1h': '1h',
   '4h': '4h',
   '1D': '1day',
-  '1W': '1week',
 };
 
 export type VendorErrorKind = 'ENTITLEMENT' | 'RATE_LIMIT' | 'NETWORK' | 'UPSTREAM';

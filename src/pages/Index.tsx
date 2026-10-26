@@ -1,29 +1,32 @@
 // ============================================
-// FLOWSENSE — MULTI-TIMEFRAME MARKET COMPASS
+// FLOWSENSE — SINGLE-COMPASS MARKET VIEW
 // ============================================
-// Layout, top to bottom:
-//   1. instrument selector and the selected instrument's live header
-//   2. the multi-timeframe confluence matrix
-//   3. the selected timeframe's three gauges, vote tables and structure read
-//   4. technical metrics for the selected instrument
+// One screen, no scrolling:
+//   1. the top bar: logo, asset buttons, live price with daily change, status
+//      dot and the last update time
+//   2. a two-column body: the compass (timeframe buttons above one large gauge)
+//      on the left, the entry check on the right
+//   3. a one-line footer with the data source, the symbol actually used and the
+//      last update time
 //
-// No panel is collapsible: everything is visible on load.
+// The compass shows the Summary gauge only. The moving-average votes and the
+// indicator votes still feed that score exactly as before — only the display
+// changed. Every timeframe is still computed because the entry check reads all
+// of them.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInstrumentFeed } from '../hooks/useInstrumentFeed';
 import { useMultiTimeframeCompass } from '../hooks/useMultiTimeframeCompass';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
-import { ConfluenceMatrix } from '../components/compass/ConfluenceMatrix';
+import { TimeframeButtons } from '../components/compass/TimeframeButtons';
 import { CompassGauge } from '../components/compass/CompassGauge';
-import { VoteTable } from '../components/compass/VoteTable';
-import { TimeframeCard } from '../components/compass/TimeframeCard';
-import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPanel';
 import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
 import { probeFuturesProvider } from '../core/providers';
 import { checkEntry, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
+import { TIMEFRAMES, type Timeframe } from '../core/types';
 import { formatClock, formatNumber } from '../components/compass/format';
 import { cn } from '@/lib/utils';
 
@@ -48,7 +51,7 @@ const STATUS_TEXT: Record<string, string> = {
   OFFLINE: 'Offline',
   // The provider has candles but no live feed; the price is a REST poll, so it
   // is delayed by definition and must not be dressed as a live tick.
-  UNAVAILABLE: 'Delayed (polling)',
+  UNAVAILABLE: 'Delayed',
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -59,6 +62,32 @@ const STATUS_TONE: Record<string, string> = {
   UNAVAILABLE: 'text-amber-400',
 };
 
+const ASSET_STORAGE_KEY = 'flowsense:asset';
+const TIMEFRAME_STORAGE_KEY = 'flowsense:timeframe';
+
+/** Read a persisted value, ignoring anything unavailable or malformed. */
+function readStored(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // A blocked or full storage is not worth interrupting the app for.
+  }
+}
+
+/** The persisted timeframe, or M15 when nothing valid was stored. */
+function readStoredTimeframe(): Timeframe {
+  const stored = readStored(TIMEFRAME_STORAGE_KEY);
+  return stored && (TIMEFRAMES as string[]).includes(stored) ? (stored as Timeframe) : '15m';
+}
+
 /** "GC1! · Gold futures (continuous)" — the symbol and what it really is. */
 function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null {
   const resolved = feed.resolvedSource;
@@ -68,15 +97,29 @@ function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null
 }
 
 const Index: React.FC = () => {
-  const [selectedId, setSelectedId] = useState<string>(DEFAULT_INSTRUMENT_ID);
+  const [selectedId, setSelectedId] = useState<string>(() => {
+    const stored = readStored(ASSET_STORAGE_KEY);
+    return stored && findInstrument(stored) ? stored : DEFAULT_INSTRUMENT_ID;
+  });
   const [entryDirection, setEntryDirection] = useState<EntryDirection>('LONG');
+  const [initialTimeframe] = useState<Timeframe>(readStoredTimeframe);
+
   const instrument: Instrument = useMemo(
     () => findInstrument(selectedId) ?? findInstrument(DEFAULT_INSTRUMENT_ID)!,
     [selectedId]
   );
 
   const feed = useInstrumentFeed(instrument);
-  const { reading, selected, setSelected } = useMultiTimeframeCompass(feed);
+  const { reading, selected, setSelected } = useMultiTimeframeCompass(feed, DEFAULT_COMPASS_CONFIG, initialTimeframe);
+
+  // Persist the last choices so a reload comes back where the user left off.
+  useEffect(() => {
+    writeStored(ASSET_STORAGE_KEY, instrument.id);
+  }, [instrument.id]);
+
+  useEffect(() => {
+    writeStored(TIMEFRAME_STORAGE_KEY, selected);
+  }, [selected]);
 
   // Whether the futures source is configured is a server-side fact. The feed
   // only asks for the selected instrument, so ask once here too: otherwise the
@@ -133,182 +176,156 @@ const Index: React.FC = () => {
     [reading, entryDirection]
   );
 
-  const handleSelect = (id: string) => {
-    setSelectedId(id);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  // Daily change against the previous daily close, from the provider's own 1D
+  // bars. No daily history means no change to show, not a guessed one.
+  const dailyChange = useMemo(() => {
+    const daily = feed.seriesByTimeframe['1D'];
+    if (!daily || daily.length < 2 || feed.price <= 0) return null;
+    const previousClose = daily[daily.length - 2].close;
+    if (!(previousClose > 0)) return null;
+    const change = feed.price - previousClose;
+    return { change, percent: (change / previousClose) * 100 };
+  }, [feed.seriesByTimeframe, feed.price]);
+
+  const blocked = (!feed.configured && !feed.isLoading) || (feed.error && feed.candles.length === 0 && !feed.isLoading);
+
+  const statusLabel = feed.market.state === 'CLOSED' ? 'Closed' : STATUS_TEXT[feed.streamStatus] ?? feed.streamStatus;
+  const statusTone =
+    feed.market.state === 'CLOSED' ? 'text-amber-400' : STATUS_TONE[feed.streamStatus] ?? 'text-white/50';
+  const detail = sourceDetail(feed);
 
   return (
-    <div className="min-h-screen w-full bg-[#050608] font-sans text-white selection:bg-amber-500/30">
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 w-full border-b border-white/[0.04] bg-[#07080a]/95 px-4 py-3 backdrop-blur-md sm:px-8">
-        <div className="mx-auto flex max-w-[1400px] flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-baseline gap-3">
-              <span className="text-title font-black tracking-tight">FlowSense</span>
-              <span className="text-label text-white/40">Multi-timeframe market compass</span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-label">
-              <span className="text-white/45">
-                {instrument.name} <span className="text-white/25">· {instrument.exchange}</span>
-              </span>
-              <span className="font-mono text-data font-bold text-white">
-                {feed.price > 0 ? formatNumber(feed.price, pricePrecision) : '--'}
-                <span className="ml-1 text-label font-normal text-white/40">{instrument.quote}</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className={cn('font-bold', STATUS_TONE[feed.streamStatus])}>
-                  ● {STATUS_TEXT[feed.streamStatus] ?? feed.streamStatus}
-                </span>
-                <span className="font-mono text-white/40">{formatClock(feed.lastUpdate)}</span>
-              </span>
-              {/* A closed market is stated plainly: the reading below it is the
-                  last real one, not a live one. */}
-              {feed.market.state === 'CLOSED' && (
-                <span className="font-bold text-amber-400" title={feed.market.reason}>
-                  Market closed
-                </span>
-              )}
-            </div>
+    <div className="flex h-screen flex-col overflow-hidden bg-[#050608] font-sans text-white selection:bg-amber-500/30">
+      {/* ── Top bar ──────────────────────────────────────────────────────── */}
+      <header className="shrink-0 border-b border-white/[0.04] bg-[#07080a]/95 px-[clamp(1rem,2vw,2.5rem)] py-[clamp(0.5rem,1.2vh,1rem)]">
+        <div className="flex flex-wrap items-center justify-between gap-x-[clamp(1rem,2vw,2.5rem)] gap-y-2">
+          <div className="flex items-baseline gap-3">
+            <span className="font-black tracking-tight" style={{ fontSize: 'clamp(1.1rem,1.5vw,1.6rem)' }}>
+              FlowSense
+            </span>
+            <span className="hidden text-label text-white/40 lg:inline">Multi-timeframe market compass</span>
           </div>
 
-          {/* What we are really reading. A proxy is called a proxy, never the
-              futures contract. */}
-          {sourceDetail(feed) && (
-            <div className="flex flex-wrap items-center gap-2 text-label text-white/45">
-              <span className="uppercase tracking-wider text-white/30">Source</span>
-              <span className="font-mono text-white/70">{feed.sourceLabel}</span>
-              <span className="text-white/25">·</span>
-              <span className="font-mono text-white/70">{sourceDetail(feed)}</span>
-              {feed.resolvedSource?.kind === 'proxy' && (
+          <div className="flex flex-wrap items-center gap-x-[clamp(0.9rem,2vw,2.25rem)] gap-y-2">
+            <InstrumentSelector selectedId={instrument.id} onSelect={setSelectedId} availability={availability} />
+
+            <div className="flex items-baseline gap-2">
+              <span className="font-mono font-bold" style={{ fontSize: 'clamp(1.1rem,1.6vw,1.75rem)' }}>
+                {feed.price > 0 ? formatNumber(feed.price, pricePrecision) : '--'}
+              </span>
+              {dailyChange ? (
                 <span
-                  className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
-                  title="This is a proxy for the futures contract, not the contract itself."
+                  className={cn(
+                    'font-mono text-label font-semibold',
+                    dailyChange.change >= 0 ? 'text-[#26a69a]' : 'text-[#ef5350]'
+                  )}
                 >
-                  Proxy
+                  {dailyChange.change >= 0 ? '+' : ''}
+                  {formatNumber(dailyChange.change, pricePrecision)} ({dailyChange.percent >= 0 ? '+' : ''}
+                  {dailyChange.percent.toFixed(2)}%)
                 </span>
+              ) : (
+                <span className="font-mono text-label text-white/30">--</span>
               )}
             </div>
-          )}
 
-          <InstrumentSelector selectedId={instrument.id} onSelect={handleSelect} availability={availability} />
+            <div className="flex items-center gap-2">
+              <span className={cn('text-label font-bold', statusTone)}>● {statusLabel}</span>
+              <span className="font-mono text-label text-white/40">{formatClock(feed.lastUpdate)}</span>
+            </div>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-[1400px] flex-col gap-panel px-4 py-6 sm:px-8 sm:py-8">
-        {/* ── Unavailable / error state ────────────────────────────────── */}
-        {!feed.configured && !feed.isLoading && (
-          <Section
-            title={feed.sourceReachable ? ERROR_TITLES.NOT_CONFIGURED : UNREACHABLE_TITLE}
-            subtitle={instrument.id}
-          >
-            <div className="flex flex-col gap-2">
-              <p className="text-body text-white/70">
-                {feed.unavailableReason ??
-                  feed.error?.message ??
-                  'This instrument has no configured data source.'}
+      {/* ── Body ─────────────────────────────────────────────────────────── */}
+      {blocked ? (
+        <main className="flex min-h-0 flex-1 items-center justify-center px-[clamp(1rem,2vw,2.5rem)] py-6">
+          <div className="w-full max-w-2xl">
+            {!feed.configured && !feed.isLoading ? (
+              <Section
+                title={feed.sourceReachable ? ERROR_TITLES.NOT_CONFIGURED : UNREACHABLE_TITLE}
+                subtitle={instrument.id}
+              >
+                <div className="flex flex-col gap-2">
+                  <p className="text-body text-white/70">
+                    {feed.unavailableReason ??
+                      feed.error?.message ??
+                      'This instrument has no configured data source.'}
+                  </p>
+                  {feed.sourceReachable ? (
+                    <p className="text-label text-white/45">
+                      FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500 and Dow need{' '}
+                      <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
+                      environment.
+                    </p>
+                  ) : (
+                    <p className="text-label text-white/45">
+                      The server route that holds the API key did not answer. On a local dev server the{' '}
+                      <span className="font-mono text-white/70">api/</span> functions are not running — use{' '}
+                      <span className="font-mono text-white/70">vercel dev</span>. In production this is a network or
+                      deployment problem, not a missing key.
+                    </p>
+                  )}
+                </div>
+              </Section>
+            ) : (
+              <Section
+                title={ERROR_TITLES[feed.error?.kind ?? 'UNKNOWN'] ?? ERROR_TITLES.UNKNOWN}
+                subtitle={instrument.id}
+              >
+                <p className="text-body text-white/70">{feed.error?.message}</p>
+              </Section>
+            )}
+          </div>
+        </main>
+      ) : (
+        <main className="grid min-h-0 flex-1 grid-cols-[65fr_35fr] gap-[clamp(0.75rem,1.5vw,2rem)] px-[clamp(1rem,2vw,2.5rem)] py-[clamp(0.75rem,1.6vh,1.5rem)]">
+          {/* Compass column */}
+          <section className="flex min-h-0 flex-col items-center justify-center gap-[clamp(0.5rem,1.5vh,1.5rem)]">
+            <TimeframeButtons selected={selected} onSelect={setSelected} />
+
+            {frame && frame.available ? (
+              <CompassGauge gauge={frame.summary} />
+            ) : (
+              <p className="px-6 py-8 text-center text-body italic text-white/45">
+                {frame
+                  ? `${frame.candleCount} candles on ${selected} — not enough to compute a reading (needs ${DEFAULT_COMPASS_CONFIG.minCandles}).`
+                  : feed.isLoading
+                    ? 'Loading candles…'
+                    : 'No candles available for this instrument.'}
               </p>
-              {feed.sourceReachable ? (
-                <p className="text-label text-white/45">
-                  FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500 and Dow need{' '}
-                  <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
-                  environment.
-                </p>
-              ) : (
-                <p className="text-label text-white/45">
-                  The server route that holds the API key did not answer. On a local dev server the{' '}
-                  <span className="font-mono text-white/70">api/</span> functions are not running — use{' '}
-                  <span className="font-mono text-white/70">vercel dev</span>. In production this is a network or
-                  deployment problem, not a missing key.
-                </p>
-              )}
-            </div>
-          </Section>
-        )}
+            )}
+          </section>
 
-        {/* A configured source can still fail; that is a real error, not a
-            missing one, so it is reported separately. */}
-        {feed.configured && feed.error && !feed.isLoading && feed.candles.length === 0 && (
-          <Section title={ERROR_TITLES[feed.error.kind] ?? ERROR_TITLES.UNKNOWN} subtitle={instrument.id}>
-            <p className="text-body text-white/70">{feed.error.message}</p>
-          </Section>
-        )}
+          {/* Entry check column */}
+          <section className="flex min-h-0 flex-col rounded-2xl border border-white/[0.08] bg-[#0b0c10] p-[clamp(0.75rem,1.2vw,1.5rem)]">
+            {entryCheck ? (
+              <EntryCheckPanel result={entryCheck} direction={entryDirection} onDirectionChange={setEntryDirection} />
+            ) : (
+              <p className="m-auto text-center text-body italic text-white/45">Waiting for the timeframe readings…</p>
+            )}
+          </section>
+        </main>
+      )}
 
-        {/* ── Confluence matrix ────────────────────────────────────────── */}
-        <Section title="Multi-timeframe confluence" subtitle={`${instrument.id} · all timeframes`}>
-          {reading ? (
-            <ConfluenceMatrix reading={reading} selected={selected} onSelect={setSelected} />
-          ) : (
-            <p className="py-8 text-center text-body italic text-white/45">
-              {feed.isLoading ? 'Loading candles…' : 'No candles available for this instrument.'}
-            </p>
+      {/* ── Footer ───────────────────────────────────────────────────────── */}
+      <footer className="shrink-0 border-t border-white/[0.04] px-[clamp(1rem,2vw,2.5rem)] py-[clamp(0.3rem,0.7vh,0.5rem)]">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-micro text-white/35">
+          <span className="uppercase tracking-wider text-white/25">Source</span>
+          <span className="font-mono text-white/55">{feed.sourceLabel}</span>
+          {detail && (
+            <>
+              <span className="text-white/20">·</span>
+              <span className="font-mono text-white/55">{detail}</span>
+            </>
           )}
-        </Section>
-
-        {/* ── Entry check ──────────────────────────────────────────────── */}
-        {entryCheck && (
-          <Section title="Entry check" subtitle={`${instrument.id} · does the market agree?`}>
-            <EntryCheckPanel result={entryCheck} direction={entryDirection} onDirectionChange={setEntryDirection} />
-          </Section>
-        )}
-
-        {/* ── Selected timeframe: gauges, tables, structure ────────────── */}
-        {frame && (
-          <>
-            <Section title="Compass" subtitle={`${instrument.id} · ${selected}`}>
-              {frame.available ? (
-                <>
-                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-                    <CompassGauge title="Moving averages" gauge={frame.movingAverages} size="lg" />
-                    <CompassGauge title="Technical indicators" gauge={frame.indicators} size="lg" />
-                    <CompassGauge title="Summary" gauge={frame.summary} size="lg" />
-                  </div>
-
-                  <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
-                    <div>
-                      <h3 className="mb-2 text-title font-bold text-white">Moving averages</h3>
-                      <VoteTable details={frame.movingAverages.details} valueHeading="Level" />
-                    </div>
-                    <div>
-                      <h3 className="mb-2 text-title font-bold text-white">Technical indicators</h3>
-                      <VoteTable details={frame.indicators.details} valueHeading="Value" />
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <p className="py-8 text-center text-body italic text-white/45">
-                  {frame.candleCount} candles on {selected} — not enough to compute a reading (needs{' '}
-                  {DEFAULT_COMPASS_CONFIG.minCandles}).
-                </p>
-              )}
-            </Section>
-
-            {frame.available && (
-              <Section title="Timeframe detail" subtitle={`${instrument.id} · ${selected}`}>
-                <TimeframeCard reading={frame} precision={pricePrecision} quote={instrument.quote} />
-              </Section>
-            )}
-
-            {frame.available && (
-              <Section title="Technical metrics" subtitle={`${instrument.id} · ${selected}`}>
-                <TechnicalMetricsPanel
-                  metrics={frame.metrics}
-                  precision={pricePrecision}
-                  quote={instrument.quote}
-                  session={DEFAULT_COMPASS_CONFIG.session}
-                  timeframe={selected}
-                />
-              </Section>
-            )}
-          </>
-        )}
-
-      </main>
-
-      <footer className="border-t border-white/[0.04] px-4 py-6 sm:px-8">
-        <p className="mx-auto max-w-[1400px] text-micro text-white/30">
-          FlowSense — analysis only. Not investment advice.
+          {feed.resolvedSource?.kind === 'proxy' && (
+            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400">
+              Proxy
+            </span>
+          )}
+          <span className="text-white/20">·</span>
+          <span>Updated {formatClock(feed.lastUpdate)}</span>
         </p>
       </footer>
     </div>

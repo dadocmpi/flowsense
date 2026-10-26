@@ -21,9 +21,10 @@ export interface UseMultiTimeframeCompassResult {
 
 export function useMultiTimeframeCompass(
   feed: InstrumentFeed,
-  config: CompassConfig = DEFAULT_COMPASS_CONFIG
+  config: CompassConfig = DEFAULT_COMPASS_CONFIG,
+  initialTimeframe: Timeframe = '15m'
 ): UseMultiTimeframeCompassResult {
-  const [selected, setSelected] = useState<Timeframe>('15m');
+  const [selected, setSelected] = useState<Timeframe>(initialTimeframe);
 
   const reading = useMemo(
     () =>

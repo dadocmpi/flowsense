@@ -2,32 +2,12 @@
 // COMPASS CONFIGURATION
 // ============================================
 // One file holds every tunable that shapes the compass: the vote thresholds,
-// the moving-average tolerance band, the per-indicator weights, the per
-// timeframe weights and the session definitions used for VWAP / POC.
+// the moving-average tolerance band, the per-indicator weights and the per
+// timeframe weights.
 //
 // The scoring code reads this object; nothing is hardcoded downstream.
 
 import type { Timeframe } from '../core/types';
-
-export interface SessionConfig {
-  /**
-   * `RTH`  — regular trading hours only (the futures pit session, 09:30-16:00 ET).
-   * `FULL` — the whole exchange session, reset at the futures day open
-   *          (18:00 ET the previous calendar day for CME equity/index
-   *          products, and for metals too).
-   *
-   * The reset boundary is what matters: VWAP and POC are measured from the
-   * start of the current session, never from a rolling window.
-   */
-  mode: 'RTH' | 'FULL';
-  /** IANA timezone the session clock is expressed in. */
-  timezone: string;
-  /** RTH open / close, minutes from midnight in `timezone`. */
-  rthOpenMinutes: number;
-  rthCloseMinutes: number;
-  /** FULL-session open, minutes from midnight in `timezone` (18:00 = 1080). */
-  fullOpenMinutes: number;
-}
 
 export interface EntryCheckConfig {
   /**
@@ -86,9 +66,6 @@ export interface CompassConfig {
 
   /** Number of candles needed before a timeframe is considered available. */
   minCandles: number;
-
-  /** Session definition used by VWAP and the volume point of control. */
-  session: SessionConfig;
 }
 
 export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
@@ -148,12 +125,11 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     '1h': 1.6,
     '4h': 1.8,
     '1D': 2.0,
-    '1W': 1.2,
   },
 
   entryCheck: {
     // 1H and above is "the trend" for an intraday entry.
-    higherTimeframes: ['1h', '4h', '1D', '1W'],
+    higherTimeframes: ['1h', '4h', '1D'],
     warnOnHigherTimeframeDisagreement: true,
     // A majority of the weighted directional vote, plus agreement from the
     // higher timeframes, is what earns ALIGNED.
@@ -169,19 +145,11 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
   },
 
   minCandles: 30,
-
-  session: {
-    mode: 'RTH',
-    timezone: 'America/New_York',
-    rthOpenMinutes: 9 * 60 + 30, // 09:30
-    rthCloseMinutes: 16 * 60, // 16:00
-    fullOpenMinutes: 18 * 60, // 18:00 previous day
-  },
 };
 
 /**
- * Shallow-merge override so a caller can change one field (for example the
- * session mode) without restating the whole config.
+ * Shallow-merge override so a caller can change one field without restating
+ * the whole config.
  */
 export function mergeCompassConfig(
   base: CompassConfig = DEFAULT_COMPASS_CONFIG,
@@ -196,6 +164,5 @@ export function mergeCompassConfig(
     timeframeWeights: { ...base.timeframeWeights, ...(override.timeframeWeights ?? {}) },
     entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
-    session: { ...base.session, ...(override.session ?? {}) },
   };
 }

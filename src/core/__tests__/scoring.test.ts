@@ -10,8 +10,6 @@ import {
   buildGauge,
   buildSummaryGauge,
   clampScore,
-  computeConfluence,
-  confidenceFromGauge,
   isBearishLabel,
   isBullishLabel,
   labelFromScore,
@@ -254,110 +252,6 @@ describe('buildSummaryGauge', () => {
   });
 });
 
-describe('computeConfluence', () => {
-  const readings = [
-    { timeframe: '5m', score: 80, available: true },
-    { timeframe: '15m', score: 60, available: true },
-    { timeframe: '1h', score: 40, available: true },
-    { timeframe: '4h', score: -20, available: true },
-  ];
-
-  it('reports a positive bias when most timeframes agree', () => {
-    const result = computeConfluence(readings, DEFAULT_COMPASS_CONFIG);
-    expect(result.bias).toBeGreaterThan(0);
-    expect(isBullishLabel(result.label)).toBe(true);
-    expect(result.direction).toBe('BULLISH');
-    expect(result.available).toBe(4);
-    expect(result.directional).toBe(4);
-  });
-
-  it('weights timeframes by the config table', () => {
-    // Only the heavily-weighted 4h is bearish, but it must not flip a strong
-    // intraday bullish majority on its own.
-    const heavyBear = computeConfluence(
-      [
-        { timeframe: '5m', score: 90, available: true },
-        { timeframe: '15m', score: 90, available: true },
-        { timeframe: '1h', score: 90, available: true },
-        { timeframe: '4h', score: -90, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    expect(heavyBear.bias).toBeGreaterThan(0);
-  });
-
-  it('reports a negative bias when most timeframes disagree', () => {
-    const result = computeConfluence(
-      [
-        { timeframe: '15m', score: -80, available: true },
-        { timeframe: '1h', score: -60, available: true },
-        { timeframe: '4h', score: -40, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    expect(result.bias).toBeLessThan(0);
-    expect(result.direction).toBe('BEARISH');
-  });
-
-  it('reports no direction when timeframes cancel', () => {
-    // Equal weights on both sides, so the weighted bias cancels exactly.
-    const config = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      timeframeWeights: { '1m': 0, '5m': 0, '15m': 1, '30m': 0, '1h': 1, '4h': 0, '1D': 0, '1W': 0 },
-    });
-    const result = computeConfluence(
-      [
-        { timeframe: '15m', score: 50, available: true },
-        { timeframe: '1h', score: -50, available: true },
-      ],
-      config
-    );
-    expect(result.bias).toBe(0);
-    expect(result.direction).toBeNull();
-    expect(result.agreement).toBe(50);
-  });
-
-  it('reflects the configured weights when the sides are unequal', () => {
-    // 15m (weight 1.0) bullish, 1h (weight 1.6) bearish -> bias is negative.
-    const result = computeConfluence(
-      [
-        { timeframe: '15m', score: 50, available: true },
-        { timeframe: '1h', score: -50, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    // (50 * 1.0 + -50 * 1.6) / (1.0 + 1.6) = -11.538...
-    expect(result.bias).toBeCloseTo(-11.538, 3);
-    expect(result.direction).toBe('BEARISH');
-  });
-
-  it('skips unavailable timeframes', () => {
-    const result = computeConfluence(
-      [
-        { timeframe: '5m', score: 100, available: false },
-        { timeframe: '1h', score: 50, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    expect(result.available).toBe(1);
-    expect(result.bias).toBe(50);
-  });
-
-  it('is neutral when nothing is available', () => {
-    const result = computeConfluence([{ timeframe: '5m', score: 0, available: false }], DEFAULT_COMPASS_CONFIG);
-    expect(result.bias).toBe(0);
-    expect(result.label).toBe('NEUTRAL');
-    expect(result.available).toBe(0);
-  });
-
-  it('keeps the bias label consistent with the bias sign', () => {
-    for (let score = -100; score <= 100; score += 10) {
-      const result = computeConfluence([{ timeframe: '1h', score, available: true }], DEFAULT_COMPASS_CONFIG);
-      if (result.bias > 0) expect(isBearishLabel(result.label)).toBe(false);
-      if (result.bias < 0) expect(isBullishLabel(result.label)).toBe(false);
-    }
-  });
-});
-
 describe('needleAngleFromScore', () => {
   it('maps -100..+100 onto -90..+90 degrees', () => {
     expect(needleAngleFromScore(-100)).toBe(-90);
@@ -369,26 +263,5 @@ describe('needleAngleFromScore', () => {
   it('points the same way as the score sign', () => {
     expect(needleAngleFromScore(30)).toBeGreaterThan(0);
     expect(needleAngleFromScore(-30)).toBeLessThan(0);
-  });
-});
-
-describe('confidenceFromGauge', () => {
-  const details = (n: number): VoteDetail[] => Array.from({ length: n }, (_, i) => detail(`d${i}`, 'BUY'));
-
-  it('rises with distance from neutral', () => {
-    const weak = confidenceFromGauge({ score: 10, label: 'NEUTRAL', tally: { buy: 1, neutral: 1, sell: 1 }, details: details(12) }, 12);
-    const strong = confidenceFromGauge({ score: 90, label: 'STRONG_BUY', tally: { buy: 12, neutral: 0, sell: 0 }, details: details(12) }, 12);
-    expect(strong).toBeGreaterThan(weak);
-    expect(strong).toBe(90);
-  });
-
-  it('is 0 at neutral', () => {
-    expect(confidenceFromGauge({ score: 0, label: 'NEUTRAL', tally: { buy: 0, neutral: 0, sell: 0 }, details: details(12) }, 12)).toBe(0);
-  });
-
-  it('is damped when only part of the block was available', () => {
-    const full = confidenceFromGauge({ score: 60, label: 'STRONG_BUY', tally: { buy: 12, neutral: 0, sell: 0 }, details: details(12) }, 12);
-    const partial = confidenceFromGauge({ score: 60, label: 'STRONG_BUY', tally: { buy: 6, neutral: 0, sell: 0 }, details: details(6) }, 12);
-    expect(partial).toBeLessThan(full);
   });
 });
