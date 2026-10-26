@@ -6,7 +6,6 @@
 
 import type { Instrument, ProviderId } from '../instruments';
 import type { MarketDataProvider, ProviderStatus } from './types';
-import { binanceProvider } from './binance';
 import { futuresProvider } from './futures';
 
 const registry = new Map<ProviderId, MarketDataProvider>();
@@ -37,5 +36,4 @@ export function describeProviders(): ProviderStatus[] {
   }));
 }
 
-registerProvider(binanceProvider);
 registerProvider(futuresProvider);

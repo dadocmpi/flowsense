@@ -7,9 +7,6 @@
 //  * candles come from provider.getCandles, or the feed is unavailable
 //  * the live price comes from provider.subscribeTicks when the provider has a
 //    tick feed, otherwise it is the last candle close with the fetch time
-//  * order flow comes from provider.subscribeOrderFlow only when the provider
-//    genuinely has it; otherwise orderFlow.available is false and the UI hides
-//    the panel instead of estimating flow from candles
 //
 // Candle history is cached per instrument so switching instruments and back
 // does not refetch, and live ticks patch the last candle rather than
@@ -23,21 +20,12 @@ import {
   providerForInstrument,
   probeFuturesProvider,
   resolvedSourceFor,
-  type OrderFlowSnapshot,
   type ProviderErrorKind,
   type StreamStatus,
 } from '../core/providers';
 import { mergeLiveTail, upsertLastCandle } from '../core/candles';
 import { TIMEFRAMES, TIMEFRAME_MINUTES } from '../core/types';
 import { marketState, type MarketStateResult } from '../core/marketHours';
-import {
-  applyTrade,
-  buildOrderFlowSnapshot,
-  emptyOrderFlowSnapshot,
-  emptyOrderFlowState,
-  resetOrderFlowState,
-  type OrderFlowState,
-} from '../core/orderFlow';
 
 /** The base timeframe the live tail is merged from. */
 export const BASE_TIMEFRAME: Timeframe = '1m';
@@ -47,10 +35,9 @@ const BASE_CANDLE_LIMIT = 1000;
 const TIMEFRAME_CANDLE_LIMIT = 300;
 /**
  * Timeframes whose bucket boundary lines up with the base series, so their
- * newest bar can be rebuilt from the live base tail. Weekly is excluded: its
- * exchange boundary (Monday open) is not the epoch-based bucket. A daily bucket
- * is only merged when the base window actually reaches its open — see
- * mergeLiveTail, which refuses a partial rebuild.
+ * newest bar can be rebuilt from the live base tail. A daily bucket is only
+ * merged when the base window actually reaches its open — see mergeLiveTail,
+ * which refuses a partial rebuild.
  */
 const MERGEABLE_TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1D'];
 /** The stream pushes far faster than a screen needs to repaint. */
@@ -70,7 +57,7 @@ export interface InstrumentFeed {
   /**
    * Every timeframe the provider could serve natively. The higher timeframes
    * are fetched as their own intervals rather than aggregated from the base
-   * series, so a 5m seed cannot cap how far back the weekly reaches.
+   * series, so a 1m seed cannot cap how far back the daily reaches.
    */
   seriesByTimeframe: Partial<Record<Timeframe, Candle[]>>;
   price: number;
@@ -104,15 +91,8 @@ export interface InstrumentFeed {
   feedMode: 'STREAM' | 'POLL' | 'NONE';
   /** Whether the market is still producing bars, and why. */
   market: MarketStateResult;
-  orderFlow: OrderFlowSnapshot;
-  /** True only when the provider reports genuine order flow. */
-  orderFlowAvailable: boolean;
   /** Bumped whenever the candle series changes, for downstream memo keys. */
   revision: number;
-}
-
-function emptyOrderFlow(): OrderFlowSnapshot {
-  return emptyOrderFlowSnapshot();
 }
 
 function toFeedError(error: unknown): FeedError {
@@ -122,9 +102,6 @@ function toFeedError(error: unknown): FeedError {
   }
   return { kind: 'UNKNOWN', message: error instanceof Error ? error.message : 'Unknown error' };
 }
-
-/** Cumulative delta from the real per-candle aggressor split, when present. */
-export { cumulativeDeltaFromCandles } from '../core/orderFlow';
 
 /**
  * Candle cache shared across hook instances. Keyed by instrument id, so a
@@ -151,13 +128,11 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
   const [configured, setConfigured] = useState<boolean>(provider ? provider.isConfigured() : false);
   const [sourceReachable, setSourceReachable] = useState(true);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
-  const [orderFlow, setOrderFlow] = useState<OrderFlowSnapshot>(emptyOrderFlow);
   const [revision, setRevision] = useState(0);
 
   const candlesRef = useRef<Candle[]>(candles);
   const priceRef = useRef<number>(0);
   const dirtyRef = useRef(false);
-  const flowStateRef = useRef<OrderFlowState>(emptyOrderFlowState());
   const streamStatusRef = useRef<StreamStatus>('CONNECTING');
   const activeInstrumentRef = useRef(instrument.id);
   const mergeableRef = useRef<Timeframe[]>(MERGEABLE_TIMEFRAMES);
@@ -211,13 +186,11 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
     const cachedBase = cached?.seriesByTimeframe[BASE_TIMEFRAME] ?? [];
     candlesRef.current = cachedBase;
     priceRef.current = cachedBase.length > 0 ? cachedBase[cachedBase.length - 1].close : 0;
-    flowStateRef.current = resetOrderFlowState();
     dirtyRef.current = false;
 
     setCandles(cachedBase);
     setSeriesByTimeframe(cached?.seriesByTimeframe ?? {});
     setPrice(priceRef.current);
-    setOrderFlow(emptyOrderFlow());
     setError(null);
     setLastUpdate(cached ? cached.fetchedAt : null);
     setIsLoading(true);
@@ -327,44 +300,6 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
     };
   }, [provider, instrument]);
 
-  // Order flow, only when the provider genuinely has it.
-  useEffect(() => {
-    if (!provider?.subscribeOrderFlow) {
-      setOrderFlow(emptyOrderFlow());
-      return;
-    }
-
-    let active = true;
-    const subscription = provider.subscribeOrderFlow(instrument, {
-      onStatus: status => {
-        if (!active) return;
-        // A dropped socket must clear the accumulated tape totals rather than
-        // leave a stale split on screen.
-        if (status === 'RECONNECTING' || status === 'OFFLINE') {
-          flowStateRef.current = resetOrderFlowState();
-        }
-        setOrderFlow(prev => ({ ...prev, streamStatus: status, isLive: status === 'LIVE' }));
-        dirtyRef.current = true;
-      },
-      onBook: (bids, asks) => {
-        if (!active) return;
-        flowStateRef.current = { ...flowStateRef.current, bids, asks };
-        dirtyRef.current = true;
-      },
-      onTrade: trade => {
-        if (!active) return;
-        flowStateRef.current = applyTrade(flowStateRef.current, trade);
-        priceRef.current = trade.price;
-        dirtyRef.current = true;
-      },
-    });
-
-    return () => {
-      active = false;
-      subscription.close();
-    };
-  }, [provider, instrument]);
-
   // Coalesced commit of everything accumulated since the last flush.
   useEffect(() => {
     const interval = setInterval(() => {
@@ -389,18 +324,12 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
           return next;
         });
       }
-
-      if (provider?.capabilities.orderFlow) {
-        setOrderFlow(buildOrderFlowSnapshot(flowStateRef.current, series, streamStatusRef.current, Date.now()));
-      }
     }, FLUSH_MS);
 
     return () => clearInterval(interval);
   }, [provider]);
 
   const sourceLabel = provider ? provider.label : 'No provider';
-
-  const orderFlowAvailable = Boolean(provider?.capabilities.orderFlow);
 
   // What the server actually resolved for this instrument, for the provenance
   // label. Read on each render so it reflects the last candles response.
@@ -411,7 +340,7 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
   const feedMode: 'STREAM' | 'POLL' | 'NONE' = useMemo(() => {
     if (!provider) return 'NONE';
     if (streamStatus === 'UNAVAILABLE') return 'POLL';
-    if (provider.capabilities.ticks || provider.capabilities.orderFlow) return 'STREAM';
+    if (provider.capabilities.ticks) return 'STREAM';
     return candles.length > 0 ? 'POLL' : 'NONE';
   }, [provider, streamStatus, candles.length]);
 
@@ -427,7 +356,7 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
   const effectiveStatus: StreamStatus = useMemo(() => {
     if (!provider) return 'OFFLINE';
     if (streamStatus === 'UNAVAILABLE') return 'UNAVAILABLE';
-    if (provider.capabilities.ticks || provider.capabilities.orderFlow) return streamStatus;
+    if (provider.capabilities.ticks) return streamStatus;
     return candles.length > 0 ? 'LIVE' : streamStatus;
   }, [provider, streamStatus, candles.length]);
 
@@ -448,10 +377,6 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       resolvedSource,
       feedMode,
       market,
-      orderFlow: orderFlowAvailable
-        ? orderFlow
-        : { ...emptyOrderFlow(), streamStatus: effectiveStatus, isLive: effectiveStatus === 'LIVE' },
-      orderFlowAvailable,
       revision,
     }),
     [
@@ -470,8 +395,6 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       resolvedSource,
       feedMode,
       market,
-      orderFlow,
-      orderFlowAvailable,
       revision,
     ]
   );

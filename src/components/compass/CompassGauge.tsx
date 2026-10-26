@@ -13,46 +13,41 @@ import { labelShort, labelTextColor, scoreColor } from './format';
 import { cn } from '@/lib/utils';
 
 interface CompassGaugeProps {
-  title: string;
   gauge: GaugeReading;
-  /** Rendered smaller for the compact matrix. */
-  size?: 'sm' | 'md' | 'lg';
-  /** Show the Buy / Neutral / Sell vote counts under the gauge. */
-  showTally?: boolean;
+  /** Optional heading above the gauge. */
+  title?: string;
 }
 
-const SIZES = {
-  sm: { width: 128, arc: 84, stroke: 9, needle: 62, font: 'text-label', tally: 'text-micro' },
-  md: { width: 176, arc: 112, stroke: 11, needle: 82, font: 'text-title', tally: 'text-label' },
-  lg: { width: 224, arc: 142, stroke: 13, needle: 104, font: 'text-title', tally: 'text-label' },
-};
+const WIDTH = 560;
+const ARC = 360;
+const STROKE = 26;
+const NEEDLE = 260;
 
-export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size = 'md', showTally = true }) => {
-  const dims = SIZES[size];
+export const CompassGauge: React.FC<CompassGaugeProps> = ({ gauge, title }) => {
   const score = Math.max(-100, Math.min(100, gauge.score));
   const angle = (score / 100) * 90; // -90..+90 degrees
   const color = scoreColor(score);
-  const width = dims.width;
-  const height = width / 2 + 18;
-  const cx = width / 2;
-  const cy = width / 2;
-  const r = dims.arc / 2;
+  const height = WIDTH / 2 + 40;
+  const cx = WIDTH / 2;
+  const cy = WIDTH / 2;
+  const r = ARC / 2;
 
-  // Arc from 180deg to 0deg (left to right).
   const describeArc = (radius: number) => `M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`;
 
   return (
     <div className="flex flex-col items-center">
-      <span className="text-micro font-semibold uppercase tracking-wider text-white/40">{title}</span>
+      {title && (
+        <span className="text-label font-semibold uppercase tracking-[0.3em] text-white/40">{title}</span>
+      )}
 
       <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full max-w-[240px]"
+        viewBox={`0 0 ${WIDTH} ${height}`}
+        className="w-full max-w-[640px]"
         role="img"
-        aria-label={`${title}: ${labelShort(gauge.label)} (score ${Math.round(score)})`}
+        aria-label={`${title ? `${title}: ` : ''}${labelShort(gauge.label)} (score ${Math.round(score)})`}
       >
         <defs>
-          <linearGradient id={`gaugeArc-${title.replace(/\s+/g, '')}`} x1="0" y1="0" x2="1" y2="0">
+          <linearGradient id="gaugeArc" x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="#ef5350" />
             <stop offset="25%" stopColor="#e57373" />
             <stop offset="50%" stopColor="#f59e0b" />
@@ -61,12 +56,12 @@ export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size =
           </linearGradient>
         </defs>
 
-        <path d={describeArc(r)} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={dims.stroke} strokeLinecap="round" />
+        <path d={describeArc(r)} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={STROKE} strokeLinecap="round" />
         <path
           d={describeArc(r)}
           fill="none"
-          stroke={`url(#gaugeArc-${title.replace(/\s+/g, '')})`}
-          strokeWidth={dims.stroke}
+          stroke="url(#gaugeArc)"
+          strokeWidth={STROKE}
           strokeLinecap="round"
           opacity="0.9"
         />
@@ -80,25 +75,15 @@ export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size =
             transition: 'transform 700ms cubic-bezier(0.22, 1, 0.36, 1)',
           }}
         >
-          <polygon
-            points={`${cx},${cy - dims.needle} ${cx + 4},${cy} ${cx - 4},${cy}`}
-            fill={color}
-          />
+          <polygon points={`${cx},${cy - NEEDLE} ${cx + 9},${cy} ${cx - 9},${cy}`} fill={color} />
         </g>
-        <circle cx={cx} cy={cy} r="5" fill="#07080a" stroke={color} strokeWidth="2" />
+        <circle cx={cx} cy={cy} r="12" fill="#07080a" stroke={color} strokeWidth="4" />
       </svg>
 
-      <span className={cn('mt-1 font-bold', dims.font, labelTextColor(gauge.label))}>{labelShort(gauge.label)}</span>
-
-      {showTally && (
-        <div className={cn('mt-1 flex items-center gap-2 font-mono', dims.tally)}>
-          <span className="text-[#4db6ac]">B {gauge.tally.buy}</span>
-          <span className="text-white/35">·</span>
-          <span className="text-amber-400">N {gauge.tally.neutral}</span>
-          <span className="text-white/35">·</span>
-          <span className="text-[#e57373]">S {gauge.tally.sell}</span>
-        </div>
-      )}
+      <span className={cn('-mt-2 text-6xl font-black leading-none', labelTextColor(gauge.label))}>
+        {labelShort(gauge.label)}
+      </span>
+      <span className="mt-2 font-mono text-4xl font-bold text-white/85">{Math.round(score)}</span>
     </div>
   );
 };

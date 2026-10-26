@@ -23,7 +23,6 @@ export const POLL_INTERVAL_MS: Record<Timeframe, number> = {
   '1h': 120_000,
   '4h': 300_000,
   '1D': 600_000,
-  '1W': 1_800_000,
 };
 
 /**

@@ -47,10 +47,10 @@ describe('marketState', () => {
     expect(result.toleranceMs).toBe(3 * 1440 * 60_000);
   });
 
-  it('calls a weekly series closed only after three weeks of silence', () => {
-    const recent = marketState([candleAt('2024-06-03 00:00:00')], '1W', NOW);
+  it('calls a daily series closed only after several days of silence', () => {
+    const recent = marketState([candleAt('2024-06-10 00:00:00')], '1D', NOW);
     expect(recent.state).toBe('OPEN');
-    const old = marketState([candleAt('2024-04-01 00:00:00')], '1W', NOW);
+    const old = marketState([candleAt('2024-06-01 00:00:00')], '1D', NOW);
     expect(old.state).toBe('CLOSED');
   });
 

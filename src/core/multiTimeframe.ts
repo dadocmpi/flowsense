@@ -1,9 +1,9 @@
 // ============================================
 // MULTI-TIMEFRAME ENGINE
 // ============================================
-// Turns one base candle series into a reading for every timeframe, plus the
-// confluence summary. Pure and synchronous, so it can be unit tested and can
-// also be memoised cheaply in the UI.
+// Turns candle series into a reading for every timeframe, plus the confluence
+// summary. Pure and synchronous, so it can be unit tested and can also be
+// memoised cheaply in the UI.
 
 import type { Candle, Timeframe, TimeframeReading } from './types';
 import { TIMEFRAMES, TIMEFRAME_MINUTES } from './types';
@@ -24,11 +24,10 @@ export function computeMultiTimeframe(
   baseCandles: Candle[],
   baseMinutes: number,
   config: CompassConfig = DEFAULT_COMPASS_CONFIG,
-  timeframes: Timeframe[] = TIMEFRAMES,
-  sessionMode: 'SESSION' | 'CONTINUOUS' = 'SESSION'
+  timeframes: Timeframe[] = TIMEFRAMES
 ): MultiTimeframeReading {
   const readings = timeframes.map(timeframe =>
-    computeTimeframeReading(timeframe, resampleCandles(baseCandles, timeframe, baseMinutes), config, sessionMode)
+    computeTimeframeReading(timeframe, resampleCandles(baseCandles, timeframe, baseMinutes), config)
   );
 
   return {
@@ -43,14 +42,14 @@ export function computeMultiTimeframe(
 }
 
 /**
- * The preferred entry point when the provider can serve each timeframe
+ * The entry point used by the app when the provider can serve each timeframe
  * natively.
  *
  * Aggregating everything from one short base series caps how far back the
  * higher timeframes can reach — 1000 five-minute bars is about three days, so
- * the weekly can never fill. Fetching each interval natively also gives the
- * daily and weekly bars the exchange's own day/week boundaries instead of a
- * bucket inferred from an arbitrary base interval.
+ * the daily can never fill. Fetching each interval natively also gives the
+ * daily bars the exchange's own day boundaries instead of a bucket inferred
+ * from an arbitrary base interval.
  *
  * A timeframe missing from the map is reported as unavailable rather than
  * back-filled from another series.
@@ -59,11 +58,10 @@ export function computeMultiTimeframeFromSeries(
   seriesByTimeframe: Partial<Record<Timeframe, Candle[]>>,
   config: CompassConfig = DEFAULT_COMPASS_CONFIG,
   timeframes: Timeframe[] = TIMEFRAMES,
-  fallbackPrice = 0,
-  sessionMode: 'SESSION' | 'CONTINUOUS' = 'SESSION'
+  fallbackPrice = 0
 ): MultiTimeframeReading {
   const readings = timeframes.map(timeframe =>
-    computeTimeframeReading(timeframe, seriesByTimeframe[timeframe] ?? [], config, sessionMode)
+    computeTimeframeReading(timeframe, seriesByTimeframe[timeframe] ?? [], config)
   );
 
   const finest = timeframes.find(tf => (seriesByTimeframe[tf]?.length ?? 0) > 0);

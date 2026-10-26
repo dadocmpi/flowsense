@@ -302,7 +302,7 @@ describe('computeConfluence', () => {
   it('reports no direction when timeframes cancel', () => {
     // Equal weights on both sides, so the weighted bias cancels exactly.
     const config = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      timeframeWeights: { '1m': 0, '5m': 0, '15m': 1, '30m': 0, '1h': 1, '4h': 0, '1D': 0, '1W': 0 },
+      timeframeWeights: { '1m': 0, '5m': 0, '15m': 1, '30m': 0, '1h': 1, '4h': 0, '1D': 0 },
     });
     const result = computeConfluence(
       [
