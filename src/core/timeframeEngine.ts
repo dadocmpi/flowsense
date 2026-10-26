@@ -1,16 +1,13 @@
 // ============================================
 // PER-TIMEFRAME COMPASS ENGINE
 // ============================================
-// Given one candle series and a timeframe, produce the three gauges, the
-// market-structure read and the technical metrics. Pure: same input, same
-// output, no clock and no network.
+// Given one candle series and a timeframe, produce the two component gauges and
+// the summary. Pure: same input, same output, no clock and no network.
 
 import type { Candle, Timeframe, TimeframeReading } from './types';
 import { DEFAULT_COMPASS_CONFIG, type CompassConfig } from '../config/compass';
 import { buildGauge, buildSummaryGauge } from './scoring';
 import { indicatorVotes, movingAverageVotes } from './votes';
-import { analyzeMarketStructure } from './structure';
-import { computeTechnicalMetrics } from './metrics';
 
 const EMPTY_READING_BASE = {
   score: 0,
@@ -33,8 +30,6 @@ export function computeTimeframeReading(
       movingAverages: { ...EMPTY_READING_BASE, details: [] },
       indicators: { ...EMPTY_READING_BASE, details: [] },
       summary: { ...EMPTY_READING_BASE, details: [] },
-      structure: analyzeMarketStructure(candles),
-      metrics: computeTechnicalMetrics(candles, config.session),
       price,
       candleCount: candles.length,
       available: false,
@@ -50,8 +45,6 @@ export function computeTimeframeReading(
     movingAverages,
     indicators,
     summary,
-    structure: analyzeMarketStructure(candles),
-    metrics: computeTechnicalMetrics(candles, config.session),
     price,
     candleCount: candles.length,
     available: true,

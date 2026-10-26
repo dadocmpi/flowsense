@@ -18,7 +18,6 @@ import {
   lowest,
   macd,
   percentChange,
-  pointOfControl,
   roc,
   rsi,
   rsiSeries,
@@ -26,8 +25,6 @@ import {
   stochastic,
   stochasticRsi,
   ultimateOscillator,
-  volumeProfile,
-  vwap,
   williamsR,
 } from '../indicators';
 import type { Candle } from '../types';
@@ -325,38 +322,6 @@ describe('bull / bear power', () => {
     const result = bullBearPower(down, 13);
     expect(result!.bull).toBeLessThan(0);
     expect(result!.bear).toBeLessThan(0);
-  });
-});
-
-describe('vwap', () => {
-  it('weights by volume', () => {
-    // typical prices 10 and 20, volumes 1 and 3 -> (10 + 60) / 4 = 17.5
-    const candles = [candle(10, 0, 10, 10, 1), candle(20, 1, 20, 20, 3)];
-    expect(vwap(candles)).toBeCloseTo(17.5, 10);
-  });
-
-  it('is null without volume', () => {
-    expect(vwap([candle(10, 0, 10, 10, 0)])).toBeNull();
-  });
-});
-
-describe('volume profile / point of control', () => {
-  it('places the point of control at the heaviest-traded price', () => {
-    const candles = [
-      candle(100, 0, 100, 100, 10),
-      candle(110, 1, 110, 110, 900),
-      candle(120, 2, 120, 120, 10),
-    ];
-    const profile = volumeProfile(candles, 30);
-    const poc = pointOfControl(profile);
-    expect(poc).not.toBeNull();
-    // The POC must be nearest the 110 level, not the light 100/120 bars.
-    expect(Math.abs(poc!.price - 110)).toBeLessThan(1.5);
-  });
-
-  it('returns an empty profile when the range is zero', () => {
-    expect(volumeProfile([candle(100, 0, 100, 100, 10)], 10)).toEqual([]);
-    expect(pointOfControl([])).toBeNull();
   });
 });
 

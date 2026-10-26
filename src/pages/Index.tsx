@@ -16,8 +16,6 @@ import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { ConfluenceMatrix } from '../components/compass/ConfluenceMatrix';
 import { CompassGauge } from '../components/compass/CompassGauge';
 import { VoteTable } from '../components/compass/VoteTable';
-import { TimeframeCard } from '../components/compass/TimeframeCard';
-import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPanel';
 import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
@@ -283,24 +281,6 @@ const Index: React.FC = () => {
                 </p>
               )}
             </Section>
-
-            {frame.available && (
-              <Section title="Timeframe detail" subtitle={`${instrument.id} · ${selected}`}>
-                <TimeframeCard reading={frame} precision={pricePrecision} quote={instrument.quote} />
-              </Section>
-            )}
-
-            {frame.available && (
-              <Section title="Technical metrics" subtitle={`${instrument.id} · ${selected}`}>
-                <TechnicalMetricsPanel
-                  metrics={frame.metrics}
-                  precision={pricePrecision}
-                  quote={instrument.quote}
-                  session={DEFAULT_COMPASS_CONFIG.session}
-                  timeframe={selected}
-                />
-              </Section>
-            )}
           </>
         )}
 
