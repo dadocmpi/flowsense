@@ -18,16 +18,13 @@ label and the score can never disagree.
 | --- | --- |
 | Indicator math (SMA, EMA, RSI, MACD, ADX, …) | `src/core/indicators.ts` |
 | Per-indicator and per-MA vote logic | `src/core/votes.ts` |
-| Gauge building, score → label, confluence | `src/core/scoring.ts` |
-| Market structure (swings, BOS, CHoCH, premium/discount) | `src/core/structure.ts` |
+| Gauge building, score → label | `src/core/scoring.ts` |
 | Entry check: does the market agree with a long/short? | `src/core/entryCheck.ts` |
-| Session open resolution (RTH/FULL, DST-safe) | `src/core/session.ts` |
-| ATR, VWAP, session range, point of control | `src/core/metrics.ts` |
 | Candle bucketing, resampling, live-tail merge | `src/core/candles.ts` |
-| One timeframe → three gauges + structure + metrics | `src/core/timeframeEngine.ts` |
-| Every timeframe + the confluence bias | `src/core/multiTimeframe.ts` |
+| One timeframe → the summary gauge | `src/core/timeframeEngine.ts` |
+| Every timeframe the entry check reads | `src/core/multiTimeframe.ts` |
 | Entry-check rules (higher timeframes, agreement shares) | `src/config/compass.ts` |
-| Every weight, tolerance and session setting | `src/config/compass.ts` |
+| Every weight and tolerance setting | `src/config/compass.ts` |
 | Data entry point for one instrument | `src/hooks/useInstrumentFeed.ts` |
 | Runs the multi-timeframe engine | `src/hooks/useMultiTimeframeCompass.ts` |
 
@@ -38,18 +35,19 @@ it testable without a browser, and it is deliberate — keep it that way.
 
 ## 2. Timeframes
 
-`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, displayed as
-`M1`, `M5`, `M15`, `M30`, `1H`, `4H`, `1D`, `1W`.
+`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, displayed as
+`M1`, `M5`, `M15`, `M30`, `1H`, `4H`, `1D`.
 
 Each timeframe is fetched from the provider at its own interval, not aggregated
-from one base series. A 1m seed cannot reach back far enough to fill a weekly, so
+from one base series. A 1m seed cannot reach back far enough to fill a daily, so
 aggregating everything from 1m would silently leave the higher timeframes empty.
 
 The live stream carries the 1m bar. The newest bar of the mergeable timeframes
 (5m, 15m, 30m, 1h, 4h, 1D) is refreshed from that live 1m tail via
 `mergeLiveTail`, so a higher timeframe advances with the market between fetches.
-Weekly is deliberately excluded: its exchange boundary (the Monday open) is not
-the epoch-based bucket, so a rebuild would place the bar at the wrong time.
+
+All seven timeframes are always computed, even though the compass draws only the
+selected one, because the entry check reads every one of them.
 
 `mergeLiveTail` also refuses a partial rebuild. A 1m window covers only a few
 hours, so the current daily bucket is usually only partly observed; rebuilding
@@ -100,14 +98,15 @@ is shown because the raw value matters, not because it picks a side.
 
 ## 4. How the votes are combined
 
-1. The twelve moving-average votes are combined into a **Moving averages** gauge
-   using `maWeights`.
-2. The twelve indicator votes are combined into a **Technical indicators** gauge
-   using `indicatorWeights`.
-3. The two gauges are combined into the **Summary** using `blockWeights`.
+1. The twelve moving-average votes are combined into an internal **moving
+   averages** block using `maWeights`.
+2. The twelve indicator votes are combined into an internal **technical
+   indicators** block using `indicatorWeights`.
+3. The two blocks are combined into the **Summary** using `blockWeights`.
 
-Each gauge reports a score from −100 to +100 and the count of Buy, Neutral and
-Sell votes behind it.
+The compass displays the Summary only. The two blocks still feed it exactly as
+before, but they are not drawn as gauges of their own and their vote counts are
+not shown. There is one gauge on the screen: the Summary.
 
 The summary score maps to a label through `labelFromScore`:
 
@@ -124,15 +123,10 @@ from the score's sign. A positive score cannot read as Sell.
 
 ---
 
-## 5. Confluence
+## 5. Timeframe weights
 
-The confluence matrix shows every timeframe's reading at once and a weighted
-overall bias. Each timeframe's score is weighted by `timeframeWeights`, with the
-trend timeframes (1h, 4h, 1D) carrying the most weight, the 1m and 5m
-deliberately light, and the weekly a slow confirmation. The matrix also reports
-how many timeframes agree and in which direction.
-
-A timeframe with no data is reported as unavailable and does not vote.
+Every timeframe's score carries a weight in the entry check. The trend timeframes
+(1h, 4h, 1D) carry the most, the 1m and 5m are deliberately light.
 
 The default weights are:
 
@@ -145,13 +139,12 @@ The default weights are:
 | 1H | 1.6 | The trend for an intraday entry |
 | 4H | 1.8 | The swing trend |
 | 1D | 2.0 | The dominant trend |
-| 1W | 1.2 | Slow confirmation |
 
 ---
 
 ## 6. Entry check
 
-The confluence matrix says what the market is doing. The entry check answers the
+The compass says what the market is doing. The entry check answers the
 next question: **does the market agree with the trade I am about to take?**
 
 You pick LONG or SHORT. Every timeframe's summary is then classified as agreeing,
