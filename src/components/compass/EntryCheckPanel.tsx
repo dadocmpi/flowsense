@@ -1,45 +1,29 @@
 // ============================================
 // ENTRY CHECK PANEL
 // ============================================
-// The actionable read: pick LONG or SHORT and see whether the three compasses of
-// the SELECTED timeframe back it. Every number shown here comes from checkEntry
-// in core/entryCheck, so the panel cannot disagree with the compasses above it.
+// The actionable read: pick LONG or SHORT and see whether the timeframes back
+// it. Every number shown here comes from checkEntry in core/entryCheck, so the
+// panel cannot disagree with the readings behind it.
 //
-// The chip row fills only from timeframes already loaded in this session, each
-// with the age of its last reading. A timeframe that has not been opened says
-// "Not loaded" — it is never fetched to fill a chip, which is what keeps a page
-// load at one timeframe's worth of credits.
+// It is always on screen: the LONG / SHORT switch never disappears, and a
+// timeframe whose data has not arrived yet reads "Loading" rather than "No data".
+// The two are different facts — one is about us, the other about the market — and
+// the panel keeps them apart.
 
 import React from 'react';
 import type { EntryCheckResult, EntryDirection } from '../../core/entryCheck';
-import { verdictWord } from '../../core/entryCheck';
-import type { ScoreLabel, Timeframe } from '../../core/types';
-import { TIMEFRAME_LABELS } from '../../core/types';
-import { formatAge, labelShort } from './format';
 import { cn } from '@/lib/utils';
-
-/** One timeframe's stored summary reading, or null when it is not loaded. */
-export interface EntryChip {
-  timeframe: Timeframe;
-  scoreLabel: ScoreLabel | null;
-  updatedAt: number | null;
-}
 
 interface EntryCheckPanelProps {
   result: EntryCheckResult;
   direction: EntryDirection;
   onDirectionChange: (direction: EntryDirection) => void;
-  chips: EntryChip[];
-  /** Epoch ms, for the chip ages. */
-  now: number;
-  /** Name of the timeframe the verdict was computed for. */
-  timeframeLabel: string;
 }
 
-const VERDICT_STYLE: Record<EntryCheckResult['verdict'], { text: string; ring: string }> = {
-  ALIGNED: { text: 'text-[#26a69a]', ring: 'border-[#26a69a]/40 bg-[#26a69a]/10' },
-  MIXED: { text: 'text-amber-400', ring: 'border-amber-500/40 bg-amber-500/10' },
-  AGAINST: { text: 'text-[#ef5350]', ring: 'border-[#ef5350]/40 bg-[#ef5350]/10' },
+const VERDICT_STYLE: Record<EntryCheckResult['verdict'], { text: string; ring: string; word: string }> = {
+  ALIGNED: { text: 'text-[#26a69a]', ring: 'border-[#26a69a]/40 bg-[#26a69a]/10', word: 'Aligned' },
+  PARTIAL: { text: 'text-amber-400', ring: 'border-amber-500/40 bg-amber-500/10', word: 'Partial' },
+  AGAINST: { text: 'text-[#ef5350]', ring: 'border-[#ef5350]/40 bg-[#ef5350]/10', word: 'Against' },
 };
 
 const STANCE_STYLE: Record<string, string> = {
@@ -47,36 +31,22 @@ const STANCE_STYLE: Record<string, string> = {
   DISAGREE: 'border-[#ef5350]/40 bg-[#ef5350]/10 text-[#e57373]',
   NEUTRAL: 'border-white/[0.08] bg-white/[0.02] text-white/50',
   UNAVAILABLE: 'border-white/[0.06] bg-transparent text-white/25',
+  LOADING: 'border-white/[0.06] bg-transparent text-white/30',
 };
 
 const STANCE_WORD: Record<string, string> = {
   AGREE: 'Agrees',
   DISAGREE: 'Disagrees',
   NEUTRAL: 'Neutral',
-  UNAVAILABLE: 'No reading',
+  UNAVAILABLE: 'No data',
+  LOADING: 'Loading',
 };
 
-/** Which way a stored reading points relative to the chosen direction. */
-function chipStance(label: ScoreLabel, direction: EntryDirection): 'AGREE' | 'DISAGREE' | 'NEUTRAL' {
-  const bullish = label === 'BUY' || label === 'STRONG_BUY';
-  const bearish = label === 'SELL' || label === 'STRONG_SELL';
-  if (!bullish && !bearish) return 'NEUTRAL';
-  const agrees = direction === 'LONG' ? bullish : bearish;
-  return agrees ? 'AGREE' : 'DISAGREE';
-}
-
-export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({
-  result,
-  direction,
-  onDirectionChange,
-  chips,
-  now,
-  timeframeLabel,
-}) => {
+export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({ result, direction, onDirectionChange }) => {
   const style = VERDICT_STYLE[result.verdict];
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {/* Direction switch */}
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-micro font-semibold uppercase tracking-wider text-white/40">Checking a</span>
@@ -100,63 +70,52 @@ export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({
             </button>
           ))}
         </div>
-        <span className="text-label text-white/40">
-          against the three compasses on {timeframeLabel}
-        </span>
       </div>
 
       {/* Verdict */}
-      <div className={cn('rounded-xl border px-4 py-3', style.ring)}>
-        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+      <div className={cn('rounded-xl border px-4 py-4', style.ring)}>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
           <div className="flex items-baseline gap-3">
-            <span className={cn('text-title font-black leading-none', style.text)}>
-              {verdictWord(result.verdict)}
-            </span>
+            <span className={cn('text-headline font-black leading-none', style.text)}>{style.word}</span>
             <span className="text-label text-white/50">
               {result.aligned} agree · {result.opposing} disagree · {result.neutral} neutral
-              {result.unavailable > 0 && ` · ${result.unavailable} no reading`}
+              {result.unavailable > 0 && ` · ${result.unavailable} no data`}
+              {result.loading > 0 && ` · ${result.loading} loading`}
             </span>
           </div>
-          <span className="font-mono text-label text-white/60">{Math.round(result.share * 100)}% agree</span>
+          <span className="font-mono text-body text-white/60">{Math.round(result.share * 100)}% agree</span>
         </div>
 
-        <p className="mt-1.5 text-body text-white/75">{result.message}</p>
+        <p className="mt-2 text-body text-white/75">{result.message}</p>
+
+        {result.higherTimeframeWarning && (
+          <p className="mt-2 text-body font-semibold text-amber-400">
+            ⚠ Higher timeframe conflict: {result.higherConflicts.map(frame => frame.label).join(', ')}
+            {result.higherConflicts.length === 1 ? ' disagrees' : ' disagree'} with this {direction.toLowerCase()}.
+          </p>
+        )}
       </div>
 
-      {/* Per-timeframe chips, filled only from what is already loaded */}
+      {/* Per-timeframe stance */}
       <div className="flex flex-wrap gap-2">
-        {chips.map(chip => {
-          const label = TIMEFRAME_LABELS[chip.timeframe] ?? chip.timeframe;
-          if (!chip.scoreLabel || chip.updatedAt === null) {
-            return (
-              <div
-                key={chip.timeframe}
-                className="flex flex-col items-center gap-0.5 rounded-lg border border-white/[0.06] bg-transparent px-3 py-1.5"
-                title="Not loaded in this session"
-              >
-                <span className="text-label font-bold text-white/30">{label}</span>
-                <span className="text-micro text-white/25">Not loaded</span>
-              </div>
-            );
-          }
-
-          const stance = chipStance(chip.scoreLabel, direction);
-          return (
-            <div
-              key={chip.timeframe}
-              className={cn('flex flex-col items-center gap-0.5 rounded-lg border px-3 py-1.5', STANCE_STYLE[stance])}
-            >
-              <span className="text-label font-bold">{label}</span>
-              <span className="text-micro">
-                {labelShort(chip.scoreLabel)} · {STANCE_WORD[stance]}
-              </span>
-              <span className="text-[0.5625rem] uppercase tracking-wide text-white/35">
-                {formatAge(chip.updatedAt, now)}
-              </span>
-            </div>
-          );
-        })}
+        {result.timeframes.map(frame => (
+          <div
+            key={frame.timeframe}
+            className={cn('flex flex-col items-center gap-0.5 rounded-lg border px-3 py-2', STANCE_STYLE[frame.stance])}
+          >
+            <span className="text-label font-bold">{frame.label}</span>
+            <span className="text-micro">{STANCE_WORD[frame.stance]}</span>
+            {frame.higher && frame.stance !== 'UNAVAILABLE' && frame.stance !== 'LOADING' && (
+              <span className="text-[0.5625rem] uppercase tracking-wide text-white/30">higher</span>
+            )}
+          </div>
+        ))}
       </div>
+
+      <p className="text-label text-white/40">
+        Agreement is weighted by timeframe, so higher timeframes carry more. Weights and rules live in{' '}
+        <span className="font-mono text-white/60">src/config/compass.ts</span>.
+      </p>
     </div>
   );
 };

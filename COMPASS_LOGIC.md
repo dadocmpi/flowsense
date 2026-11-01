@@ -38,12 +38,14 @@ it testable without a browser, and it is deliberate — keep it that way.
 
 ## 2. Timeframes
 
-`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, displayed as
-`M1`, `M5`, `M15`, `M30`, `1H`, `4H`, `1D`, `1W`.
+`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, displayed as
+`M1`, `M5`, `M15`, `M30`, `1H`, `4H`, `1D`.
 
 Each timeframe is fetched from the provider at its own interval, not aggregated
-from one base series. A 1m seed cannot reach back far enough to fill a weekly, so
+from one base series. A 1m seed cannot reach back far enough to fill a daily, so
 aggregating everything from 1m would silently leave the higher timeframes empty.
+The entry check needs all seven, so selecting an asset loads all seven — the
+selected timeframe first, then the rest highest-first, one request at a time.
 
 The live stream carries the 1m bar. The newest bar of the mergeable timeframes
 (5m, 15m, 30m, 1h, 4h, 1D) is refreshed from that live 1m tail via
@@ -124,38 +126,49 @@ from the score's sign. A positive score cannot read as Sell.
 
 ---
 
-## 5. Confluence
+## 5. Weights
 
-The confluence matrix shows every timeframe's reading at once and a weighted
-overall bias. Each timeframe's score is weighted by `timeframeWeights`, with the
-trend timeframes (1h, 4h, 1D) carrying the most weight, the 1m and 5m
-deliberately light, and the weekly a slow confirmation. The matrix also reports
-how many timeframes agree and in which direction.
-
-A timeframe with no data is reported as unavailable and does not vote.
+Each timeframe's score is weighted by `timeframeWeights`, with the trend
+timeframes (1h, 4h, 1D) carrying the most weight and the 1m and 5m deliberately
+light. The entry check uses the same weights.
 
 The default weights are:
 
-| Timeframe | Weight | Why |
-| --- | --- | --- |
-| M1 | 0.2 | Entry timing only; far too noisy to carry a trend read |
-| M5 | 0.6 | Short-term momentum |
-| M15 | 1.0 | The intraday swing |
-| M30 | 1.2 | The intraday trend |
-| 1H | 1.6 | The trend for an intraday entry |
-| 4H | 1.8 | The swing trend |
-| 1D | 2.0 | The dominant trend |
-| 1W | 1.2 | Slow confirmation |
+| Timeframe | Weight | Cache TTL | Why |
+| --- | --- | --- | --- |
+| M1 | 0.2 | 60s | Entry timing only; far too noisy to carry a trend read |
+| M5 | 0.6 | 120s | Short-term momentum |
+| M15 | 1.0 | 300s | The intraday swing |
+| M30 | 1.2 | 600s | The intraday trend |
+| 1H | 1.6 | 900s | The trend for an intraday entry |
+| 4H | 1.8 | 1800s | The swing trend |
+| 1D | 2.0 | 3600s | The dominant trend |
+
+The TTL is what keeps the credit spend bounded: inside it a timeframe is served
+from cache and costs nothing. The two values live together in
+`src/config/compass.ts`.
 
 ---
 
 ## 6. Entry check
 
-The confluence matrix says what the market is doing. The entry check answers the
-next question: **does the market agree with the trade I am about to take?**
+The entry check answers one question: **does the market agree with the trade I am
+about to take?** It sits full width directly above the three compasses and is
+always visible.
 
-You pick LONG or SHORT. Every timeframe's summary is then classified as agreeing,
-disagreeing or neutral relative to that direction, and the verdict is one of:
+You pick LONG or SHORT. Every timeframe's summary is then classified relative to
+that direction:
+
+| Stance | When |
+| --- | --- |
+| Agrees | LONG and Buy / Strong Buy, or SHORT and Sell / Strong Sell |
+| Disagrees | The opposite |
+| Neutral | The summary is Neutral |
+| No data | The timeframe has no usable reading |
+| Loading | The timeframe has not arrived yet — a fact about us, not the market |
+
+A timeframe that has not loaded is **Loading**, never "No data": the two are
+different facts and the panel keeps them apart. The verdict is one of:
 
 | Verdict | Meaning |
 | --- | --- |
@@ -167,7 +180,12 @@ Agreement is weighted by the same `timeframeWeights`, and it is measured only
 across timeframes that took a side, so a neutral timeframe neither helps nor
 hurts. A single higher-timeframe disagreement (1H and above by default) is enough
 to stop the verdict being Aligned and is reported as an explicit warning — that
-is the case worth knowing about before entering.
+is the case worth knowing about before entering. The panel also shows the weighted
+confluence percentage, the counts line and the per-timeframe chips, with the
+higher timeframes tagged.
+
+The panel is always visible — the LONG / SHORT toggle never disappears — and it
+sits full width directly above the three compasses.
 
 The rules live in the `entryCheck` block of `src/config/compass.ts`:
 `higherTimeframes`, `warnOnHigherTimeframeDisagreement`, `alignedShare` and

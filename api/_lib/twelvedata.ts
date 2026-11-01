@@ -5,8 +5,8 @@
 // environment, which is why it is the implementation that ships.
 //
 // Endpoint: https://api.twelvedata.com/time_series
-//   symbol    a candidate from api/_lib/symbols.ts (futures first, proxy next)
-//   interval  1min, 5min, 15min, 30min, 1h, 4h, 1day, 1week
+//   symbol    the ONE configured symbol from api/_lib/symbols.ts
+//   interval  1min, 5min, 15min, 30min, 1h, 4h, 1day
 //   timezone  pinned to UTC, so a payload never depends on where the serverless
 //             function runs
 //   apikey    TWELVE_DATA_API_KEY (server-side only, never in the bundle)
@@ -20,10 +20,18 @@
 // indicator per timeframe per refresh, and the compass already has tested local
 // math for every one of them.
 //
-// Twelve Data reports most failures as HTTP 200 with status:"error", so the
-// error KIND is read from the message (see classifyError) rather than the status
-// code. That is what lets the client distinguish "not entitled on your plan"
-// from "you are out of credits" from "the vendor is down".
+// ERROR KINDS ARE KEPT APART. Twelve Data reports most failures as HTTP 200 with
+// status:"error", so the kind is read from the message (see classifyError):
+//
+//   RATE_LIMIT    the vendor said stop (429 / credit wording). Our own
+//                 "retrying in Xs" state, and the ONLY case that auto-retries.
+//   ENTITLEMENT   the symbol is not available on this plan. No retry loop.
+//   CREDIT_LIMIT  OUR meter refused the call before it was made. Not a vendor
+//                 error at all: the caller waits for the minute to reset.
+//   NETWORK / UPSTREAM  anything else.
+//
+// The vendor's own error code and message are logged on EVERY failed request, so
+// "what did the vendor actually say?" is answerable from the log alone.
 //
 // Every request here runs through the credit meter (api/_lib/creditMeter.ts):
 // the meter is checked before the call and the vendor's own api-credits-used /
@@ -76,22 +84,24 @@ export const TWELVEDATA_INTERVALS: Record<string, string> = {
   '1h': '1h',
   '4h': '4h',
   '1D': '1day',
-  '1W': '1week',
 };
 
-export type VendorErrorKind = 'ENTITLEMENT' | 'RATE_LIMIT' | 'NETWORK' | 'UPSTREAM';
+export type VendorErrorKind = 'ENTITLEMENT' | 'RATE_LIMIT' | 'CREDIT_LIMIT' | 'NETWORK' | 'UPSTREAM';
 
 /** An upstream failure with the kind already worked out. */
 export class TwelveDataError extends Error {
   kind: VendorErrorKind;
   /** When a rate limit is in force, epoch ms the meter resets. */
   retryAfterMs?: number;
+  /** The vendor's own error code, when it sent one. */
+  vendorCode?: number;
 
-  constructor(kind: VendorErrorKind, message: string, retryAfterMs?: number) {
+  constructor(kind: VendorErrorKind, message: string, retryAfterMs?: number, vendorCode?: number) {
     super(message);
     this.name = 'TwelveDataError';
     this.kind = kind;
     if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
+    if (vendorCode !== undefined) this.vendorCode = vendorCode;
   }
 }
 
@@ -132,6 +142,10 @@ export function logVendorRequest(fields: {
   usage?: VendorUsage;
   meter: MeterSnapshot;
   note?: string;
+  /** The vendor's own error code, on a failure. */
+  vendorCode?: number;
+  /** The vendor's own error message, on a failure. */
+  vendorMessage?: string;
 }): void {
   const parts = [
     `[twelvedata] ${new Date().toISOString()}`,
@@ -140,11 +154,13 @@ export function logVendorRequest(fields: {
     fields.timeframe ? `timeframe=${fields.timeframe}` : null,
     `credits=${fields.credits}`,
     `status=${fields.status}`,
+    fields.vendorCode !== undefined ? `vendorCode=${fields.vendorCode}` : null,
     fields.usage?.used !== undefined ? `vendorUsed=${fields.usage.used}` : 'vendorUsed=-',
     fields.usage?.left !== undefined ? `vendorLeft=${fields.usage.left}` : 'vendorLeft=-',
     `meterUsed=${fields.meter.used}/${fields.meter.limit}`,
     fields.meter.exhausted ? 'meter=EXHAUSTED' : 'meter=OK',
     fields.note ? `note=${fields.note}` : null,
+    fields.vendorMessage ? `vendorMessage=${JSON.stringify(fields.vendorMessage)}` : null,
   ].filter((part): part is string => part !== null);
 
   console.log(parts.join(' '));
@@ -176,7 +192,7 @@ async function meteredFetch(
         meter: meterSnapshot(),
         note: error.message,
       });
-      throw new TwelveDataError('RATE_LIMIT', error.message, error.resetAt - Date.now());
+      throw new TwelveDataError('CREDIT_LIMIT', error.message, error.resetAt - Date.now());
     }
     throw error;
   }
@@ -229,7 +245,7 @@ export function normalizeDatetime(datetime: string): string {
 export function parseTimeSeries(payload: TimeSeriesResponse): Candle[] {
   if (payload.status === 'error') {
     const message = payload.message ?? 'Twelve Data returned an error';
-    throw new TwelveDataError(classifyError(message, payload.code ?? 0), message);
+    throw new TwelveDataError(classifyError(message, payload.code ?? 0), message, undefined, payload.code);
   }
   // An empty array is a real "no bars at this interval", not an error. The
   // caller treats it as a candidate failure and moves to the next symbol.
@@ -305,22 +321,23 @@ export async function fetchTimeSeries({
   try {
     payload = (await response.json()) as TimeSeriesResponse;
   } catch {
-    throw new TwelveDataError('UPSTREAM', `Twelve Data returned HTTP ${response.status} with an unreadable body`);
+    const message = `Twelve Data returned HTTP ${response.status} with an unreadable body`;
+    logFailure('time_series', symbol, timeframe, response.status, 'UPSTREAM', message);
+    throw new TwelveDataError('UPSTREAM', message);
   }
 
   if (payload.status === 'error') {
     const message = payload.message ?? 'Twelve Data returned an error';
     const kind = classifyError(message, response.status);
-    throw new TwelveDataError(kind, message, kind === 'RATE_LIMIT' ? handleRateLimit(message) : undefined);
+    logFailure('time_series', symbol, timeframe, response.status, kind, message, payload.code);
+    throw new TwelveDataError(kind, message, kind === 'RATE_LIMIT' ? handleRateLimit(message) : undefined, payload.code);
   }
 
   if (!response.ok) {
     const kind = classifyError(`HTTP ${response.status}`, response.status);
-    throw new TwelveDataError(
-      kind,
-      `Twelve Data returned HTTP ${response.status}`,
-      kind === 'RATE_LIMIT' ? handleRateLimit('') : undefined
-    );
+    const message = `Twelve Data returned HTTP ${response.status}`;
+    logFailure('time_series', symbol, timeframe, response.status, kind, message);
+    throw new TwelveDataError(kind, message, kind === 'RATE_LIMIT' ? handleRateLimit('') : undefined);
   }
 
   return {
@@ -330,6 +347,35 @@ export async function fetchTimeSeries({
     instrumentType: payload.meta?.type,
     exchange: payload.meta?.exchange,
   };
+}
+
+/**
+ * Log a failed request with the vendor's own code and message.
+ *
+ * Kept separate from the success log so a failure is always recorded even when
+ * the request never produced a usage header, which is what makes "what did the
+ * vendor say?" answerable from the log alone.
+ */
+function logFailure(
+  endpoint: string,
+  symbol: string,
+  timeframe: string,
+  status: number | string,
+  kind: VendorErrorKind,
+  vendorMessage: string,
+  vendorCode?: number
+): void {
+  logVendorRequest({
+    endpoint,
+    symbol,
+    timeframe,
+    credits: 1,
+    status,
+    meter: meterSnapshot(),
+    note: `error=${kind}`,
+    vendorCode,
+    vendorMessage,
+  });
 }
 
 /**
@@ -380,6 +426,7 @@ export async function searchSymbols(query: string, apiKey: string, signal?: Abor
   if (payload.status === 'error') {
     const message = payload.message ?? 'symbol_search failed';
     const kind = classifyError(message, response.status);
+    logFailure('symbol_search', query, '', response.status, kind, message);
     throw new TwelveDataError(kind, message, kind === 'RATE_LIMIT' ? handleRateLimit(message) : undefined);
   }
   return Array.isArray(payload.data) ? payload.data : [];

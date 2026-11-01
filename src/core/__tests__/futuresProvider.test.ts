@@ -95,7 +95,7 @@ describe('probeFuturesProvider', () => {
     vi.stubGlobal('fetch', async () =>
       jsonResponse({
         configured: true,
-        credits: { limit: 8, used: 8, remaining: 0, resetAt: 1_700_000_060_000, exhausted: true, coldStart: false, reason: null },
+        credits: { limit: 8, used: 8, remaining: 0, resetAt: 1_700_000_060_000, exhausted: true, reason: null },
       })
     );
 

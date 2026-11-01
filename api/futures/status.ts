@@ -71,12 +71,11 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
       remaining: meter.remaining,
       resetAt: meter.resetAt,
       exhausted: meter.exhausted,
-      coldStart: meter.coldStart,
       reason: meter.reason,
     },
     note:
       vendor && hasKey
         ? `Configured: ${vendor}`
-        : 'Set TWELVE_DATA_API_KEY to enable Gold, S&P 500 and Dow.',
+        : 'Set TWELVE_DATA_API_KEY to enable Gold, S&P 500, Dow and Nasdaq.',
   });
 }

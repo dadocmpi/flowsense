@@ -1,46 +1,33 @@
 // ============================================
 // POLLING / CACHE TIMING
 // ============================================
-// One source of truth for how often each timeframe is refreshed, shared by the
-// browser poller and the server-side candle cache. Keeping them in one place is
-// what stops the two from drifting apart and quietly burning credits.
+// One source of truth for how long a loaded candle series stays fresh. The
+// per-timeframe TTLs live in the compass config (`timeframeTtlMs`) because they
+// are a product decision, and this module exposes them to both the browser and
+// the server-side candle cache so the two can never drift apart.
 //
 // Pure constants: no I/O, no DOM, safe to import from a serverless function.
 //
-// The rule of thumb: poll a timeframe at a fraction of its own bar length, so a
-// new bar is picked up soon after it opens without hammering the vendor. The
-// server cache TTL sits just under the poll interval, so a user's poll normally
-// gets fresh data while simultaneous users share one vendor call.
+// The rule of thumb: a longer timeframe changes more slowly, so it is cached for
+// longer. The server cache keyed by (symbol, timeframe) then lets several users
+// watching the same instrument and timeframe collapse into ONE vendor call.
 
 import type { Timeframe } from '../types.js';
-
-/** How often the client re-fetches each timeframe over REST (ms). */
-export const POLL_INTERVAL_MS: Record<Timeframe, number> = {
-  '1m': 20_000,
-  '5m': 45_000,
-  '15m': 60_000,
-  '30m': 90_000,
-  '1h': 120_000,
-  '4h': 300_000,
-  '1D': 600_000,
-};
+import { DEFAULT_COMPASS_CONFIG } from '../../config/compass.js';
 
 /**
- * How long a server-side candle payload stays valid (ms).
+ * How long a loaded candle payload stays valid, per timeframe (ms).
  *
- * Set to 80% of the poll interval: short enough that a poller still sees a new
- * bar promptly, long enough that several users on the same instrument and
- * timeframe collapse into a single vendor call.
+ * Read straight from the compass config, so there is exactly one place to tune
+ * it. A timeframe re-read inside this window costs no vendor credit.
  */
-export const SERVER_CACHE_TTL_MS: Record<Timeframe, number> = Object.fromEntries(
-  (Object.entries(POLL_INTERVAL_MS) as Array<[Timeframe, number]>).map(([timeframe, interval]) => [
-    timeframe,
-    Math.round(interval * 0.8),
-  ])
-) as Record<Timeframe, number>;
+export const TIMEFRAME_TTL_MS: Record<Timeframe, number> = DEFAULT_COMPASS_CONFIG.timeframeTtlMs;
 
-/** How long a resolved symbol choice is trusted before re-verifying (ms). */
-export const SYMBOL_RESOLUTION_TTL_MS = 6 * 60 * 60 * 1000;
+/** Backwards-compatible alias: the server cache TTL IS the timeframe TTL. */
+export const SERVER_CACHE_TTL_MS: Record<Timeframe, number> = TIMEFRAME_TTL_MS;
+
+/** The client refresh cadence: how often an expired timeframe is re-read (ms). */
+export const POLL_INTERVAL_MS: Record<Timeframe, number> = TIMEFRAME_TTL_MS;
 
 /**
  * How often the live PRICE is polled when no tick feed is available (ms).
@@ -60,5 +47,5 @@ export function pollIntervalFor(timeframe: Timeframe): number {
 }
 
 export function cacheTtlFor(timeframe: Timeframe): number {
-  return SERVER_CACHE_TTL_MS[timeframe] ?? 60_000;
+  return TIMEFRAME_TTL_MS[timeframe] ?? 60_000;
 }

@@ -1,12 +1,14 @@
 // ============================================
 // COMPASS CONFIGURATION
 // ============================================
-// One file holds every tunable that shapes the compass: the vote thresholds,
-// the moving-average tolerance band, the per-indicator weights, the per
-// timeframe weights and the session definitions used for VWAP / POC.
+// One file holds every tunable that shapes the compass: the vote thresholds, the
+// moving-average tolerance band, the per-indicator weights, the per-timeframe
+// weights, the per-timeframe cache TTLs and the session definitions used for VWAP
+// / POC.
 //
 // The scoring code reads this object; nothing is hardcoded downstream.
 
+import type { Timeframe } from '../core/types.js';
 
 export interface SessionConfig {
   /**
@@ -30,23 +32,20 @@ export interface SessionConfig {
 
 export interface EntryCheckConfig {
   /**
-   * Weight each compass carries when judging whether the market agrees with the
-   * chosen direction. The summary is the blended overall read, so it carries
-   * more than its two inputs. A compass with no reading is excluded, not
-   * weighted as neutral.
+   * Timeframes treated as "higher" for the higher-timeframe rule. The default
+   * starts at 1H: an intraday entry that fights the 1H-and-above trend is the
+   * one worth warning about.
    */
-  compassWeights: {
-    technical: number;
-    summary: number;
-    orderFlow: number;
-  };
+  higherTimeframes: Timeframe[];
+  /** Warn (and never report ALIGNED) when a higher timeframe disagrees. */
+  warnOnHigherTimeframeDisagreement: boolean;
   /**
    * Share of the weighted directional vote that must agree before the verdict
-   * can be ALIGNED. Measured only across compasses that actually took a side, so
-   * a neutral compass neither helps nor hurts.
+   * can be ALIGNED. Measured only across timeframes that actually took a side,
+   * so a neutral timeframe neither helps nor hurts.
    */
   alignedShare: number;
-  /** Below this share the verdict is AGAINST rather than MIXED. */
+  /** Below this share the verdict is AGAINST rather than PARTIAL. */
   againstShare: number;
 }
 
@@ -82,6 +81,21 @@ export interface CompassConfig {
     orderFlow: number;
   };
 
+  /**
+   * How each timeframe's reading contributes to the entry check. Higher
+   * timeframes carry more, so a daily disagreement can outweigh several
+   * intraday agreements.
+   */
+  timeframeWeights: Record<Timeframe, number>;
+
+  /**
+   * Per-timeframe cache TTL for a loaded candle series, keyed by
+   * (symbol, timeframe). Within the TTL a timeframe costs nothing to re-read;
+   * once it expires the timeframe is refreshed on its own. A longer timeframe
+   * changes more slowly, so it is cached for longer.
+   */
+  timeframeTtlMs: Record<Timeframe, number>;
+
   /** Rules behind the LONG / SHORT entry check. */
   entryCheck: EntryCheckConfig;
 
@@ -108,8 +122,8 @@ export interface CompassConfig {
 
 export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
   // 0.05% is the tolerance the previous MA block already used in spirit; it is
-  // now explicit and configurable. Gold, ES and YM all trade in ranges wide
-  // enough that a sub-0.05% gap is genuinely noise.
+  // now explicit and configurable. Gold, the index proxies and the futures
+  // contracts all trade in ranges wide enough that a sub-0.05% gap is noise.
   maTolerancePercent: 0.05,
 
   // Longer averages describe the dominant trend, so they carry more weight,
@@ -158,15 +172,37 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     orderFlow: 1.0,
   },
 
+  // M1 is deliberately light: it is noisy and useful mainly for entry timing,
+  // not for the trend read. M5 and M15 are medium; M30 and above carry the
+  // trend and dominate the entry check.
+  timeframeWeights: {
+    '1m': 0.2,
+    '5m': 0.6,
+    '15m': 1.0,
+    '30m': 1.2,
+    '1h': 1.6,
+    '4h': 1.8,
+    '1D': 2.0,
+  },
+
+  // How long a loaded series stays fresh. A short timeframe is re-read often
+  // because it changes fast; a daily bar is worth re-reading once an hour.
+  timeframeTtlMs: {
+    '1m': 60_000,
+    '5m': 120_000,
+    '15m': 300_000,
+    '30m': 600_000,
+    '1h': 900_000,
+    '4h': 1_800_000,
+    '1D': 3_600_000,
+  },
+
   entryCheck: {
-    // The summary already blends the technical read and order flow, so it is
-    // the strongest single signal and carries the most weight.
-    compassWeights: {
-      technical: 1.0,
-      summary: 1.4,
-      orderFlow: 1.0,
-    },
-    // A weighted majority of the compasses is what earns ALIGNED.
+    // 1H and above is "the trend" for an intraday entry.
+    higherTimeframes: ['1h', '4h', '1D'],
+    warnOnHigherTimeframeDisagreement: true,
+    // A majority of the weighted directional vote, plus agreement from the
+    // higher timeframes, is what earns ALIGNED.
     alignedShare: 0.6,
     againstShare: 0.4,
   },
@@ -180,7 +216,8 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
 
   minCandles: 30,
 
-  // EMA 200 needs 200 closes; 300 leaves room for the other warmups.
+  // EMA 200 needs 200 closes; 300 leaves room for the other warmups. One request
+  // per timeframe, so a wider window costs the same single credit.
   requestedCandles: 300,
 
   session: {
@@ -207,6 +244,8 @@ export function mergeCompassConfig(
     indicatorWeights: { ...base.indicatorWeights, ...(override.indicatorWeights ?? {}) },
     technicalBlend: { ...base.technicalBlend, ...(override.technicalBlend ?? {}) },
     orderFlowBlend: { ...base.orderFlowBlend, ...(override.orderFlowBlend ?? {}) },
+    timeframeWeights: { ...base.timeframeWeights, ...(override.timeframeWeights ?? {}) },
+    timeframeTtlMs: { ...base.timeframeTtlMs, ...(override.timeframeTtlMs ?? {}) },
     entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
     session: { ...base.session, ...(override.session ?? {}) },

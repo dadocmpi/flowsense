@@ -61,7 +61,6 @@ export interface CreditState {
   remaining: number;
   resetAt: number;
   exhausted: boolean;
-  coldStart: boolean;
   reason: string | null;
 }
 
@@ -70,6 +69,7 @@ const ERROR_KINDS = new Set([
   'UNSUPPORTED_INSTRUMENT',
   'GEO_BLOCKED',
   'RATE_LIMIT',
+  'CREDIT_LIMIT',
   'SYMBOL_NOT_FOUND',
   'NETWORK',
   'UPSTREAM',

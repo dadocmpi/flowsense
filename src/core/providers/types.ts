@@ -28,7 +28,10 @@ export type ProviderErrorKind =
   | 'NOT_CONFIGURED'
   | 'UNSUPPORTED_INSTRUMENT'
   | 'GEO_BLOCKED'
+  /** The VENDOR said stop (429 / credit wording). Earns the retry-after-reset. */
   | 'RATE_LIMIT'
+  /** OUR meter refused the call. Not the vendor's rate limit: wait for the minute. */
+  | 'CREDIT_LIMIT'
   | 'SYMBOL_NOT_FOUND'
   | 'NETWORK'
   | 'UPSTREAM'
