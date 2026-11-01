@@ -1,9 +1,10 @@
 // ============================================
-// POLLING CADENCE TESTS
+// POLLING / CACHE TTL TESTS
 // ============================================
-// The cadence is what keeps the credit spend bounded. If a timeframe's poll
-// interval ever dropped below its bar length, the app would fetch far more than
-// it needs and burn the plan.
+// The per-timeframe TTL is what keeps the credit spend bounded: inside it a
+// timeframe costs nothing, and outside it the timeframe refreshes on its own.
+// The TTLs live in the compass config, so these tests also pin the config's own
+// shape.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -12,44 +13,63 @@ import {
   pollIntervalFor,
   PRICE_POLL_INTERVAL_MS,
   SERVER_CACHE_TTL_MS,
+  TIMEFRAME_TTL_MS,
 } from '../providers/polling';
+import { DEFAULT_COMPASS_CONFIG } from '../../config/compass';
 import { TIMEFRAME_MINUTES, TIMEFRAMES } from '../types';
 
-describe('POLL_INTERVAL_MS', () => {
+describe('TIMEFRAME_TTL_MS', () => {
   it('covers every timeframe the UI offers', () => {
     for (const timeframe of TIMEFRAMES) {
-      expect(POLL_INTERVAL_MS[timeframe]).toBeGreaterThan(0);
+      expect(TIMEFRAME_TTL_MS[timeframe]).toBeGreaterThan(0);
     }
   });
 
-  it('keeps every interval short enough to catch a new bar promptly', () => {
-    // The point of the cadence is that a newly opened bar shows up quickly.
-    // Half an hour is the longest we ever wait.
-    for (const timeframe of TIMEFRAMES) {
-      expect(POLL_INTERVAL_MS[timeframe]).toBeLessThanOrEqual(30 * 60_000);
-    }
+  it('IS the config, so there is exactly one place to tune it', () => {
+    expect(TIMEFRAME_TTL_MS).toEqual(DEFAULT_COMPASS_CONFIG.timeframeTtlMs);
   });
 
-  it('polls a short timeframe sooner than a long one', () => {
-    expect(POLL_INTERVAL_MS['1m']).toBeLessThan(POLL_INTERVAL_MS['1h']);
-    expect(POLL_INTERVAL_MS['1h']).toBeLessThan(POLL_INTERVAL_MS['1D']);
+  it('uses the documented defaults', () => {
+    expect(TIMEFRAME_TTL_MS['1m']).toBe(60_000);
+    expect(TIMEFRAME_TTL_MS['5m']).toBe(120_000);
+    expect(TIMEFRAME_TTL_MS['15m']).toBe(300_000);
+    expect(TIMEFRAME_TTL_MS['30m']).toBe(600_000);
+    expect(TIMEFRAME_TTL_MS['1h']).toBe(900_000);
+    expect(TIMEFRAME_TTL_MS['4h']).toBe(1_800_000);
+    expect(TIMEFRAME_TTL_MS['1D']).toBe(3_600_000);
+  });
+
+  it('caches a longer timeframe for longer than a shorter one', () => {
+    expect(TIMEFRAME_TTL_MS['1m']).toBeLessThan(TIMEFRAME_TTL_MS['1h']);
+    expect(TIMEFRAME_TTL_MS['1h']).toBeLessThan(TIMEFRAME_TTL_MS['1D']);
+  });
+
+  it('keeps a short timeframe on a short leash and a long one on a long one', () => {
+    // The TTL is a product choice, not a function of the bar length: a 1m bar is
+    // re-read once a minute, a daily bar once an hour. The invariant that matters
+    // is that the cadence is bounded and monotonic, not that it matches the bar.
+    expect(TIMEFRAME_TTL_MS['1m']).toBeLessThanOrEqual(60_000);
+    expect(TIMEFRAME_TTL_MS['1D']).toBeLessThanOrEqual(60 * 60_000);
+    expect(TIMEFRAME_TTL_MS['1m']).toBeLessThan(TIMEFRAME_TTL_MS['5m']);
+    expect(TIMEFRAME_TTL_MS['5m']).toBeLessThan(TIMEFRAME_TTL_MS['15m']);
+    expect(TIMEFRAME_TTL_MS['15m']).toBeLessThan(TIMEFRAME_TTL_MS['30m']);
+    expect(TIMEFRAME_TTL_MS['30m']).toBeLessThan(TIMEFRAME_TTL_MS['1h']);
+    expect(TIMEFRAME_TTL_MS['1h']).toBeLessThan(TIMEFRAME_TTL_MS['4h']);
+    expect(TIMEFRAME_TTL_MS['4h']).toBeLessThan(TIMEFRAME_TTL_MS['1D']);
   });
 });
 
-describe('SERVER_CACHE_TTL_MS', () => {
-  it('sits just under the poll interval, so a poller still sees a new bar', () => {
-    for (const timeframe of TIMEFRAMES) {
-      expect(SERVER_CACHE_TTL_MS[timeframe]).toBeLessThan(POLL_INTERVAL_MS[timeframe]);
-      // But not so short that concurrent users cannot share one vendor call.
-      expect(SERVER_CACHE_TTL_MS[timeframe]).toBeGreaterThan(POLL_INTERVAL_MS[timeframe] * 0.5);
-    }
+describe('SERVER_CACHE_TTL_MS / POLL_INTERVAL_MS', () => {
+  it('are the same table as the config TTL', () => {
+    expect(SERVER_CACHE_TTL_MS).toEqual(TIMEFRAME_TTL_MS);
+    expect(POLL_INTERVAL_MS).toEqual(TIMEFRAME_TTL_MS);
   });
 });
 
 describe('accessors', () => {
-  it('returns the configured interval', () => {
-    expect(pollIntervalFor('5m')).toBe(POLL_INTERVAL_MS['5m']);
-    expect(cacheTtlFor('5m')).toBe(SERVER_CACHE_TTL_MS['5m']);
+  it('returns the configured TTL', () => {
+    expect(pollIntervalFor('5m')).toBe(TIMEFRAME_TTL_MS['5m']);
+    expect(cacheTtlFor('5m')).toBe(TIMEFRAME_TTL_MS['5m']);
   });
 });
 

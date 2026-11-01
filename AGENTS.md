@@ -3,7 +3,7 @@
 ## What this app is
 
 FlowSense: a React + TypeScript + Vite multi-timeframe market compass for Gold,
-S&P 500 and Dow futures (GC/ES/YM). Every number is a provider response or
+S&P 500, Dow and Nasdaq (GC/ES/YM/NQ). Every number is a provider response or
 arithmetic over one. Nothing is simulated.
 
 ## Hard rules
@@ -11,9 +11,15 @@ arithmetic over one. Nothing is simulated.
 - **Never fabricate market data.** No random walks, no synthetic values, no
   placeholder prices that look real. If data is unavailable, show an honest
   unavailable state (`--`, `DATA: UNAVAILABLE`) and an error kind.
-- **Only ship markets we can source honestly.** Futures come from a configured
-  provider. An instrument with no configured source shows "no data source
+- **Only ship markets we can source honestly.** Every asset comes from a
+  configured provider. An asset with no configured source shows "no data source
   configured" and no numbers at all — never a placeholder that looks real.
+- **Defaults must work on the free plan.** The shipped symbols are spot / ETF
+  proxies (XAU/USD, SPY, DIA, QQQ), never the continuous contracts (GC1! etc.),
+  which the free plan does not carry. A proxy is always labelled a proxy. Each is
+  overridable by ONE env var (`SYMBOL_GOLD`, `SYMBOL_SP500`, `SYMBOL_DOW`,
+  `SYMBOL_NASDAQ`); there is no runtime probing and no fallback chain.
+- **Assets load independently.** One asset failing never blocks or hides another.
 - **Keys stay server-side.** The futures provider's key is read only by the
   functions under `api/` and must never reach the browser. Verify the bundle
   stays credential-free: `grep -c "apikey" dist/assets/*.js` → must be 0. (A
@@ -31,17 +37,18 @@ src/core/session.ts            session open resolution (RTH/FULL), DST-safe
 src/core/metrics.ts            ATR, VWAP, session range, point of control
 src/core/candles.ts            bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts    ONE timeframe -> the three compasses + structure + metrics
-src/core/entryCheck.ts         do the selected timeframe's compasses agree with a long/short? (pure)
+src/core/entryCheck.ts         do the timeframes agree with a long/short? (pure, weighted)
+src/core/feedCache.ts          load order + per-timeframe TTL (pure)
 src/core/marketHours.ts        is the market still producing bars? (pure)
 src/core/providers/            MarketDataProvider interface + the futures provider
-src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
+src/core/providers/polling.ts  per-timeframe TTL, shared by client and server (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
 src/config/compass.ts          every weight, tolerance and session setting
-src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
+src/hooks/useInstrumentFeed.ts        all seven timeframes for one asset, one request at a time
 src/hooks/useTimeframeReadings.ts     one reading per (asset, timeframe), kept apart
 api/_lib/creditMeter.ts        the per-minute meter that gates EVERY vendor call
-api/_lib/symbols.ts            the ONE place the single symbol per instrument is mapped
+api/_lib/symbols.ts            the ONE place the single symbol per asset is mapped (free-plan defaults)
 api/_lib/twelvedata.ts         vendor adapter: meter, request, parse, classify error kind
 api/_lib/candleCache.ts        short-lived candle cache (one vendor call per TTL)
 api/futures/candles.ts         server-side futures candle proxy
@@ -89,11 +96,24 @@ ceiling. Discovery (`api/futures/symbols.ts`, `npm run check:symbols`) is the
 only code allowed to touch more than one symbol, and it runs out of band, never
 inside a user request.
 
-The meter is per serverless instance and in memory, so a cold instance starts
-empty and is capped at `COLD_START_MAX_CREDITS` (3) for its first minute. A
-rate-limit response marks the meter exhausted for the rest of the wall-clock
-minute. The client shows its own "Rate limit — retrying in Xs" state with the
-last series marked Stale; never surface the vendor's raw text.
+The meter is per serverless instance and in memory. There is NO cold-start cap:
+a fresh instance may spend the whole minute, because one full asset load is seven
+credits and the cap used to be three, which made a first-minute load impossible.
+The per-minute ceiling (8 by default) is the only bound. A vendor rate-limit
+response marks the meter exhausted for the rest of the wall-clock minute.
+
+KEEP THE THREE FAILURE CAUSES APART, in our own words:
+
+  * a real vendor rate limit (429 / credit message) → "Rate limit — retrying in
+    Xs", retried once after the minute resets;
+  * a symbol/plan problem (ENTITLEMENT) → "Symbol not available on current plan",
+    NEVER retried in a loop;
+  * our own meter refusing the call (CREDIT_LIMIT) → the timeframe reads "Waiting
+    for credits" and resumes automatically after the minute resets.
+
+The vendor's own error code and message are logged on EVERY failed request
+(`vendorCode=`, `vendorMessage=`), so the log alone answers "what did the vendor
+say?". Never surface the vendor's raw text to the browser.
 
 ### Streaming, not polling
 
@@ -113,18 +133,29 @@ reset the server reported, and never in a loop.
 
 There are seven timeframes (1m, 5m, 15m, 30m, 1h, 4h, 1D). Each is requested
 from the provider at its own interval, so a 1m seed cannot cap how far back the
-daily reaches — but only the SELECTED timeframe is fetched on load, one credit
-each, and the rest load on demand when the user selects them. Do not reintroduce
-a mount-time sweep of every timeframe: seven timeframes is seven credits, which
-alone can spend a small plan's whole minute. Each request asks for at least 250
-candles (`requestedCandles` in `src/config/compass.ts`) so EMA 200 is valid; a
-wider window is still ONE request and so still one credit.
+daily reaches. THE ENTRY CHECK NEEDS ALL SEVEN, so selecting an asset loads all
+seven — one request each, seven credits. The order is fixed and deliberate: the
+SELECTED timeframe first so the compasses and the table fill immediately, then
+the rest highest-first (1D, 4H, 1H, 30m, 15m, 5m, 1m), one request at a time.
+Chips fill progressively and read "Loading" until their data lands. Each request
+asks for 300 candles (`requestedCandles` in `src/config/compass.ts`) so EMA 200
+is valid; a wider window is still ONE request and so still one credit.
 
 Readings are keyed by `asset:timeframe` in `useTimeframeReadings`, so switching
-timeframes never mixes their series and a chip for a timeframe loaded earlier
-still shows that timeframe's own reading and its age. The entry-check chip row
-fills ONLY from timeframes already loaded this session; an unloaded timeframe
-reads "Not loaded" and is never fetched to fill a chip.
+timeframes never mixes their series and a chip still shows that timeframe's own
+reading and its age. A timeframe whose data has not arrived is LOADING, not "No
+data": the two are different facts and the panel keeps them apart.
+
+EVERY REQUEST IS GATED AND CACHED. `src/hooks/useInstrumentFeed.ts` loads one
+request at a time; a per-timeframe TTL (`timeframeTtlMs` in the config, keyed by
+(asset, timeframe)) means a timeframe inside its TTL costs nothing, and switching
+back to a cached asset costs 0 credits. In-flight requests are de-duplicated.
+Background refresh touches ONLY expired timeframes of the selected asset and
+never runs when the server meter has one credit or fewer left, so a user action
+always has a credit to spend. When the meter blocks a timeframe it reads "Waiting
+for credits" and the queue resumes automatically after the minute resets. The
+pure load-order and TTL decisions live in `src/core/feedCache.ts` so they are
+unit tested.
 
 The live stream carries the 1m bar;
 the newest bar of the mergeable timeframes (5m, 15m, 30m, 1h, 4h, 1D) is
@@ -159,9 +190,16 @@ still 0 after adding one.
 ## UI
 
 The main screen, top to bottom, and it fits 1920x1080 without scrolling: the top
-bar (price, feed state, provenance, asset tabs, timeframe buttons), three
-compasses in one row, then the merged technical table (two thirds) beside the
-entry check (one third).
+bar (price, feed state, provenance, asset tabs, timeframe buttons), then the
+LONG / SHORT entry check FULL WIDTH directly above the three compasses, then the
+compasses in one row, then the merged technical table full width.
+
+The entry check is ALWAYS visible: the LONG / SHORT toggle never disappears, and
+a timeframe still loading reads "Loading". It shows one chip per timeframe (M1,
+M5, M15, M30, 1H, 4H, 1D) with Agrees / Disagrees / Neutral / No data / Loading
+and a `higher` tag on 1H, 4H and 1D, the weighted confluence percentage, the
+counts line, the verdict (Aligned / Partial / Against) and the red higher-timeframe
+conflict warning. It is the ORIGINAL entry check: do not redesign it again.
 
 The timeframe buttons carry the LABEL ONLY — M1 M5 M15 M30 1H 4H 1D. No score,
 no signal word, no colour that implies a signal; only the selected one is
@@ -219,13 +257,18 @@ spent the credits?"; `vendorUsed`/`vendorLeft` come from the vendor's own
 headers and are the source of truth.
 
 ```
-[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=GC1! timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
-[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=ES1! timeframe=15m credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
-[twelvedata] 2026-01-02T14:31:00.501Z endpoint=time_series symbol=YM1! timeframe=15m credits=1 status=200 vendorUsed=3 vendorLeft=5 meterUsed=3/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=XAU/USD timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=XAU/USD timeframe=1D credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.501Z endpoint=time_series symbol=XAU/USD timeframe=4h credits=1 status=200 vendorUsed=3 vendorLeft=5 meterUsed=3/8 meter=OK
 ```
 
 A blocked call never reaches the vendor and logs `status=BLOCKED` with the
-meter's reason instead.
+meter's reason instead. A failed call logs `error=<KIND>` plus `vendorCode=` and
+`vendorMessage=`:
+
+```
+[twelvedata] 2026-01-02T14:31:05.004Z endpoint=time_series symbol=SPY timeframe=1D credits=1 status=200 vendorUsed=- vendorLeft=- meterUsed=3/8 meter=OK note=error=ENTITLEMENT vendorMessage="symbol is not available on your plan"
+```
 
 ## Testing indicator math
 

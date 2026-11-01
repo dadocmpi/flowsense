@@ -3,39 +3,32 @@
 // ============================================
 // The one place that decides whether a vendor call may be made at all.
 //
-// Twelve Data meters API credits per minute and answers HTTP 429 with
-// "You have run out of API credits for the current minute. N API credits were
-// used, with the current limit being M." once the minute is spent. The vendor is
-// the authority on how many credits were used, so its numbers win: when a
+// Twelve Data meters API credits per minute (8 on the free plan) and answers HTTP
+// 429 with "You have run out of API credits for the current minute. N API credits
+// were used, with the current limit being M." once the minute is spent. The vendor
+// is the authority on how many credits were used, so its numbers win: when a
 // response carries the `api-credits-used` header, the meter adopts that value
 // instead of its own tally.
 //
 // Why this exists: every request the app makes is a candidate for a credit, so
 // without a gate a single page load can spend the whole minute before anyone
-// notices. The meter is checked BEFORE the request and updated AFTER it, which
-// is what turns "we ran out" into "we stopped ourselves short of running out".
+// notices. The meter is checked BEFORE the request and updated AFTER it, which is
+// what turns "we ran out" into "we stopped ourselves short of running out".
 //
-// Scope: one module instance per serverless instance. That is honest — a fresh
-// instance starts with an empty meter — so a cold start is capped conservatively
-// (COLD_START_MAX_CREDITS) until the instance has proven the vendor is healthy.
-// A rate limit is remembered for the rest of the wall-clock minute, which is the
-// unit the vendor actually resets on.
+// THE FULL-ASSET LOAD MUST FIT. One full asset load is seven credits — one per
+// timeframe — so the meter must allow seven in a minute, not three. There is no
+// cold-start cap any more: it used to cap a fresh instance at 3 credits, which
+// made a full load impossible on the very first minute after a deploy. The
+// per-minute ceiling alone is what bounds the spend now.
+//
+// A LOCAL BLOCK IS NOT A VENDOR RATE LIMIT. When the meter refuses a call it
+// means "this would exceed the minute" — the caller marks that timeframe as
+// waiting for credits and continues after the reset. A vendor rate limit is a
+// different, harder state: the vendor itself said stop, so every call is refused
+// until the minute rolls over.
 
-/** Default per-minute ceiling. Twelve Data's Basic plan allows 8 credits/minute. */
+/** Default per-minute ceiling. Twelve Data's free plan allows 8 credits/minute. */
 export const DEFAULT_MINUTE_CREDITS = 8;
-
-/**
- * Credits a cold instance may spend in its first COLD_START_WINDOW_MS.
- *
- * One credit is one (symbol, timeframe) load, so three is a small, useful slice
- * of the compass rather than a full sweep. This is deliberately below the plan
- * limit: a new instance has no history, and the point of the cap is to make a
- * cold start cheap, not to spend the whole minute discovering the ceiling.
- */
-export const COLD_START_MAX_CREDITS = 3;
-
-/** How long the cold-start cap applies after the instance first spends (ms). */
-export const COLD_START_WINDOW_MS = 60_000;
 
 /** One vendor request's cost, used both to gate and to record. */
 export interface CreditCost {
@@ -60,28 +53,21 @@ export interface MeterSnapshot {
   resetAt: number;
   /** True while a vendor rate limit is in force for this minute. */
   exhausted: boolean;
-  /** True while the cold-start cap is still in force. */
-  coldStart: boolean;
-  /** Credits the cold-start window still allows. */
-  coldStartRemaining: number;
   /** Whether a vendor call may be made right now. */
   allowed: boolean;
   /** Why a call is blocked, when it is. */
   reason: string | null;
 }
 
-/** Raised when the meter refuses a call; the route maps this onto RATE_LIMIT. */
+/** Raised when the meter refuses a call; the route maps this onto CREDIT_LIMIT. */
 export class CreditLimitError extends Error {
   /** Epoch ms at which the current minute resets. */
   resetAt: number;
-  /** True when the block is the cold-start cap rather than the minute limit. */
-  coldStart: boolean;
 
-  constructor(message: string, resetAt: number, coldStart: boolean) {
+  constructor(message: string, resetAt: number) {
     super(message);
     this.name = 'CreditLimitError';
     this.resetAt = resetAt;
-    this.coldStart = coldStart;
   }
 }
 
@@ -91,8 +77,6 @@ interface MeterState {
   /** Limit reported by the vendor's `api-credits-used` + `api-credits-left`. */
   limit: number | null;
   exhaustedUntil: number;
-  coldStartUntil: number;
-  coldStartUsed: number;
 }
 
 let state: MeterState = {
@@ -100,8 +84,6 @@ let state: MeterState = {
   used: 0,
   limit: null,
   exhaustedUntil: 0,
-  coldStartUntil: 0,
-  coldStartUsed: 0,
 };
 
 /** The wall-clock minute index for an epoch ms. */
@@ -130,8 +112,6 @@ function roll(now: number): void {
     // A vendor-reported limit outlives the minute: it describes the plan.
     limit: state.limit,
     exhaustedUntil: 0,
-    coldStartUntil: state.coldStartUntil,
-    coldStartUsed: state.coldStartUsed,
   };
 }
 
@@ -150,17 +130,12 @@ export function checkCredits(credits: number, now: number = Date.now()): MeterSn
   roll(now);
   const limit = effectiveLimit();
   const resetAt = minuteEnd(now);
-  const coldStart = now < state.coldStartUntil;
-  const coldStartRemaining = coldStart ? Math.max(0, COLD_START_MAX_CREDITS - state.coldStartUsed) : 0;
 
   if (now < state.exhaustedUntil) {
-    return blocked('vendor rate limit in force', true);
+    return blocked('vendor rate limit in force');
   }
   if (state.used + credits > limit) {
-    return blocked(`would exceed ${limit} credits/minute (used ${state.used})`, false);
-  }
-  if (coldStart && state.coldStartUsed + credits > COLD_START_MAX_CREDITS) {
-    return blocked(`cold start allows ${COLD_START_MAX_CREDITS} credits`, true);
+    return blocked(`would exceed ${limit} credits/minute (used ${state.used})`);
   }
 
   return {
@@ -169,27 +144,19 @@ export function checkCredits(credits: number, now: number = Date.now()): MeterSn
     remaining: Math.max(0, limit - state.used),
     resetAt,
     exhausted: false,
-    coldStart,
-    coldStartRemaining,
     allowed: true,
     reason: null,
   };
 
-  function blocked(reason: string, isColdStart: boolean): MeterSnapshot {
-    // A cold-start block clears at the end of its own window, which may be later
-    // than the minute boundary; reporting the earlier of the two would have the
-    // client retry into the same block.
-    const blockedUntil = isColdStart ? Math.max(resetAt, state.coldStartUntil) : resetAt;
+  function blocked(reason: string): MeterSnapshot {
     return {
       limit,
       used: state.used,
       remaining: Math.max(0, limit - state.used),
-      resetAt: blockedUntil,
+      resetAt,
       exhausted: true,
-      coldStart,
-      coldStartRemaining,
       allowed: false,
-      reason: isColdStart ? `${reason} (cold start)` : reason,
+      reason,
     };
   }
 }
@@ -198,11 +165,7 @@ export function checkCredits(credits: number, now: number = Date.now()): MeterSn
 export function assertCredits(credits: number, now: number = Date.now()): void {
   const snapshot = checkCredits(credits, now);
   if (snapshot.allowed) return;
-  throw new CreditLimitError(
-    `Credit meter blocked the call: ${snapshot.reason}`,
-    snapshot.resetAt,
-    snapshot.coldStart
-  );
+  throw new CreditLimitError(`Credit meter blocked the call: ${snapshot.reason}`, snapshot.resetAt);
 }
 
 /** What a vendor response reported about credit usage. */
@@ -236,8 +199,7 @@ export function readVendorUsage(headers: Headers | undefined): VendorUsage {
  * `usage` is the vendor's own report and is the source of truth: when it carries
  * `api-credits-used` and `api-credits-left`, their sum is the plan limit and the
  * used value is adopted verbatim. Without headers the meter falls back to its own
- * per-request tally, which is a deliberate undercount of nothing — every call
- * costs at least one credit and the tally assumes exactly one.
+ * per-request tally, which assumes exactly one credit per call.
  */
 export function recordCredits(cost: CreditCost, usage: VendorUsage = {}, now: number = Date.now()): MeterSnapshot {
   roll(now);
@@ -248,11 +210,6 @@ export function recordCredits(cost: CreditCost, usage: VendorUsage = {}, now: nu
   if (usage.used !== undefined && usage.left !== undefined && usage.used + usage.left > 0) {
     state.limit = usage.used + usage.left;
   }
-
-  // The first spend starts the cold-start window; it is measured from the
-  // instance's first request, not from process start.
-  if (state.coldStartUntil === 0) state.coldStartUntil = now + COLD_START_WINDOW_MS;
-  if (now < state.coldStartUntil) state.coldStartUsed += cost.credits;
 
   return checkCredits(0, now);
 }
@@ -284,7 +241,5 @@ export function resetCreditMeter(): void {
     used: 0,
     limit: null,
     exhaustedUntil: 0,
-    coldStartUntil: 0,
-    coldStartUsed: 0,
   };
 }

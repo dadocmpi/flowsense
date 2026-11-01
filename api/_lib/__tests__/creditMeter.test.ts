@@ -4,13 +4,15 @@
 // The meter is the only thing standing between the app and the vendor's
 // per-minute ceiling, so its behaviour is asserted against an injected clock
 // rather than a real one.
+//
+// The invariant that matters most for the product: a FULL asset load is seven
+// credits — one per timeframe — so the meter must allow seven in a minute on a
+// fresh instance. There is no cold-start cap any more.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   assertCredits,
   checkCredits,
-  COLD_START_MAX_CREDITS,
-  COLD_START_WINDOW_MS,
   CreditLimitError,
   DEFAULT_MINUTE_CREDITS,
   markExhausted,
@@ -23,7 +25,10 @@ import {
 /** A fixed minute boundary so the wall-clock window is deterministic. */
 const T0 = Date.UTC(2024, 5, 10, 12, 0, 0);
 
-const COST = { endpoint: 'time_series', symbol: 'GC1!', timeframe: '1D', credits: 1 };
+const COST = { endpoint: 'time_series', symbol: 'XAU/USD', timeframe: '1D', credits: 1 };
+
+/** The seven timeframes one full asset load fetches. */
+const SEVEN = ['1D', '4h', '1h', '30m', '15m', '5m', '1m'];
 
 describe('credit meter', () => {
   beforeEach(() => {
@@ -39,7 +44,20 @@ describe('credit meter', () => {
     expect(checkCredits(1, T0).allowed).toBe(true);
   });
 
-  it('blocks once the per-request tally reaches the limit', () => {
+  it('allows a FULL asset load of seven credits on a fresh instance', () => {
+    // One request per timeframe, seven timeframes: the first-minute load must
+    // fit inside the 8-credit ceiling.
+    for (const timeframe of SEVEN) {
+      expect(checkCredits(1, T0).allowed).toBe(true);
+      recordCredits({ ...COST, timeframe }, {}, T0);
+    }
+    const snapshot = meterSnapshot(T0);
+    expect(snapshot.used).toBe(7);
+    expect(snapshot.remaining).toBe(1);
+    expect(snapshot.allowed).toBe(true);
+  });
+
+  it('blocks the ninth call in a minute and keeps the eighth', () => {
     for (let i = 0; i < DEFAULT_MINUTE_CREDITS; i += 1) {
       recordCredits(COST, {}, T0);
     }
@@ -79,21 +97,13 @@ describe('credit meter', () => {
     expect(next.used).toBe(0);
   });
 
-  it('caps a cold instance at COLD_START_MAX_CREDITS for its first minute', () => {
-    for (let i = 0; i < COLD_START_MAX_CREDITS; i += 1) {
+  it('has no cold-start cap: a fresh instance may spend the full minute', () => {
+    // Regression guard. The old meter capped a cold instance at 3 credits, which
+    // made a seven-credit full load impossible on the first minute after deploy.
+    for (let i = 0; i < DEFAULT_MINUTE_CREDITS; i += 1) {
       recordCredits(COST, {}, T0);
     }
-    const snapshot = checkCredits(1, T0 + 1_000);
-    expect(snapshot.coldStart).toBe(true);
-    expect(snapshot.allowed).toBe(false);
-    expect(snapshot.reason).toMatch(/cold start/);
-  });
-
-  it('lifts the cold-start cap once the window has passed', () => {
-    for (let i = 0; i < COLD_START_MAX_CREDITS; i += 1) {
-      recordCredits(COST, {}, T0);
-    }
-    expect(checkCredits(1, T0 + COLD_START_WINDOW_MS + 1).allowed).toBe(true);
+    expect(checkCredits(1, T0 + 1_000).reason).toMatch(/exceed/);
   });
 
   it('raises a typed error carrying the reset time when a call is refused', () => {
@@ -117,16 +127,5 @@ describe('credit meter', () => {
   it('reports no usage when the headers are absent', () => {
     expect(readVendorUsage(new Headers())).toEqual({});
     expect(readVendorUsage(undefined)).toEqual({});
-  });
-
-  it('reports a cold-start block resetting at the end of the cold-start window', () => {
-    for (let i = 0; i < COLD_START_MAX_CREDITS; i += 1) {
-      recordCredits(COST, {}, T0);
-    }
-    // Blocked at 30s, but the cold-start window runs to T0 + 60s, so a retry at
-    // the minute boundary would land in the same block.
-    const snapshot = checkCredits(1, T0 + 30_000);
-    expect(snapshot.allowed).toBe(false);
-    expect(snapshot.resetAt).toBe(T0 + COLD_START_WINDOW_MS);
   });
 });

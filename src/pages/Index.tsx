@@ -3,9 +3,10 @@
 // ============================================
 // Layout, top to bottom, and it fits 1920x1080 without scrolling:
 //   1. the top bar: price, feed state, provenance, asset tabs, timeframe buttons
-//   2. three compasses in one row — Technical indicators, Summary, Order flow
-//   3. one merged "Technical indicators" table (moving averages + oscillators)
-//   4. the LONG / SHORT entry check for the selected timeframe
+//   2. the LONG / SHORT entry check, FULL WIDTH, always visible
+//   3. three compasses in one row — Technical indicators, Summary, Order flow
+//   4. one merged "Technical indicators" table (moving averages + oscillators),
+//      full width
 //
 // There is no multi-timeframe confluence grid, no timeframe-detail panel and no
 // separate technical-metrics panel any more. Nothing is collapsible: everything
@@ -18,12 +19,12 @@ import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { TimeframeButtons } from '../components/compass/TimeframeButtons';
 import { CompassCard } from '../components/compass/CompassCard';
 import { TechnicalTable } from '../components/compass/TechnicalTable';
-import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryCheckPanel';
+import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
 import { TIMEFRAME_LABELS, TIMEFRAMES, type Timeframe } from '../core/types';
 import { probeFuturesProvider } from '../core/providers';
-import { checkEntry, type EntryCompassInput, type EntryDirection } from '../core/entryCheck';
+import { checkEntry, type EntryDirection, type EntryTimeframeInput } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import {
   formatAge,
@@ -39,7 +40,8 @@ const ERROR_TITLES: Record<string, string> = {
   UNSUPPORTED_INSTRUMENT: 'Instrument not supported by this source',
   GEO_BLOCKED: 'Data source unavailable in this region',
   RATE_LIMIT: 'Data source rate limit reached',
-  SYMBOL_NOT_FOUND: 'Symbol unavailable',
+  CREDIT_LIMIT: 'Waiting for credits',
+  SYMBOL_NOT_FOUND: 'Symbol not available on current plan',
   NETWORK: 'Network error',
   UPSTREAM: 'Data source error',
   UNKNOWN: 'Unexpected error',
@@ -149,32 +151,47 @@ const Index: React.FC = () => {
   const frame = current?.reading ?? null;
   const pricePrecision = instrument.precision;
   const timeframeLabel = TIMEFRAME_LABELS[selectedTimeframe];
-  const busy = feed.loadingTimeframes.length > 0;
+  // Only the selected timeframe's own request blocks the buttons. Disabling them
+  // for the whole seven-request load would lock the user out of the control they
+  // need while it runs.
+  const busy = feed.loadingTimeframes.includes(selectedTimeframe);
+  const loadedCount = feed.loadedTimeframes.length;
 
-  // The entry check reads the three compasses of the SELECTED timeframe only.
+  // A timeframe that failed for a NON-credit reason is named, with our own
+  // wording, rather than silently reading "No data". A partial failure — one
+  // timeframe not on the plan — must not be hidden behind a chip.
+  const failedTimeframes = TIMEFRAMES.map(timeframe => ({
+    timeframe,
+    status: feed.timeframeStatus[timeframe],
+  })).filter(
+    entry =>
+      entry.status?.state === 'ERROR' &&
+      entry.status.error !== null &&
+      entry.status.error.kind !== 'RATE_LIMIT' &&
+      entry.status.error.kind !== 'CREDIT_LIMIT'
+  );
+
+  // The entry check reads EVERY timeframe's summary for the selected asset, so
+  // it answers "does the market agree with the trade I am about to take?" across
+  // the whole board. A timeframe that has not arrived yet is reported as loading
+  // rather than as no data.
   const entryCheck = useMemo(() => {
-    if (!frame) return null;
-    const compasses: EntryCompassInput[] = [
-      { key: 'technical', label: 'Technical indicators', scoreLabel: frame.available ? frame.technical.label : null },
-      { key: 'summary', label: 'Summary', scoreLabel: frame.available ? frame.summary.label : null },
-      { key: 'orderFlow', label: 'Order flow', scoreLabel: frame.orderFlow?.gauge.label ?? null },
-    ];
-    return checkEntry(entryDirection, compasses, DEFAULT_COMPASS_CONFIG);
-  }, [frame, entryDirection]);
-
-  // The chip row is filled only from timeframes already loaded this session.
-  // An unloaded timeframe is reported as not loaded and is never fetched here.
-  const chips: EntryChip[] = useMemo(() => {
     const byTimeframe = new Map(stored.map(entry => [entry.timeframe, entry]));
-    return TIMEFRAMES.map(timeframe => {
+    const readings: EntryTimeframeInput[] = TIMEFRAMES.map(timeframe => {
+      const status = feed.timeframeStatus[timeframe];
       const entry = byTimeframe.get(timeframe);
+      const loading =
+        !entry && (status?.state === 'IDLE' || status?.state === 'LOADING' || status?.state === 'WAITING_FOR_CREDITS');
       return {
         timeframe,
-        scoreLabel: entry?.reading.available ? entry.reading.summary.label : null,
-        updatedAt: entry?.updatedAt ?? null,
+        label: entry?.reading.summary.label ?? 'NEUTRAL',
+        score: entry?.reading.summary.score ?? 0,
+        available: entry?.reading.available ?? false,
+        loading,
       };
     });
-  }, [stored]);
+    return checkEntry(entryDirection, readings, DEFAULT_COMPASS_CONFIG);
+  }, [stored, entryDirection, feed.timeframeStatus]);
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
@@ -267,7 +284,7 @@ const Index: React.FC = () => {
             <div className="flex flex-wrap items-center gap-3">
               <TimeframeButtons selected={selectedTimeframe} onSelect={setSelectedTimeframe} busy={busy} />
               <span className="text-micro text-white/35">
-                {busy ? 'Loading timeframe…' : `One timeframe fetched at a time · ${timeframeLabel}`}
+                {busy ? 'Loading…' : `${timeframeLabel} · ${loadedCount}/7 timeframes loaded`}
               </span>
             </div>
           </div>
@@ -311,6 +328,31 @@ const Index: React.FC = () => {
             <p className="text-body text-white/70">{feed.error.message}</p>
           </Section>
         )}
+
+        {/* ── Entry check, full width, directly above the compasses ──────
+            Always visible: the LONG / SHORT switch never disappears, and a
+            timeframe still loading reads "Loading" rather than "No data". */}
+        <Section title="Entry check" subtitle={`${instrument.id} · does the market agree?`} dense>
+          <EntryCheckPanel
+            result={entryCheck}
+            direction={entryDirection}
+            onDirectionChange={setEntryDirection}
+          />
+
+          {failedTimeframes.length > 0 && (
+            <div className="mt-3 flex flex-wrap items-baseline gap-x-2 gap-y-1 border-t border-white/[0.06] pt-3">
+              <span className="text-micro font-semibold uppercase tracking-wider text-amber-400">
+                Timeframes unavailable
+              </span>
+              {failedTimeframes.map(({ timeframe, status }) => (
+                <span key={timeframe} className="text-label text-white/55">
+                  <span className="font-mono text-white/70">{TIMEFRAME_LABELS[timeframe]}</span>{' '}
+                  — {ERROR_TITLES[status!.error!.kind] ?? ERROR_TITLES.UNKNOWN}
+                </span>
+              ))}
+            </div>
+          )}
+        </Section>
 
         {/* ── Three compasses in one row ───────────────────────────────── */}
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -397,47 +439,20 @@ const Index: React.FC = () => {
           />
         </div>
 
-        {/* ── Below the compasses: the merged table and the entry check ──
-            The table takes two thirds and the entry check one third. They sit
-            side by side rather than stacked because the whole screen has to fit
-            1920x1080 without scrolling, and this is the arrangement that keeps
-            every row of the table and the full entry check on screen at once. */}
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-          <div className="lg:col-span-2">
-            <Section title="Technical indicators" subtitle={`${instrument.id} · ${timeframeLabel}`} dense>
-              {frame?.available ? (
-                <TechnicalTable details={frame.technical.details} />
-              ) : (
-                <p className="py-2 text-body italic text-white/45">
-                  {feed.isLoading
-                    ? 'Loading candles…'
-                    : frame
-                      ? `Not enough candles on ${timeframeLabel} to compute a reading.`
-                      : 'No data for this timeframe.'}
-                </p>
-              )}
-            </Section>
-          </div>
-
-          <div>
-            <Section title="Entry check" subtitle={`${instrument.id} · ${timeframeLabel}`} dense>
-              {entryCheck ? (
-                <EntryCheckPanel
-                  result={entryCheck}
-                  direction={entryDirection}
-                  onDirectionChange={setEntryDirection}
-                  chips={chips}
-                  now={now}
-                  timeframeLabel={timeframeLabel}
-                />
-              ) : (
-                <p className="py-2 text-body italic text-white/45">
-                  {feed.isLoading ? 'Loading candles…' : 'No reading for this timeframe yet.'}
-                </p>
-              )}
-            </Section>
-          </div>
-        </div>
+        {/* ── The merged table, full width ─────────────────────────────── */}
+        <Section title="Technical indicators" subtitle={`${instrument.id} · ${timeframeLabel}`} dense>
+          {frame?.available ? (
+            <TechnicalTable details={frame.technical.details} />
+          ) : (
+            <p className="py-2 text-body italic text-white/45">
+              {feed.isLoading
+                ? 'Loading candles…'
+                : frame
+                  ? `Not enough candles on ${timeframeLabel} to compute a reading.`
+                  : 'No data for this timeframe.'}
+            </p>
+          )}
+        </Section>
 
       </main>
 

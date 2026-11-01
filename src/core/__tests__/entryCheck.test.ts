@@ -2,48 +2,51 @@
 // ENTRY CHECK TESTS
 // ============================================
 // The entry check is the feature the trader actually acts on, so its verdicts
-// are pinned down here: how the three compasses of the selected timeframe are
-// counted, the weighted share, and the three verdicts including the boundaries.
+// are pinned down here: alignment counting, the higher-timeframe warning, and
+// the three verdicts, including the boundaries.
 //
-// The invariant that matters most: a compass with NO reading (the order-flow card
-// when no source is configured) is reported as unavailable and excluded. It must
-// never be counted as agreement, or a missing source would look like support.
+// Two invariants matter most:
+//   * a higher timeframe that fights the trade stops the verdict being ALIGNED
+//   * a timeframe whose data has not arrived is LOADING, never "no data", and it
+//     is excluded from the vote exactly like an unavailable one
 
 import { describe, expect, it } from 'vitest';
-import { checkEntry, verdictWord, type EntryCompassInput } from '../entryCheck';
+import { checkEntry, type EntryTimeframeInput } from '../entryCheck';
 import { DEFAULT_COMPASS_CONFIG, mergeCompassConfig } from '../../config/compass';
-import type { ScoreLabel } from '../types';
+import type { ScoreLabel, Timeframe } from '../types';
 
 const CONFIG = DEFAULT_COMPASS_CONFIG;
 
-/** The three compasses with the given labels. */
-function compasses(technical: ScoreLabel | null, summary: ScoreLabel | null, orderFlow: ScoreLabel | null): EntryCompassInput[] {
-  return [
-    { key: 'technical', label: 'Technical indicators', scoreLabel: technical },
-    { key: 'summary', label: 'Summary', scoreLabel: summary },
-    { key: 'orderFlow', label: 'Order flow', scoreLabel: orderFlow },
-  ];
+function frame(timeframe: Timeframe, label: ScoreLabel, available = true, loading = false): EntryTimeframeInput {
+  const score = label === 'STRONG_BUY' ? 90 : label === 'BUY' ? 40 : label === 'SELL' ? -40 : label === 'STRONG_SELL' ? -90 : 0;
+  return { timeframe, label, score, available, loading };
+}
+
+/** All seven timeframes reading the same way. */
+function allFrames(label: ScoreLabel): EntryTimeframeInput[] {
+  return (['1m', '5m', '15m', '30m', '1h', '4h', '1D'] as Timeframe[]).map(tf => frame(tf, label));
 }
 
 describe('checkEntry — agreement counting', () => {
-  it('counts every bullish compass as agreeing with a LONG', () => {
-    const result = checkEntry('LONG', compasses('BUY', 'BUY', 'BUY'), CONFIG);
-    expect(result.aligned).toBe(3);
+  it('counts every bullish timeframe as agreeing with a LONG', () => {
+    const result = checkEntry('LONG', allFrames('BUY'), CONFIG);
+    expect(result.aligned).toBe(7);
     expect(result.opposing).toBe(0);
     expect(result.neutral).toBe(0);
-    expect(result.total).toBe(3);
+    expect(result.total).toBe(7);
     expect(result.share).toBe(1);
   });
 
-  it('counts every bullish compass as opposing a SHORT', () => {
-    const result = checkEntry('SHORT', compasses('BUY', 'BUY', 'BUY'), CONFIG);
+  it('counts every bullish timeframe as opposing a SHORT', () => {
+    const result = checkEntry('SHORT', allFrames('BUY'), CONFIG);
     expect(result.aligned).toBe(0);
-    expect(result.opposing).toBe(3);
+    expect(result.opposing).toBe(7);
     expect(result.share).toBe(0);
   });
 
-  it('treats a neutral compass as neither agreement nor opposition', () => {
-    const result = checkEntry('LONG', compasses('NEUTRAL', 'BUY', 'BUY'), CONFIG);
+  it('treats a neutral timeframe as neither agreement nor opposition', () => {
+    const readings = [frame('1m', 'NEUTRAL'), frame('15m', 'BUY'), frame('1h', 'BUY')];
+    const result = checkEntry('LONG', readings, CONFIG);
     expect(result.aligned).toBe(2);
     expect(result.opposing).toBe(0);
     expect(result.neutral).toBe(1);
@@ -51,106 +54,144 @@ describe('checkEntry — agreement counting', () => {
     expect(result.share).toBe(1);
   });
 
-  it('excludes a compass with no reading instead of counting it as agreement', () => {
-    const result = checkEntry('LONG', compasses('BUY', 'BUY', null), CONFIG);
+  it('ignores an unavailable timeframe entirely', () => {
+    const readings = [frame('1m', 'BUY', false), frame('1h', 'BUY')];
+    const result = checkEntry('LONG', readings, CONFIG);
     expect(result.unavailable).toBe(1);
-    expect(result.total).toBe(2);
-    expect(result.aligned).toBe(2);
-    // Two of two directional compasses agree, so the share is still 1.
-    expect(result.share).toBe(1);
+    expect(result.total).toBe(1);
+    expect(result.aligned).toBe(1);
   });
 
-  it('names the disagreeing compasses', () => {
-    const result = checkEntry('LONG', compasses('BUY', 'SELL', null), CONFIG);
-    expect(result.disagreeing.map(compass => compass.key)).toEqual(['summary']);
+  it('reports a still-loading timeframe as LOADING and excludes it', () => {
+    const readings = [frame('1m', 'NEUTRAL', false, true), frame('1h', 'BUY')];
+    const result = checkEntry('LONG', readings, CONFIG);
+    expect(result.loading).toBe(1);
+    expect(result.unavailable).toBe(0);
+    expect(result.aligned).toBe(1);
+    expect(result.timeframes.find(f => f.timeframe === '1m')?.stance).toBe('LOADING');
+  });
+
+  it('names the disagreeing timeframes', () => {
+    const readings = [frame('1m', 'BUY'), frame('15m', 'BUY'), frame('1h', 'SELL'), frame('4h', 'SELL')];
+    const result = checkEntry('LONG', readings, CONFIG);
+    expect(result.disagreeing.map(f => f.timeframe)).toEqual(['1h', '4h']);
   });
 });
 
 describe('checkEntry — verdicts', () => {
-  it('reports ALIGNED when the weighted majority agrees', () => {
-    expect(checkEntry('LONG', compasses('BUY', 'BUY', 'BUY'), CONFIG).verdict).toBe('ALIGNED');
+  it('reports ALIGNED when the majority agrees and no higher timeframe fights', () => {
+    const result = checkEntry('LONG', allFrames('BUY'), CONFIG);
+    expect(result.verdict).toBe('ALIGNED');
   });
 
-  it('reports ALIGNED for a strong short when everything is bearish', () => {
-    expect(checkEntry('SHORT', compasses('STRONG_SELL', 'STRONG_SELL', 'STRONG_SELL'), CONFIG).verdict).toBe('ALIGNED');
+  it('reports ALIGNED for a strong short when the market is bearish', () => {
+    const result = checkEntry('SHORT', allFrames('STRONG_SELL'), CONFIG);
+    expect(result.verdict).toBe('ALIGNED');
   });
 
   it('reports AGAINST when the weighted majority opposes the direction', () => {
-    const result = checkEntry('LONG', compasses('SELL', 'SELL', 'BUY'), CONFIG);
+    const readings = [frame('1m', 'BUY'), frame('5m', 'SELL'), frame('15m', 'SELL'), frame('1h', 'SELL')];
+    const result = checkEntry('LONG', readings, CONFIG);
     expect(result.verdict).toBe('AGAINST');
   });
 
-  it('reports AGAINST when only a minority agrees', () => {
-    // Only the technical compass agrees, and it is the lightest of the three:
-    // 1.0 vs summary 1.4 + order flow 1.0 = 2.4 -> share 0.294.
-    const result = checkEntry('LONG', compasses('BUY', 'SELL', 'SELL'), CONFIG);
-    expect(result.share).toBeCloseTo(1 / 3.4, 3);
-    expect(result.verdict).toBe('AGAINST');
+  it('never reports ALIGNED when a higher timeframe disagrees', () => {
+    // Six timeframes agree, but the 1D fights the trade. That is exactly the
+    // case the higher-timeframe rule exists to catch.
+    const readings: EntryTimeframeInput[] = [
+      frame('1m', 'STRONG_BUY'),
+      frame('5m', 'STRONG_BUY'),
+      frame('15m', 'STRONG_BUY'),
+      frame('30m', 'STRONG_BUY'),
+      frame('1h', 'STRONG_BUY'),
+      frame('4h', 'STRONG_BUY'),
+      frame('1D', 'STRONG_SELL'),
+    ];
+    const result = checkEntry('LONG', readings, CONFIG);
+    expect(result.verdict).not.toBe('ALIGNED');
+    expect(result.verdict).toBe('PARTIAL');
+    expect(result.higherTimeframeWarning).toBe(true);
+    expect(result.higherConflicts.map(f => f.timeframe)).toEqual(['1D']);
   });
 
-  it('reports MIXED when the directional vote is split', () => {
-    // Order flow is absent, so technical (1.0) agrees and summary (1.4)
-    // disagrees: share 1.0 / 2.4 = 0.4166 — above againstShare, below
-    // alignedShare.
-    const result = checkEntry('LONG', compasses('BUY', 'SELL', null), CONFIG);
-    expect(result.share).toBeCloseTo(1 / 2.4, 3);
-    expect(result.verdict).toBe('MIXED');
+  it('reports PARTIAL when the majority is only marginal', () => {
+    // 1m (0.2) + 5m (0.6) agree = 0.8; 15m (1.0) opposes. Share 0.44 sits
+    // between againstShare (0.4) and alignedShare (0.6), and no higher
+    // timeframe is involved, so this is a clean PARTIAL.
+    const readings = [frame('1m', 'BUY'), frame('5m', 'BUY'), frame('15m', 'SELL')];
+    const result = checkEntry('LONG', readings, CONFIG);
+    expect(result.share).toBeCloseTo(0.444, 2);
+    expect(result.higherConflicts).toHaveLength(0);
+    expect(result.verdict).toBe('PARTIAL');
   });
 
-  it('reports MIXED when nothing has taken a side', () => {
-    const result = checkEntry('LONG', compasses('NEUTRAL', 'NEUTRAL', 'NEUTRAL'), CONFIG);
-    expect(result.verdict).toBe('MIXED');
+  it('reports PARTIAL when nothing has taken a side', () => {
+    const result = checkEntry('LONG', allFrames('NEUTRAL'), CONFIG);
+    expect(result.verdict).toBe('PARTIAL');
     expect(result.share).toBe(0);
   });
 
-  it('never reports ALIGNED when the only reading disagrees', () => {
-    const result = checkEntry('LONG', compasses(null, 'STRONG_SELL', null), CONFIG);
-    expect(result.verdict).toBe('AGAINST');
+  it('reports PARTIAL while every timeframe is still loading', () => {
+    const readings = (['1m', '5m', '15m', '30m', '1h', '4h', '1D'] as Timeframe[]).map(tf =>
+      frame(tf, 'NEUTRAL', false, true)
+    );
+    const result = checkEntry('LONG', readings, CONFIG);
+    expect(result.verdict).toBe('PARTIAL');
+    expect(result.loading).toBe(7);
+    expect(result.message).toMatch(/waiting on/i);
   });
 
-  it('does not let a missing order-flow source turn a split read into agreement', () => {
-    // With flow absent, one agree and one disagree is a split, not a win.
-    const result = checkEntry('LONG', compasses('STRONG_BUY', 'STRONG_SELL', null), CONFIG);
-    expect(result.unavailable).toBe(1);
-    expect(result.verdict).not.toBe('ALIGNED');
+  it('allows ALIGNED to be suppressed by the higher-timeframe rule alone', () => {
+    const strict = mergeCompassConfig(CONFIG, {
+      entryCheck: { ...CONFIG.entryCheck, warnOnHigherTimeframeDisagreement: false },
+    });
+    const readings: EntryTimeframeInput[] = [
+      frame('1m', 'STRONG_BUY'),
+      frame('5m', 'STRONG_BUY'),
+      frame('15m', 'STRONG_BUY'),
+      frame('30m', 'STRONG_BUY'),
+      frame('1h', 'STRONG_BUY'),
+      frame('4h', 'STRONG_BUY'),
+      frame('1D', 'STRONG_SELL'),
+    ];
+    // With the rule off, the majority alone decides.
+    expect(checkEntry('LONG', readings, strict).verdict).toBe('ALIGNED');
+    // With the rule on (the default), the same input cannot be ALIGNED.
+    expect(checkEntry('LONG', readings, CONFIG).verdict).toBe('PARTIAL');
   });
 });
 
 describe('checkEntry — weights and configuration', () => {
-  it('weights the share by the configured compass weights, not the raw count', () => {
-    // The heavy summary disagrees while the two lighter compasses agree:
-    // 1.0 + 1.0 = 2.0 against 1.4 -> share 0.588, just under alignedShare.
-    const result = checkEntry('LONG', compasses('BUY', 'SELL', 'BUY'), CONFIG);
-    expect(result.share).toBeCloseTo(2 / 3.4, 3);
-    expect(result.verdict).toBe('MIXED');
+  it('weights the share by the configured timeframe weights, not the raw count', () => {
+    // One heavy 1D against three light intraday timeframes: the daily dominates
+    // the weighted share even though it is outnumbered.
+    const readings = [frame('1m', 'SELL'), frame('5m', 'SELL'), frame('15m', 'SELL'), frame('1D', 'BUY')];
+    const result = checkEntry('LONG', readings, CONFIG);
+    // 1D weight 2.0 vs 1m+5m+15m = 0.2+0.6+1.0 = 1.8, so the daily wins.
+    expect(result.share).toBeGreaterThan(0.5);
+    expect(result.verdict).toBe('PARTIAL');
   });
 
-  it('lets a custom weight table flip the verdict', () => {
-    const heavySummary = mergeCompassConfig(CONFIG, {
-      entryCheck: { ...CONFIG.entryCheck, compassWeights: { technical: 1, summary: 9, orderFlow: 1 } },
+  it('respects a custom higher-timeframe set', () => {
+    const custom = mergeCompassConfig(CONFIG, {
+      entryCheck: { ...CONFIG.entryCheck, higherTimeframes: ['4h', '1D'] },
     });
-    // The summary now dominates, so its disagreement outweighs the other two.
-    expect(checkEntry('LONG', compasses('BUY', 'SELL', 'BUY'), heavySummary).verdict).toBe('AGAINST');
+    const readings = [frame('1h', 'SELL'), frame('4h', 'BUY'), frame('1D', 'BUY'), frame('1m', 'BUY')];
+    const result = checkEntry('LONG', readings, custom);
+    // 1h is no longer "higher", so its disagreement does not trigger the rule.
+    expect(result.higherConflicts).toHaveLength(0);
+    expect(result.higherTimeframeWarning).toBe(false);
   });
 
-  it('marks which compasses are unavailable', () => {
-    const result = checkEntry('LONG', compasses('BUY', null, null), CONFIG);
-    const unavailable = result.compasses.filter(compass => compass.stance === 'UNAVAILABLE').map(c => c.key);
-    expect(unavailable).toEqual(['summary', 'orderFlow']);
+  it('marks which timeframes count as higher', () => {
+    const result = checkEntry('LONG', allFrames('BUY'), CONFIG);
+    const higher = result.timeframes.filter(f => f.higher).map(f => f.timeframe);
+    expect(higher).toEqual(['1h', '4h', '1D']);
   });
 
   it('produces a plain-language message for each verdict', () => {
-    expect(checkEntry('LONG', compasses('BUY', 'BUY', 'BUY'), CONFIG).message).toMatch(/back the long setup/i);
-    expect(checkEntry('SHORT', compasses('BUY', 'BUY', 'BUY'), CONFIG).message).toMatch(/oppose this short/i);
-    expect(checkEntry('LONG', compasses('NEUTRAL', 'NEUTRAL', null), CONFIG).message).toMatch(/no compass has taken a side/i);
-    expect(checkEntry('LONG', compasses('BUY', 'SELL', null), CONFIG).message).toMatch(/mixed/i);
-  });
-});
-
-describe('verdictWord', () => {
-  it('renders each verdict in words', () => {
-    expect(verdictWord('ALIGNED')).toBe('Aligned');
-    expect(verdictWord('MIXED')).toBe('Mixed');
-    expect(verdictWord('AGAINST')).toBe('Against');
+    expect(checkEntry('LONG', allFrames('BUY'), CONFIG).message).toMatch(/back the long setup/i);
+    expect(checkEntry('SHORT', allFrames('BUY'), CONFIG).message).toMatch(/oppose this short/i);
+    expect(checkEntry('LONG', allFrames('NEUTRAL'), CONFIG).message).toMatch(/no timeframe has taken a side/i);
   });
 });

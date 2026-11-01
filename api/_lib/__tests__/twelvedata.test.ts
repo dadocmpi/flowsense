@@ -9,11 +9,12 @@ import { classifyError, normalizeDatetime, parseTimeSeries, TwelveDataError, TWE
 
 describe('TWELVEDATA_INTERVALS', () => {
   it('maps every app timeframe the UI offers', () => {
-    for (const timeframe of ['5m', '15m', '30m', '1h', '4h', '1D', '1W']) {
+    for (const timeframe of ['1m', '5m', '15m', '30m', '1h', '4h', '1D']) {
       expect(TWELVEDATA_INTERVALS[timeframe]).toBeTruthy();
     }
     expect(TWELVEDATA_INTERVALS['1D']).toBe('1day');
-    expect(TWELVEDATA_INTERVALS['1W']).toBe('1week');
+    // 1W is gone: it was dropped from the UI and the mapping.
+    expect(TWELVEDATA_INTERVALS['1W']).toBeUndefined();
   });
 });
 
@@ -116,6 +117,25 @@ describe('classifyError', () => {
 
   it('falls back to UPSTREAM for anything else', () => {
     expect(classifyError('internal server error')).toBe('UPSTREAM');
+  });
+
+  it('keeps a symbol/plan error out of the rate-limit bucket', () => {
+    // The distinction the UI depends on: a plan problem must NOT retry in a loop.
+    expect(classifyError('symbol is not available on your plan')).toBe('ENTITLEMENT');
+    expect(classifyError('invalid symbol')).toBe('ENTITLEMENT');
+  });
+});
+
+describe('TwelveDataError', () => {
+  it('carries the vendor code and kind', () => {
+    const error = new TwelveDataError('ENTITLEMENT', 'invalid symbol', undefined, 404);
+    expect(error.kind).toBe('ENTITLEMENT');
+    expect(error.vendorCode).toBe(404);
+  });
+
+  it('carries a retry delay for a rate limit', () => {
+    const error = new TwelveDataError('RATE_LIMIT', 'rate limit', 42_000);
+    expect(error.retryAfterMs).toBe(42_000);
   });
 });
 

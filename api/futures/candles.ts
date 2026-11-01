@@ -61,8 +61,15 @@ function errorKindFor(error: unknown): string {
     switch (error.kind) {
       case 'RATE_LIMIT':
         return 'RATE_LIMIT';
+      // Our own meter refused the call; the vendor never saw it. Distinct from a
+      // vendor rate limit so the client waits for the minute rather than showing
+      // a vendor countdown.
+      case 'CREDIT_LIMIT':
+        return 'CREDIT_LIMIT';
       case 'NETWORK':
         return 'NETWORK';
+      // A symbol/plan problem. Reported as its own kind so the client says
+      // "Symbol not available on current plan" and does NOT retry in a loop.
       case 'ENTITLEMENT':
         return 'SYMBOL_NOT_FOUND';
       default:
@@ -74,13 +81,24 @@ function errorKindFor(error: unknown): string {
 
 /** Epoch ms a blocked caller may retry, from the error or the meter itself. */
 function retryAfterMsFor(error: unknown): number | undefined {
-  if (error instanceof TwelveDataError && error.kind === 'RATE_LIMIT') {
+  if (error instanceof TwelveDataError && (error.kind === 'RATE_LIMIT' || error.kind === 'CREDIT_LIMIT')) {
     const fromError = error.retryAfterMs;
     const fromMeter = Math.max(0, meterSnapshot().resetAt - Date.now());
     return Math.max(0, fromError ?? fromMeter);
   }
   if (error instanceof CreditLimitError) return Math.max(0, error.resetAt - Date.now());
   return undefined;
+}
+
+/**
+ * Our own wording for the client. The vendor's raw text stays on the server log
+ * line; the UI shows one of these.
+ */
+function clientMessageFor(kind: string, fallback: string): string {
+  if (kind === 'RATE_LIMIT') return 'Rate limit reached';
+  if (kind === 'CREDIT_LIMIT') return 'Waiting for credits';
+  if (kind === 'SYMBOL_NOT_FOUND') return 'Symbol not available on current plan';
+  return fallback;
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
@@ -151,14 +169,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       roll: { method: rollMethod(), adjustment: rollAdjustment() },
     });
   } catch (error) {
+    const kind = errorKindFor(error);
     const message = error instanceof Error ? error.message : 'Futures request failed';
     const retryAfterMs = retryAfterMsFor(error);
     sendJson(res, 200, {
       ok: false,
       error: {
-        kind: errorKindFor(error),
-        // Never the raw vendor text: the client shows our own rate-limit state.
-        message: errorKindFor(error) === 'RATE_LIMIT' ? 'Rate limit reached' : message,
+        kind,
+        // Never the vendor's raw text: the client shows our own wording for the
+        // rate limit and the symbol/plan case, and the vendor's code and message
+        // are on the server log line instead.
+        message: clientMessageFor(kind, message),
         ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       },
     });

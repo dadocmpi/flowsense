@@ -3,7 +3,7 @@
 // npm run check:symbols
 // ============================================
 // Answers one question: which Twelve Data symbol should FlowSense use for Gold,
-// S&P 500 and Dow on YOUR plan?
+// S&P 500, Dow and Nasdaq on YOUR plan?
 //
 // It probes each instrument's discovery candidates from api/_lib/symbols.ts,
 // makes one small time_series call per candidate, and prints a table showing
@@ -115,6 +115,18 @@ async function symbolSearch(query) {
   return { ok: true, matches: Array.isArray(payload.data) ? payload.data.slice(0, 20) : [] };
 }
 
+/** The environment variable that overrides one asset's symbol. */
+function envVarFor(instrumentId) {
+  return (
+    {
+      GC: 'SYMBOL_GOLD',
+      ES: 'SYMBOL_SP500',
+      YM: 'SYMBOL_DOW',
+      NQ: 'SYMBOL_NASDAQ',
+    }[instrumentId] ?? `SYMBOL_${instrumentId}`
+  );
+}
+
 function pad(text, width) {
   const value = String(text ?? '');
   return value.length >= width ? value : value + ' '.repeat(width - value.length);
@@ -190,11 +202,11 @@ async function main() {
       console.log(`  ${GREEN}→ ${chosen.symbol} works — ${chosen.description}${RESET}${proxyNote}`);
       if (configured && configured.symbol !== chosen.symbol) {
         console.log(`    ${YELLOW}The app is configured for ${configured.symbol}. To use ${chosen.symbol} instead, set`);
-        console.log(`    TWELVE_DATA_SYMBOL_${instrumentId}=${chosen.symbol} in the deployment.${RESET}`);
+        console.log(`    ${envVarFor(instrumentId)}=${chosen.symbol} in the deployment.${RESET}`);
       }
     } else {
       console.log(
-        `  ${RED}→ no candidate worked.${RESET} Set TWELVE_DATA_SYMBOL_${instrumentId}=<symbol> to pin one manually,`
+        `  ${RED}→ no candidate worked.${RESET} Set ${envVarFor(instrumentId)}=<symbol> to pin one manually,`
       );
       console.log(`    or find one with: npm run check:symbols -- --search ${instrumentId}`);
     }
@@ -220,7 +232,7 @@ async function main() {
   }
 
   console.log(
-    `${DIM}Next: set TWELVE_DATA_API_KEY in Vercel (server-side) and deploy. The app requests only the\nconfigured symbol; use TWELVE_DATA_SYMBOL_<ID> to change it to one that works on your plan.${RESET}\n`
+    `${DIM}Next: set TWELVE_DATA_API_KEY in Vercel (server-side) and deploy. The app requests only the\nconfigured symbol; use SYMBOL_GOLD / SYMBOL_SP500 / SYMBOL_DOW / SYMBOL_NASDAQ to change it.${RESET}\n`
   );
 }
 

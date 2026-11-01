@@ -41,30 +41,32 @@ describe('loadCandles', () => {
     clearServerCaches();
     resetCreditMeter();
     vi.restoreAllMocks();
-    delete process.env.TWELVE_DATA_SYMBOL_GC;
-    delete process.env.TWELVE_DATA_SYMBOL_ES;
-    delete process.env.TWELVE_DATA_SYMBOL_YM;
+    delete process.env.SYMBOL_GOLD;
+    delete process.env.SYMBOL_SP500;
+    delete process.env.SYMBOL_DOW;
+    delete process.env.SYMBOL_NASDAQ;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete process.env.TWELVE_DATA_SYMBOL_GC;
-    delete process.env.TWELVE_DATA_SYMBOL_ES;
-    delete process.env.TWELVE_DATA_SYMBOL_YM;
+    delete process.env.SYMBOL_GOLD;
+    delete process.env.SYMBOL_SP500;
+    delete process.env.SYMBOL_DOW;
+    delete process.env.SYMBOL_NASDAQ;
   });
 
   it('requests the one configured symbol and never probes another', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {
       calls.push(new URL(url).searchParams.get('symbol') ?? '');
-      return jsonResponse(okPayload('ES1!', ['520.25', '521.5']));
+      return jsonResponse(okPayload('SPY', ['520.25', '521.5']));
     });
 
     const result = await loadCandles({ instrumentId: 'ES', timeframe: '1D', limit: 300, apiKey: 'key' });
 
-    expect(calls).toEqual(['ES1!']);
-    expect(result.resolved.candidate.symbol).toBe('ES1!');
-    expect(result.resolved.candidate.kind).toBe('futures');
+    expect(calls).toEqual(['SPY']);
+    expect(result.resolved.candidate.symbol).toBe('SPY');
+    expect(result.resolved.candidate.kind).toBe('proxy');
     expect(result.candles.map(c => c.close)).toEqual([520.25, 521.5]);
   });
 
@@ -79,7 +81,7 @@ describe('loadCandles', () => {
       kind: 'ENTITLEMENT',
     });
     // Exactly one attempt: no fallback candidate was tried.
-    expect(calls).toEqual(['GC1!']);
+    expect(calls).toEqual(['XAU/USD']);
   });
 
   it('stops on a rate limit and reports the retry window', async () => {
@@ -94,7 +96,7 @@ describe('loadCandles', () => {
     expect(error).toBeInstanceOf(TwelveDataError);
     expect((error as TwelveDataError).kind).toBe('RATE_LIMIT');
     expect((error as TwelveDataError).retryAfterMs).toBeGreaterThan(0);
-    expect(calls).toEqual(['YM1!']);
+    expect(calls).toEqual(['DIA']);
   });
 
   it('caches a payload so a second call makes no vendor request', async () => {
@@ -133,14 +135,14 @@ describe('loadCandles', () => {
 
   it('reports the configured symbol before any request has been made', () => {
     const known = knownResolution('GC');
-    expect(known?.candidate.symbol).toBe('GC1!');
-    expect(known?.candidate.kind).toBe('futures');
+    expect(known?.candidate.symbol).toBe('XAU/USD');
+    expect(known?.candidate.kind).toBe('proxy');
   });
 
   it('reports an environment override in the resolution', () => {
-    process.env.TWELVE_DATA_SYMBOL_ES = 'SPY';
+    process.env.SYMBOL_SP500 = 'IVV';
     const known = knownResolution('ES');
-    expect(known?.candidate.symbol).toBe('SPY');
+    expect(known?.candidate.symbol).toBe('IVV');
     expect(known?.candidate.kind).toBe('proxy');
   });
 
@@ -155,13 +157,28 @@ describe('loadCandles', () => {
       return jsonResponse(okPayload(new URL(url).searchParams.get('symbol') ?? '', ['100']));
     });
 
-    // The default timeframe, one load per asset: three assets, three credits.
-    for (const instrumentId of ['GC', 'ES', 'YM']) {
+    // The default timeframe, one load per asset: four assets, four credits.
+    for (const instrumentId of ['GC', 'ES', 'YM', 'NQ']) {
       await loadCandles({ instrumentId, timeframe: '15m', limit: 300, apiKey: 'key' });
     }
 
-    expect(calls).toBe(3);
-    expect(meterSnapshot().used).toBe(3);
+    expect(calls).toBe(4);
+    expect(meterSnapshot().used).toBe(4);
+  });
+
+  it('reads the free-plan default symbol for each asset', async () => {
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      seen.push(new URL(url).searchParams.get('symbol') ?? '');
+      return jsonResponse(okPayload(new URL(url).searchParams.get('symbol') ?? '', ['100']));
+    });
+
+    for (const instrumentId of ['GC', 'ES', 'YM', 'NQ']) {
+      await loadCandles({ instrumentId, timeframe: '1D', limit: 300, apiKey: 'key' });
+    }
+
+    // The continuous contracts are not on the free plan; the proxies are.
+    expect(seen).toEqual(['XAU/USD', 'SPY', 'DIA', 'QQQ']);
   });
 
   it('serves a repeat load from cache, so a reload costs nothing', async () => {
