@@ -7,7 +7,7 @@
 // same score through the same functions in core/scoring, so the label can
 // never disagree with the needle.
 
-import React from 'react';
+import React, { useId } from 'react';
 import type { GaugeReading } from '../../core/types';
 import { labelShort, labelTextColor, scoreColor } from './format';
 import { cn } from '@/lib/utils';
@@ -30,6 +30,9 @@ const SIZES = {
 
 export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size = 'md', showTally = true }) => {
   const heading = title ?? '';
+  // Unique per instance: the three compasses share one page, and a duplicated
+  // gradient id would make them all reference whichever painted last.
+  const gradientId = `gaugeArc-${useId().replace(/:/g, '')}`;
   const dims = SIZES[size];
   const score = Math.max(-100, Math.min(100, gauge.score));
   const angle = (score / 100) * 90; // -90..+90 degrees
@@ -57,7 +60,7 @@ export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size =
         aria-label={`${heading || 'Compass'}: ${labelShort(gauge.label)} (score ${Math.round(score)})`}
       >
         <defs>
-          <linearGradient id={`gaugeArc-${(heading || 'gauge').replace(/\s+/g, '')}`} x1="0" y1="0" x2="1" y2="0">
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
             <stop offset="0%" stopColor="#ef5350" />
             <stop offset="25%" stopColor="#e57373" />
             <stop offset="50%" stopColor="#f59e0b" />
@@ -70,7 +73,7 @@ export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size =
         <path
           d={describeArc(r)}
           fill="none"
-          stroke={`url(#gaugeArc-${(heading || 'gauge').replace(/\s+/g, '')})`}
+          stroke={`url(#${gradientId})`}
           strokeWidth={dims.stroke}
           strokeLinecap="round"
           opacity="0.9"
