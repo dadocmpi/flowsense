@@ -6,14 +6,16 @@
 
 import { describe, expect, it } from 'vitest';
 import { classifyError, normalizeDatetime, parseTimeSeries, TwelveDataError, TWELVEDATA_INTERVALS } from '../twelvedata';
+import { TIMEFRAMES } from '../../../src/core/types';
 
 describe('TWELVEDATA_INTERVALS', () => {
-  it('maps every app timeframe the UI offers', () => {
-    for (const timeframe of ['5m', '15m', '30m', '1h', '4h', '1D', '1W']) {
+  it('maps every timeframe the UI offers, and nothing else', () => {
+    for (const timeframe of TIMEFRAMES) {
       expect(TWELVEDATA_INTERVALS[timeframe]).toBeTruthy();
     }
+    expect(Object.keys(TWELVEDATA_INTERVALS).sort()).toEqual([...TIMEFRAMES].sort());
+    expect(TWELVEDATA_INTERVALS['1m']).toBe('1min');
     expect(TWELVEDATA_INTERVALS['1D']).toBe('1day');
-    expect(TWELVEDATA_INTERVALS['1W']).toBe('1week');
   });
 });
 

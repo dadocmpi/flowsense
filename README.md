@@ -1,11 +1,33 @@
 # FlowSense
 
-Multi-timeframe market compass. **Gold futures (GC), S&P 500 futures (ES) and
-Dow Jones futures (YM)** are the instruments this app ships.
+Market compass for **Gold futures (GC), S&P 500 futures (ES) and Dow Jones
+futures (YM)**.
 
 Every number is either a provider response or arithmetic over one. Where a
 figure is not available the app shows an explicit unavailable state — nothing
 is simulated, modelled or back-filled.
+
+## The screen
+
+Top to bottom, and it fits 1920x1080 without scrolling:
+
+1. the top bar — price, feed state, provenance, asset tabs, timeframe buttons
+2. three compasses in one row — Technical indicators, Summary, Order flow
+3. one merged "Technical indicators" table, beside the LONG / SHORT entry check
+
+The timeframe buttons carry the label only — `M1 M5 M15 M30 1H 4H 1D`. No score,
+no signal word and no colour that implies a signal; only the selected one is
+highlighted, and every button is disabled while a request is in flight. Clicking
+one fetches that timeframe's own series and updates the three compasses, the
+table and the entry check together.
+
+Readings are keyed `asset:timeframe`, so switching M15 → 1H → M15 never blends
+the two series and a timeframe loaded earlier keeps its own reading and age.
+
+There is no multi-timeframe confluence grid, no "Timeframe detail" panel and no
+separate "Technical metrics" panel. There is exactly ONE technical table, and it
+holds both the moving averages and the oscillators. Nothing is collapsible:
+every panel renders expanded on load.
 
 ## Instruments
 
@@ -15,34 +37,43 @@ is simulated, modelled or back-filled.
 
 ## Timeframes
 
-`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, shown as `M1`, `M5`, `M15`,
-`M30`, `1H`, `4H`, `1D`, `1W`. Each timeframe is fetched natively from the
-provider rather than aggregated from a single base series, so a 1m seed cannot
-cap how far back the weekly reaches. Only the timeframe being viewed is fetched
-on load — one vendor credit each — and the others load on demand when selected,
-so a page load costs one credit per asset, not eight. The live stream carries
-the 1m bar; the newest bar of the mergeable timeframes (5m through 1D) is
-refreshed from that tail, so a higher timeframe moves with the market between
-fetches instead of freezing.
+`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, shown as `M1`, `M5`, `M15`, `M30`,
+`1H`, `4H`, `1D`. Each timeframe is fetched natively from the provider rather
+than aggregated from a single base series, so a 1m seed cannot cap how far back
+the daily reaches. Only the timeframe being viewed is fetched on load — one
+vendor credit each — and the others load on demand when selected, so a page load
+costs one credit, not seven. Each request asks for 300 candles so EMA 200 is
+valid; a wider window is still one request and so still one credit. The live
+stream carries the 1m bar; the newest bar of the mergeable timeframes (5m
+through 1D) is refreshed from that tail, so a higher timeframe moves with the
+market between fetches instead of freezing.
 
 A merge is refused when the base window does not reach the bucket open. A 1m
 window covers only a few hours, so the current daily bucket is usually only
 partly observed; rebuilding it would report a high, low and volume for a day
-that has barely started, so the natively fetched bar is kept instead. Weekly
-bars are never merged, because the epoch-based bucket boundary is not the
-exchange's Monday open.
+that has barely started, so the natively fetched bar is kept instead.
 
 ## The compass
 
-Three gauges per timeframe, in the style of a technical summary:
+Three compasses, in one row, for the SELECTED timeframe:
 
-1. **Moving averages** — SMA and EMA over 5, 10, 20, 50, 100, 200. Each votes
-   Buy above the average, Sell below, Neutral inside a tolerance band.
-2. **Technical indicators** — RSI(14), Stochastic(9,6), Stochastic RSI(14),
-   MACD(12,26,9), ADX(14) with +DI/-DI, Williams %R(14), CCI(14), ATR(14),
-   Highs/Lows(14), Ultimate Oscillator, ROC and Bull/Bear Power(13), each with a
-   standard threshold vote.
-3. **Summary** — the two blocks combined into a score from −100 to +100.
+1. **Technical indicators** (left) — one gauge over the moving averages (SMA and
+   EMA over 5, 10, 20, 50, 100, 200) AND the oscillators: RSI(14), Stochastic
+   (9,6), Stochastic RSI(14), MACD(12,26,9), ADX(14) with +DI/-DI, Williams %R
+   (14), CCI(14), Bollinger Bands(20,2), ATR(14) and ATR against its own
+   average, VWAP, Highs/Lows(14), Ultimate Oscillator, ROC(12) and Bull/Bear
+   Power(13). Every one is computed locally from the candles. Each moving
+   average votes Buy above it, Sell below, Neutral inside a tolerance band.
+2. **Summary** (centre) — the technical gauge blended with order flow into one
+   overall bias, plus last price, change and how old the data is ("updated 42s
+   ago"). With no order-flow source configured it IS the technical reading,
+   rather than a blend against a stand-in zero.
+3. **Order flow** (right) — delta/CVD, order-book imbalance and absorption. That
+   data does not exist in a candle feed, so it comes from a provider or the card
+   says there is none.
+
+Each card carries its own key numbers, so the figures are read on the compass
+itself.
 
 Score to label mapping, applied everywhere and asserted by tests:
 
@@ -61,52 +92,37 @@ never read as Sell.
 
 All weights live in one file: `src/config/compass.ts`.
 
-- `indicatorWeights` — per-indicator weight inside the indicator gauge.
-- `maWeights` — per-period weight inside the moving-average gauge.
-- `gaugeBlend` — how the MA block and the indicator block combine into the
-  summary.
-- `timeframeWeights` — how much each timeframe counts in the confluence bias
-  and in the entry check. The trend timeframes (1H, 4H, 1D) carry the most
-  weight by default; M1 and M5 are deliberately light and the weekly is a slow
-  confirmation.
+- `indicatorWeights` — per-indicator weight inside the oscillator block.
+- `maWeights` — per-period weight inside the moving-average block.
+- `technicalBlend` — how the MA block and the oscillator block combine into the
+  left "Technical indicators" gauge.
+- `orderFlowBlend` — how the technical gauge and order flow combine into the
+  centre "Summary" gauge. Ignored when no order-flow source is configured.
 - `maTolerancePercent` — the Neutral band around each moving average, as a
   percentage of price.
 - `thresholds` — the score cut-offs behind the five labels.
 - `entryCheck` — the rules behind the LONG / SHORT entry check:
-  `higherTimeframes`, `warnOnHigherTimeframeDisagreement`, `alignedShare` and
-  `againstShare`.
+  `compassWeights`, `alignedShare` and `againstShare`.
 - `session` — `mode` (`RTH` or `FULL`), `timezone`, and the open times.
-
-| Timeframe | Default weight |
-| --- | --- |
-| M1 | 0.2 |
-| M5 | 0.6 |
-| M15 | 1.0 |
-| M30 | 1.2 |
-| 1H | 1.6 |
-| 4H | 1.8 |
-| 1D | 2.0 |
-| 1W | 1.2 |
 
 ## Entry check
 
-The confluence matrix says what the market is doing; the entry check answers
-whether it agrees with the trade you are about to take. Pick LONG or SHORT and
-every timeframe is classified as agreeing, disagreeing or neutral. The verdict
-is **Aligned**, **Partial** or **Against**.
+The compasses say what the market is doing; the entry check answers whether they
+agree with the trade you are about to take. Pick LONG or SHORT and the three
+compasses of the SELECTED timeframe are classified as agreeing, disagreeing or
+neutral. The verdict is **Aligned**, **Mixed** or **Against**.
 
-Agreement is weighted by `timeframeWeights` and measured only across timeframes
-that took a side, so a neutral timeframe neither helps nor hurts. A single
-higher-timeframe disagreement (1H and above by default) stops the verdict being
-Aligned and raises an explicit warning — the case worth knowing about before
-entering. The logic is pure (`src/core/entryCheck.ts`) and covered by
+Agreement is weighted by `compassWeights` and measured only across compasses
+that took a side, so a neutral compass neither helps nor hurts. A compass with
+no reading — order flow with no source configured — is reported as unavailable
+and excluded, so a missing source can never be mistaken for agreement. The logic
+is pure (`src/core/entryCheck.ts`) and covered by
 `src/core/__tests__/entryCheck.test.ts`.
 
-## Confluence matrix
-
-A compact row shows every timeframe's reading at once, plus a confluence
-bias: how many timeframes agree, in which direction, and a weighted score. A
-timeframe with no data is reported as unavailable and does not vote.
+Under the verdict, a chip row shows every timeframe's stored summary reading and
+how old it is. A chip is filled ONLY from a timeframe already loaded in this
+session; the rest read "Not loaded" and are never fetched to fill a chip. That
+is what keeps a page load at one timeframe's worth of credits.
 
 ## Market structure
 
@@ -114,12 +130,6 @@ Per timeframe, a lightweight Smart Money Concepts read: the last break of
 structure (BOS), the last change of character (CHoCH), and whether price sits
 in the premium or discount half of the last swing range. Pure function in
 `src/core/structure.ts`.
-
-## Technical metrics
-
-ATR(14), VWAP, session high/low and the volume point of control. VWAP, the
-range and the POC reset at the session open — `RTH` or `FULL`, selected in
-config.
 
 ## Data providers
 
@@ -152,6 +162,8 @@ the serverless functions under `api/`, never by the browser bundle.
 | `FUTURES_ROLL_METHOD` | no | `frontMonth` | How the continuous series is described. |
 | `FUTURES_ROLL_ADJUSTMENT` | no | `none` | Adjustment across a roll. |
 | `FUTURES_PROVIDER` | no | — | Legacy; setting the key alone selects Twelve Data. |
+| `ORDERFLOW_PROVIDER` | no | — | Order-flow vendor id. Anything other than `none` selects a source. |
+| `ORDERFLOW_API_KEY` | no | — | The order-flow vendor's key, read only by `api/`. |
 
 Until `TWELVE_DATA_API_KEY` is set, futures instruments render a "no data source
 configured" state and no numbers at all. `/api/futures/status` reports whether
@@ -231,6 +243,23 @@ following the front month (a price jump at each roll) and a back-adjusted series
 continuous contract, the fallback proxies are spot or ETF series and carry no
 roll at all — the UI labels them accordingly.
 
+### Order flow is a separate provider
+
+The right-hand compass reads order flow: delta/CVD, order-book imbalance and
+absorption. Twelve Data carries **no** order-flow data — a candle has no
+aggressor side and no order book — so it is never derived from the candle feed.
+
+The shipped adapter is `none`: the card reads "No order flow source configured"
+and draws **no gauge**. It never draws a neutral needle or a `0` in place of a
+missing reading, because a neutral needle looks like a real "neutral market"
+read. With no source, the Summary compass IS the technical reading rather than a
+blend against a stand-in zero.
+
+To connect a vendor, implement `fetchOrderFlowReading` in **`api/_lib/orderflow.ts`**
+— the one file to edit — and set `ORDERFLOW_PROVIDER` and `ORDERFLOW_API_KEY`.
+Nothing else changes: the client (`src/core/providers/orderflow.ts`), the summary
+blend and the entry check already speak that shape. The key stays server-side.
+
 ### Adding another provider
 
 Databento, Polygon, a broker feed and Twelve Data all fit the same shape: they
@@ -263,28 +292,30 @@ report no configured source unless you use `vercel dev`.
 ```
 src/core/indicators.ts      pure indicator math, no I/O
 src/core/votes.ts           per-indicator and per-MA vote logic
-src/core/scoring.ts         gauge building, score → label mapping, confluence
+src/core/scoring.ts         gauge building, score → label mapping, blends
 src/core/structure.ts       swing highs/lows, BOS, CHoCH, premium/discount
 src/core/session.ts         session open resolution, VWAP/POC window
 src/core/metrics.ts         ATR, VWAP, session range, point of control
 src/core/marketHours.ts     is the market still producing bars? (pure)
 src/core/candles.ts         bucketing, resampling, live-tail merge
-src/core/timeframeEngine.ts one timeframe → three gauges + structure + metrics
-src/core/multiTimeframe.ts  every timeframe + the confluence bias
-src/core/entryCheck.ts      does the market agree with a long/short? (pure)
+src/core/timeframeEngine.ts one timeframe → three compasses + structure + metrics
+src/core/entryCheck.ts      do the selected timeframe's compasses agree? (pure)
 src/core/providers/         MarketDataProvider interface + the futures provider
+src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
 src/core/providers/polling.ts   poll cadence and server cache TTLs
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/config/compass.ts       every weight, tolerance and session setting
 src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
-src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
+src/hooks/useTimeframeReadings.ts     one reading per (asset, timeframe), kept apart
 api/_lib/creditMeter.ts    the per-minute credit meter that gates every vendor call
 api/_lib/symbols.ts         the one place the single symbol per instrument is mapped
 api/_lib/twelvedata.ts      vendor adapter: meter, request, parse, classify errors
 api/_lib/candleCache.ts     short-lived candle cache (one vendor call per TTL)
+api/_lib/orderflow.ts       THE file to edit to connect an order-flow vendor
 api/futures/candles.ts      server-side futures candle proxy
 api/futures/status.ts       whether a key is configured, what is read, and meter state
 api/futures/symbols.ts      symbol discovery, used by `npm run check:symbols`
+api/orderflow/reading.ts    whether an order-flow source is configured, and its reading
 scripts/checkSymbols.mjs    the discovery CLI
 ```
 
@@ -295,12 +326,12 @@ npm test
 ```
 
 Covers every indicator against hand-computed values, vote thresholds, the score
-mapping, label/score-sign consistency, MTF confluence, the entry check
-(including the higher-timeframe warning), session VWAP reset, history ordering
-and dedupe, market structure, market-open detection, the poll cadence, the
-vendor adapter (parsing, error classification), the credit meter (limits,
-cold start, vendor-reported usage, rate-limit reset), symbol mapping, the
-single-symbol resolution and cache behaviour, and the WebSocket frame parser.
+mapping, label/score-sign consistency, the per-timeframe engine, the entry check,
+session VWAP reset, live-tail merging, market structure, market-open detection,
+the poll cadence, the vendor adapter (parsing, error classification), the credit
+meter (limits, cold start, vendor-reported usage, rate-limit reset), symbol
+mapping, the single-symbol resolution and cache behaviour, the order-flow
+provider seam, and the WebSocket frame parser.
 
 ## Commands
 

@@ -169,7 +169,9 @@ highlighted, and every button is disabled while a request is in flight.
 
 There is no multi-timeframe confluence grid, no "Timeframe detail" panel and no
 separate "Technical metrics" panel. Do not re-add them. There is exactly ONE
-technical table, holding both the moving averages and the oscillators.
+technical table, holding both the moving averages and the oscillators: the two
+blocks are the left and right halves of a single `<table>`, not two tables side
+by side. `src/components/__tests__/TechnicalTable.test.ts` asserts this.
 
 The top bar holds the price and the asset tabs only. The removed "DATA: LIVE",
 "CANDLES IN" countdown and REFRESH button were obsolete once the feed became
