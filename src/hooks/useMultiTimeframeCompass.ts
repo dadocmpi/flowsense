@@ -7,24 +7,29 @@
 // runs when the base candle series changes (which the provider drives), not on
 // every price tick. The live price is applied separately.
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { computeMultiTimeframeFromSeries, type MultiTimeframeReading } from '../core/multiTimeframe';
-import type { Timeframe } from '../core/types';
+
 import { DEFAULT_COMPASS_CONFIG, type CompassConfig } from '../config/compass';
 import type { InstrumentFeed } from './useInstrumentFeed';
 
 export interface UseMultiTimeframeCompassResult {
   reading: MultiTimeframeReading | null;
-  selected: Timeframe;
-  setSelected: (timeframe: Timeframe) => void;
 }
 
+/**
+ * Runs the pure multi-timeframe engine over whatever the feed has loaded.
+ *
+ * The engine reads every timeframe present in `seriesByTimeframe`; a timeframe
+ * the user has not opened yet is simply absent and reported as unavailable,
+ * rather than triggering a fetch. Loading timeframes is the feed's job, driven by
+ * the selected timeframe, which is what keeps the credit spend at one fetch per
+ * timeframe the user actually looks at.
+ */
 export function useMultiTimeframeCompass(
   feed: InstrumentFeed,
   config: CompassConfig = DEFAULT_COMPASS_CONFIG
 ): UseMultiTimeframeCompassResult {
-  const [selected, setSelected] = useState<Timeframe>('15m');
-
   const reading = useMemo(
     () =>
       Object.keys(feed.seriesByTimeframe).length > 0
@@ -35,5 +40,5 @@ export function useMultiTimeframeCompass(
     [feed.seriesByTimeframe, feed.price, feed.revision, config]
   );
 
-  return { reading, selected, setSelected };
+  return { reading };
 }

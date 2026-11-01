@@ -18,10 +18,12 @@ is simulated, modelled or back-filled.
 `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1D`, `1W`, shown as `M1`, `M5`, `M15`,
 `M30`, `1H`, `4H`, `1D`, `1W`. Each timeframe is fetched natively from the
 provider rather than aggregated from a single base series, so a 1m seed cannot
-cap how far back the weekly reaches. The live stream carries the 1m bar; the
-newest bar of the mergeable timeframes (5m through 1D) is refreshed from that
-tail, so a higher timeframe moves with the market between fetches instead of
-freezing.
+cap how far back the weekly reaches. Only the timeframe being viewed is fetched
+on load — one vendor credit each — and the others load on demand when selected,
+so a page load costs one credit per asset, not eight. The live stream carries
+the 1m bar; the newest bar of the mergeable timeframes (5m through 1D) is
+refreshed from that tail, so a higher timeframe moves with the market between
+fetches instead of freezing.
 
 A merge is refused when the base window does not reach the bucket open. A 1m
 window covers only a few hours, so the current daily bucket is usually only
@@ -143,53 +145,78 @@ the serverless functions under `api/`, never by the browser bundle.
 | --- | --- | --- | --- |
 | `TWELVE_DATA_API_KEY` | yes | — | Server-side credential. The only variable you must set. |
 | `TWELVE_DATA_WS` | no | `true` | Whether the app attempts the vendor price WebSocket. |
-| `TWELVE_DATA_SYMBOL_GC` | no | — | Pin GC to one symbol, skipping the candidate walk. |
-| `TWELVE_DATA_SYMBOL_ES` | no | — | Pin ES to one symbol. |
-| `TWELVE_DATA_SYMBOL_YM` | no | — | Pin YM to one symbol. |
+| `TWELVE_DATA_SYMBOL_GC` | no | `GC1!` | The one symbol GC reads. Set it if your plan lacks futures data. |
+| `TWELVE_DATA_SYMBOL_ES` | no | `ES1!` | The one symbol ES reads. |
+| `TWELVE_DATA_SYMBOL_YM` | no | `YM1!` | The one symbol YM reads. |
+| `TWELVE_DATA_CREDITS_PER_MINUTE` | no | `8` | Per-minute credit ceiling, when the vendor does not report one. |
 | `FUTURES_ROLL_METHOD` | no | `frontMonth` | How the continuous series is described. |
 | `FUTURES_ROLL_ADJUSTMENT` | no | `none` | Adjustment across a roll. |
 | `FUTURES_PROVIDER` | no | — | Legacy; setting the key alone selects Twelve Data. |
 
 Until `TWELVE_DATA_API_KEY` is set, futures instruments render a "no data source
 configured" state and no numbers at all. `/api/futures/status` reports whether
-the key is present and which symbol is resolved for each instrument.
+the key is present, which symbol each instrument is configured to read, and the
+current credit-meter state.
 
 ### Which symbol gets used
 
-Twelve Data entitlement varies by plan, so nothing is hard-coded. Each
-instrument carries an ordered candidate list in `api/_lib/symbols.ts`:
+Twelve Data entitlement varies by plan, but the app does **not** probe for it at
+runtime. Each instrument has exactly ONE configured symbol in
+`api/_lib/symbols.ts`, and a symbol that fails returns an error for that asset
+instead of spending more credits on another attempt:
 
-| Instrument | 1st choice (futures) | 2nd (proxy) | 3rd (proxy) |
-| --- | --- | --- | --- |
-| GC | `GC1!` Gold futures | `XAU/USD` Gold spot | `GLD` ETF |
-| ES | `ES1!` E-mini S&P 500 | `SPX` index | `SPY` ETF |
-| YM | `YM1!` E-mini Dow | `DJI` index | `DIA` ETF |
+| Instrument | Default symbol | Kind |
+| --- | --- | --- |
+| GC | `GC1!` Gold futures | futures |
+| ES | `ES1!` E-mini S&P 500 | futures |
+| YM | `YM1!` E-mini Dow | futures |
 
-The server walks the list, uses the first symbol that returns candles, and
-remembers it. **A proxy is always labelled a proxy** — in the header and in the
-page footer — and never presented as the futures contract.
+A runtime walk used to try `GC1!` → `XAU/USD` → `GLD` and remember the first that
+worked, which cost one credit per candidate: on a plan without futures data a
+single page load could spend three credits per timeframe before it found a proxy.
+The symbol is now a configuration fact. **A proxy is always labelled a proxy** —
+in the header and in the page footer — and never presented as the futures
+contract.
 
-To see what your own plan entitles:
+To find the symbol your own plan entitles, run discovery out of band:
 
 ```
 TWELVE_DATA_API_KEY=... npm run check:symbols
 TWELVE_DATA_API_KEY=... npm run check:symbols -- --search gold
 ```
 
-The first form probes every candidate with one small request and prints a
-table of what works. The second runs a `symbol_search`, which is how you find a
-replacement when every candidate fails; pin it with `TWELVE_DATA_SYMBOL_GC` etc.
+The first form probes the known alternatives with one small request each and
+prints a table of what works; pin the winner with `TWELVE_DATA_SYMBOL_GC` etc.
+The second runs a `symbol_search`. Neither runs inside a request, so neither can
+spend credits the meter did not authorise.
 
 ### API credits
 
-Every indicator is computed locally from candles, so a refresh costs **one**
-request per symbol and timeframe — never one per indicator. Two more levers
-keep the spend down:
+Twelve Data meters credits per minute (8 on the Basic plan) and answers
+`429`/`rate limit` once the minute is spent. Three levers keep the spend down,
+and a server-side meter (`api/_lib/creditMeter.ts`) enforces them:
 
-- The client polls each timeframe at a fraction of its own bar length
-  (`POLL_INTERVAL_MS` in `src/core/providers/polling.ts`).
-- The server caches each `(symbol, timeframe)` payload just under that interval
-  (`SERVER_CACHE_TTL_MS`), so concurrent users share one vendor call.
+- **One timeframe per load.** The page fetches only the timeframe the user is
+  looking at, not all eight. Selecting another fetches that one on demand; a
+  timeframe already loaded is served from memory for free. A full load of the
+  default timeframe is therefore **one credit per asset — three for GC + ES +
+  YM**.
+- **One request per `(symbol, timeframe)` per TTL.** The server caches each
+  payload just under its poll interval, so concurrent users share one vendor
+  call, and the price poll is served as a slice of the payload a bigger request
+  already paid for.
+- **A meter that stops before the ceiling.** Every vendor call is checked
+  against the minute limit before it is made and recorded after it, using the
+  vendor's own `api-credits-used` / `api-credits-left` headers as the source of
+  truth when present. On a rate-limit response the meter adopts the reported
+  usage, marks itself exhausted for the rest of the minute, and refuses every
+  further call until it resets.
+
+A cold serverless instance starts with an empty meter, so it is capped at
+**3 credits in its first 60 seconds** — one timeframe load, not a full sweep —
+until it has proven the vendor is healthy. A blocked fetch is surfaced as
+`Rate limit — retrying in Xs` with the last series marked **Stale**, and retried
+exactly once after the reset. The raw vendor text is never shown.
 
 `PRICE_POLL_INTERVAL_MS` (30s) is the price refresh when no tick feed is in use.
 
@@ -251,11 +278,12 @@ src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/config/compass.ts       every weight, tolerance and session setting
 src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
-api/_lib/symbols.ts         the one place symbols are mapped and candidates ordered
-api/_lib/twelvedata.ts      vendor adapter: request, parse, classify errors
-api/_lib/candleCache.ts     symbol resolution + short-lived candle cache
+api/_lib/creditMeter.ts    the per-minute credit meter that gates every vendor call
+api/_lib/symbols.ts         the one place the single symbol per instrument is mapped
+api/_lib/twelvedata.ts      vendor adapter: meter, request, parse, classify errors
+api/_lib/candleCache.ts     short-lived candle cache (one vendor call per TTL)
 api/futures/candles.ts      server-side futures candle proxy
-api/futures/status.ts       whether a key is configured, and what is resolved
+api/futures/status.ts       whether a key is configured, what is read, and meter state
 api/futures/symbols.ts      symbol discovery, used by `npm run check:symbols`
 scripts/checkSymbols.mjs    the discovery CLI
 ```
@@ -270,8 +298,9 @@ Covers every indicator against hand-computed values, vote thresholds, the score
 mapping, label/score-sign consistency, MTF confluence, the entry check
 (including the higher-timeframe warning), session VWAP reset, history ordering
 and dedupe, market structure, market-open detection, the poll cadence, the
-vendor adapter (parsing, error classification), symbol resolution and fallback,
-and the WebSocket frame parser.
+vendor adapter (parsing, error classification), the credit meter (limits,
+cold start, vendor-reported usage, rate-limit reset), symbol mapping, the
+single-symbol resolution and cache behaviour, and the WebSocket frame parser.
 
 ## Commands
 
@@ -303,8 +332,8 @@ pre-existing type errors above.
 
 ## Streaming
 
-A futures provider serves candles on request, refreshed on a cadence tied to
-the timeframe, plus a polled price when no tick feed is available. Because a
+A futures provider serves candles on request — one timeframe per load, the one
+being viewed — plus a polled price when no tick feed is available. Because a
 polled close is not a tick, the status reads "Delayed (polling)" rather than
 "Live", and a market that has stopped producing bars is labelled "Market
 closed" instead of continuing to present the last reading as current.
@@ -312,4 +341,6 @@ closed" instead of continuing to present the last reading as current.
 When the server exposes a browser-safe price stream, the client uses it and the
 status can reach `LIVE`; otherwise the price is polled over REST. A dropped
 socket triggers capped-backoff reconnect, and the UI shows a reconnecting
-banner instead of presenting stale data as live.
+banner instead of presenting stale data as live. When the credit meter blocks a
+fetch, the header shows "Rate limit — retrying in Xs" and the last series is
+marked `Stale`; the retry fires once, after the reset the server reported.

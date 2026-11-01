@@ -6,6 +6,7 @@ export {
   setFuturesConfigured,
   resolvedSourceFor,
   futuresLiveStreamEnabled,
+  futuresCreditState,
   clearFuturesCaches,
   pollCandles,
 } from './futures';

@@ -40,11 +40,12 @@ src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/config/compass.ts          every weight, tolerance and session setting
 src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
-api/_lib/symbols.ts            the ONE place symbols are mapped + candidates ordered
-api/_lib/twelvedata.ts         vendor adapter: request, parse, classify error kind
-api/_lib/candleCache.ts        symbol resolution + short-lived candle cache
+api/_lib/creditMeter.ts        the per-minute meter that gates EVERY vendor call
+api/_lib/symbols.ts            the ONE place the single symbol per instrument is mapped
+api/_lib/twelvedata.ts         vendor adapter: meter, request, parse, classify error kind
+api/_lib/candleCache.ts        short-lived candle cache (one vendor call per TTL)
 api/futures/candles.ts         server-side futures candle proxy
-api/futures/status.ts          is a key configured, and what symbol resolved
+api/futures/status.ts          is a key configured, what symbol is read, meter state
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
@@ -68,11 +69,29 @@ indicator; the server cache lets concurrent users share that call. Keep those
 two facts true when touching the cadence — they are what keeps the credit spend
 bounded.
 
-A symbol that returns no bars is a real "no bars here", not an error: the
-resolver walks to the next candidate. A rate limit is different and stops the
-walk immediately, because the next candidate would just burn another blocked
-call. A failure that is not an entitlement problem must not be reported as one
-(see `resolveCandidate`).
+A symbol that returns no bars is a real "no bars here", not an error. There is
+no candidate walk: the app requests the ONE configured symbol per instrument
+(`configuredSymbol` in `api/_lib/symbols.ts`) and a failure returns an error for
+that asset rather than spending another credit on a retry. A rate limit stops
+everything until the minute resets. A failure that is not an entitlement problem
+must not be reported as one.
+
+### Every vendor call goes through the credit meter
+
+`api/_lib/creditMeter.ts` is the single gate. `meteredFetch` in
+`api/_lib/twelvedata.ts` checks it before the request and records the vendor's
+own `api-credits-used` / `api-credits-left` headers after it, and logs one line
+per request. Do not add a `fetch` to `api.twelvedata.com` outside that function:
+a call that skips the meter is exactly how the account gets pinned at its
+ceiling. Discovery (`api/futures/symbols.ts`, `npm run check:symbols`) is the
+only code allowed to touch more than one symbol, and it runs out of band, never
+inside a user request.
+
+The meter is per serverless instance and in memory, so a cold instance starts
+empty and is capped at `COLD_START_MAX_CREDITS` (3) for its first minute. A
+rate-limit response marks the meter exhausted for the rest of the wall-clock
+minute. The client shows its own "Rate limit — retrying in Xs" state with the
+last series marked Stale; never surface the vendor's raw text.
 
 ### Streaming, not polling
 
@@ -82,14 +101,20 @@ high-frequency messages accumulate in refs and one coalesced snapshot commits to
 React state every 200 ms, so the compass and price move within a second or two of
 market activity without re-rendering on every tick.
 
-Do not reintroduce a refresh timer, a countdown, or an interval tied to candle
+Do not reintroduce a candle-close refresh timer or an interval tied to candle
 close. A dropped socket triggers the client's capped-backoff reconnect; the UI
-shows a reconnecting banner instead of presenting stale data as live.
+shows a reconnecting banner instead of presenting stale data as live. The one
+timer that is required is the rate-limit retry: it fires exactly once, after the
+reset the server reported, and never in a loop.
 
 ### Timeframes are fetched, not aggregated from one series
 
 Each timeframe is requested from the provider at its own interval, so a 1m seed
-cannot cap how far back the weekly reaches. The live stream carries the 1m bar;
+cannot cap how far back the weekly reaches — but only the SELECTED timeframe is
+fetched on load, one credit each, and the rest load on demand when the user
+selects them. Do not reintroduce a mount-time sweep of every timeframe: eight
+timeframes is eight credits, which alone can spend a small plan's whole minute.
+The live stream carries the 1m bar;
 the newest bar of the mergeable timeframes (5m, 15m, 30m, 1h, 4h, 1D) is
 refreshed from that 1m tail via `mergeLiveTail`, so a higher timeframe moves
 with the market between fetches.
@@ -115,6 +140,11 @@ accordions or any other click-to-reveal wrapper: all data must be visible on
 page load. Put secondary or debug content in its own always-visible section
 instead of hiding it.
 
+The header states the feed's real condition: a rate-limited feed shows our own
+"Rate limit — retrying in Xs" countdown and a Stale badge on the last series.
+Never render the vendor's raw error text, and never leave stale numbers looking
+current.
+
 ## Score and labels
 
 The score runs from -100 to +100 and its label is always derived from the score
@@ -129,6 +159,7 @@ Sell. Every weight, tolerance and session setting lives in
 npm run dev        # :8080
 npm run build
 npm test           # vitest
+npm run check:symbols   # out-of-band symbol discovery (needs a key)
 npx tsc -p tsconfig.app.json --noEmit 2>&1 | grep -v "^src/components/ui/"
 ```
 
@@ -138,6 +169,21 @@ and a bare `tsc --noEmit` check nothing at all. Always pass
 errors (`cmdk`, several `@radix-ui/*` packages) and is not ours to fix, hence the
 grep. `npm run lint` passes with 0 errors; the 6 remaining warnings are all
 `react-refresh` notes in the vendored `src/components/ui/*`.
+
+## Vendor request log
+
+Every Twelve Data request logs one server-side line. Read it to answer "what
+spent the credits?"; `vendorUsed`/`vendorLeft` come from the vendor's own
+headers and are the source of truth.
+
+```
+[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=GC1! timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=ES1! timeframe=15m credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.501Z endpoint=time_series symbol=YM1! timeframe=15m credits=1 status=200 vendorUsed=3 vendorLeft=5 meterUsed=3/8 meter=OK
+```
+
+A blocked call never reaches the vendor and logs `status=BLOCKED` with the
+meter's reason instead.
 
 ## Testing indicator math
 

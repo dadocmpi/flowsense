@@ -5,10 +5,14 @@
 // Answers one question: which Twelve Data symbol should FlowSense use for Gold,
 // S&P 500 and Dow on YOUR plan?
 //
-// It walks each instrument's candidate list from api/_lib/symbols.ts, makes one
-// small time_series call per candidate, and prints a table showing which ones
-// actually returned data. It never invents a result — a candidate that fails is
-// printed with the vendor's own message.
+// It probes each instrument's discovery candidates from api/_lib/symbols.ts,
+// makes one small time_series call per candidate, and prints a table showing
+// which ones actually returned data. It never invents a result — a candidate that
+// fails is printed with the vendor's own message.
+//
+// This is the ONE place that is allowed to try more than one symbol: it runs out
+// of band, on a developer's machine, never inside a user request. The app itself
+// requests only the configured symbol.
 //
 // Usage:
 //   TWELVE_DATA_API_KEY=... npm run check:symbols
@@ -53,7 +57,8 @@ const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
 
 /**
- * Load the candidate lists from the app's own source of truth.
+ * Load the configured symbols and the discovery candidate list from the app's
+ * own source of truth.
  *
  * This script is plain Node and the mapping lives in TypeScript, so the module
  * is bundled on the fly rather than copied. Copying it would let the script and
@@ -72,7 +77,7 @@ async function loadSymbolCatalog() {
       logLevel: 'silent',
     });
     const module = await import(pathToFileURL(outfile).href);
-    return module.INSTRUMENT_SYMBOLS;
+    return { configured: module.INSTRUMENT_SYMBOLS, candidates: module.DISCOVERY_CANDIDATES };
   } finally {
     rmSync(outdir, { recursive: true, force: true });
   }
@@ -126,25 +131,37 @@ async function main() {
   const searchIndex = process.argv.indexOf('--search');
   const searchQuery = searchIndex !== -1 ? process.argv[searchIndex + 1] : null;
 
-  let INSTRUMENTS;
+  let catalog;
   try {
-    INSTRUMENTS = await loadSymbolCatalog();
+    catalog = await loadSymbolCatalog();
   } catch (error) {
     console.error(`${RED}Could not load the symbol catalog:${RESET}`, error);
     process.exitCode = 1;
     return;
   }
 
-  console.log(`\n${BOLD}FlowSense — Twelve Data symbol check${RESET}`);
-  console.log(`${DIM}One 1day request per candidate. A failure is reported, never hidden.${RESET}\n`);
+  // Group the discovery candidates by instrument, in order.
+  const byInstrument = new Map();
+  for (const candidate of catalog.candidates) {
+    const list = byInstrument.get(candidate.instrumentId) ?? [];
+    list.push(candidate);
+    byInstrument.set(candidate.instrumentId, list);
+  }
+  const configuredByInstrument = new Map(catalog.configured.map(entry => [entry.instrumentId, entry.symbol]));
 
-  for (const instrument of INSTRUMENTS) {
-    console.log(`${BOLD}${instrument.instrumentId} — ${instrument.name}${RESET}`);
+  console.log(`\n${BOLD}FlowSense — Twelve Data symbol check${RESET}`);
+  console.log(`${DIM}One 1day request per candidate. A failure is reported, never hidden.${RESET}`);
+  console.log(`${DIM}The app requests only the configured symbol; this probes alternatives to find one.${RESET}\n`);
+
+  for (const [instrumentId, candidates] of byInstrument) {
+    const configured = configuredByInstrument.get(instrumentId);
+    console.log(`${BOLD}${instrumentId} — ${configured?.description ?? instrumentId}${RESET}`);
+    console.log(`${DIM}configured: ${configured?.symbol ?? '—'}${RESET}`);
     console.log(`${DIM}${pad('symbol', 12)}${pad('kind', 9)}${pad('result', 10)}detail${RESET}`);
 
     let chosen = null;
 
-    for (const candidate of instrument.candidates) {
+    for (const candidate of candidates) {
       let result;
       try {
         result = await timeSeries(candidate.symbol);
@@ -170,12 +187,16 @@ async function main() {
         chosen.kind === 'proxy'
           ? ` ${YELLOW}(proxy — not the futures contract; the UI labels it as such)${RESET}`
           : '';
-      console.log(`  ${GREEN}→ using ${chosen.symbol} — ${chosen.description}${RESET}${proxyNote}`);
+      console.log(`  ${GREEN}→ ${chosen.symbol} works — ${chosen.description}${RESET}${proxyNote}`);
+      if (configured && configured.symbol !== chosen.symbol) {
+        console.log(`    ${YELLOW}The app is configured for ${configured.symbol}. To use ${chosen.symbol} instead, set`);
+        console.log(`    TWELVE_DATA_SYMBOL_${instrumentId}=${chosen.symbol} in the deployment.${RESET}`);
+      }
     } else {
       console.log(
-        `  ${RED}→ no candidate worked.${RESET} Set TWELVE_DATA_SYMBOL_${instrument.instrumentId}=<symbol> to pin one manually,`
+        `  ${RED}→ no candidate worked.${RESET} Set TWELVE_DATA_SYMBOL_${instrumentId}=<symbol> to pin one manually,`
       );
-      console.log(`    or find one with: npm run check:symbols -- --search ${instrument.name}`);
+      console.log(`    or find one with: npm run check:symbols -- --search ${instrumentId}`);
     }
     console.log('');
   }
@@ -199,7 +220,7 @@ async function main() {
   }
 
   console.log(
-    `${DIM}Next: set TWELVE_DATA_API_KEY in Vercel (server-side) and deploy. The app resolves the\nsymbol itself on first request; use TWELVE_DATA_SYMBOL_<ID> only to pin a specific one.${RESET}\n`
+    `${DIM}Next: set TWELVE_DATA_API_KEY in Vercel (server-side) and deploy. The app requests only the\nconfigured symbol; use TWELVE_DATA_SYMBOL_<ID> to change it to one that works on your plan.${RESET}\n`
   );
 }
 

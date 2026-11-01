@@ -37,12 +37,20 @@ export type ProviderErrorKind =
 export class ProviderError extends Error {
   kind: ProviderErrorKind;
   status: number;
+  /**
+   * When a rate limit is in force, milliseconds until the vendor resets.
+   *
+   * The UI uses this to show "retrying in Xs" instead of the vendor's raw text,
+   * and to schedule exactly one retry after the reset rather than looping.
+   */
+  retryAfterMs?: number;
 
-  constructor(kind: ProviderErrorKind, message: string, status = 0) {
+  constructor(kind: ProviderErrorKind, message: string, status = 0, retryAfterMs?: number) {
     super(message);
     this.name = 'ProviderError';
     this.kind = kind;
     this.status = status;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -53,7 +61,7 @@ export interface Tick {
   timestamp: number;
 }
 
-export type StreamStatus = 'CONNECTING' | 'LIVE' | 'RECONNECTING' | 'OFFLINE' | 'UNAVAILABLE';
+export type StreamStatus = 'CONNECTING' | 'LIVE' | 'RECONNECTING' | 'OFFLINE' | 'UNAVAILABLE' | 'RATE_LIMITED';
 
 export interface TickHandlers {
   onTick: (tick: Tick) => void;

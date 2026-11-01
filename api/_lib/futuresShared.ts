@@ -69,12 +69,6 @@ export function websocketEnabled(): boolean {
   return raw !== 'false' && raw !== '0' && raw !== 'off';
 }
 
-/** Optional per-instrument symbol override, pinning the first candidate. */
-export function symbolOverride(instrumentId: string): string | null {
-  const value = (process.env[`TWELVE_DATA_SYMBOL_${instrumentId.toUpperCase()}`] ?? '').trim();
-  return value.length > 0 ? value : null;
-}
-
 /**
  * Contract roll handling.
  *

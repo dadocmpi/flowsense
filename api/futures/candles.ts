@@ -6,16 +6,25 @@
 //
 // Query: instrument, timeframe, limit
 //
-// The route resolves the instrument's symbol from the candidate list (futures
-// first, then a proxy), caches the payload briefly so concurrent users share one
-// vendor call, and reports WHICH symbol answered and whether it is a proxy. The
-// client renders that provenance next to the instrument name; a proxy is never
-// presented as the futures contract.
+// The route asks for the instrument's ONE configured symbol (api/_lib/symbols.ts)
+// and caches the payload briefly so concurrent users share one vendor call. It
+// reports WHICH symbol answered and whether it is a proxy. The client renders
+// that provenance next to the instrument name; a proxy is never presented as the
+// futures contract.
+//
+// There is no symbol fallback here. A symbol that fails returns an error for that
+// asset rather than spending more credits trying another — see the symbol
+// mapping's header comment for why.
+//
+// Every vendor call goes through the credit meter, which is why this route never
+// reaches Twelve Data once the minute is spent: it answers with RATE_LIMIT and a
+// `retryAfterMs`, and the client shows "Rate limit — retrying in Xs" with the
+// last cached data marked stale.
 //
 // Response:
 //   { ok: true, candles, source, symbol, interval, symbolKind, symbolLabel,
-//     isProxy, roll }
-//   { ok: false, error: { kind, message } }
+//     isProxy, roll, cached }
+//   { ok: false, error: { kind, message, retryAfterMs? } }
 //
 // `kind` is one of the ProviderErrorKind values the client understands, and
 // NOT_CONFIGURED is distinct from every real failure so the UI can say
@@ -28,16 +37,16 @@ import {
   rollAdjustment,
   rollMethod,
   sendJson,
-  symbolOverride,
   vendorApiKey,
   type ApiRequest,
   type ApiResponse,
 } from '../_lib/futuresShared.js';
-import { loadCandles, type ResolvedSymbol } from '../_lib/candleCache.js';
-import type { Candle, Timeframe } from '../../src/core/types.js';
+import { loadCandles } from '../_lib/candleCache.js';
+import type { Timeframe } from '../../src/core/types.js';
 import { TIMEFRAMES } from '../../src/core/types.js';
-import { fetchTimeSeries, TwelveDataError } from '../_lib/twelvedata.js';
-import { candidatesFor, findCandidate, type SymbolCandidate } from '../_lib/symbols.js';
+import { TwelveDataError } from '../_lib/twelvedata.js';
+import { CreditLimitError, meterSnapshot } from '../_lib/creditMeter.js';
+import { configuredSymbol } from '../_lib/symbols.js';
 
 const MAX_LIMIT = 1000;
 
@@ -61,6 +70,17 @@ function errorKindFor(error: unknown): string {
     }
   }
   return 'UPSTREAM';
+}
+
+/** Epoch ms a blocked caller may retry, from the error or the meter itself. */
+function retryAfterMsFor(error: unknown): number | undefined {
+  if (error instanceof TwelveDataError && error.kind === 'RATE_LIMIT') {
+    const fromError = error.retryAfterMs;
+    const fromMeter = Math.max(0, meterSnapshot().resetAt - Date.now());
+    return Math.max(0, fromError ?? fromMeter);
+  }
+  if (error instanceof CreditLimitError) return Math.max(0, error.resetAt - Date.now());
+  return undefined;
 }
 
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
@@ -94,25 +114,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     return;
   }
 
-  const candidates = candidatesFor(instrumentId);
-  if (candidates.length === 0) {
+  const candidate = configuredSymbol(instrumentId);
+  if (!candidate) {
     sendJson(res, 200, errorBody('UNSUPPORTED_INSTRUMENT', `No symbol mapping for ${instrumentId}`));
     return;
   }
 
-  // An explicit override pins a single symbol and skips the walk, so a
-  // deployment can point at whatever its plan actually entitles.
-  const override = symbolOverride(instrumentId);
-
   try {
-    const { candles, resolved, cached } = override
-      ? await loadPinnedSymbol(override, instrumentId, timeframe, limit, apiKey)
-      : await loadCandles({
-          instrumentId,
-          timeframe,
-          limit: Math.min(Number.isFinite(limit) ? limit : 300, MAX_LIMIT),
-          apiKey,
-        });
+    const { candles, resolved, cached } = await loadCandles({
+      instrumentId,
+      timeframe,
+      limit: Math.min(Number.isFinite(limit) ? limit : 300, MAX_LIMIT),
+      apiKey,
+    });
 
     if (candles.length === 0) {
       sendJson(res, 200, errorBody('SYMBOL_NOT_FOUND', `No candles returned for ${resolved.candidate.symbol}`));
@@ -133,50 +147,20 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       requestedSymbol: resolved.candidate.symbol,
       instrumentType: resolved.instrumentType,
       exchange: resolved.exchange,
-      tried: resolved.tried,
       cached,
       roll: { method: rollMethod(), adjustment: rollAdjustment() },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Futures request failed';
-    sendJson(res, 200, errorBody(errorKindFor(error), message));
+    const retryAfterMs = retryAfterMsFor(error);
+    sendJson(res, 200, {
+      ok: false,
+      error: {
+        kind: errorKindFor(error),
+        // Never the raw vendor text: the client shows our own rate-limit state.
+        message: errorKindFor(error) === 'RATE_LIMIT' ? 'Rate limit reached' : message,
+        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      },
+    });
   }
-}
-
-/** A pinned symbol override still goes through the same fetch path. */
-async function loadPinnedSymbol(
-  symbol: string,
-  instrumentId: string,
-  timeframe: string,
-  limit: number,
-  apiKey: string
-): Promise<{ candles: Candle[]; cached: boolean; resolved: ResolvedSymbol }> {
-  const result = await fetchTimeSeries({
-    symbol,
-    timeframe,
-    limit: Math.min(Number.isFinite(limit) ? limit : 300, MAX_LIMIT),
-    apiKey,
-  });
-
-  // An override may name a symbol that is not in the catalog. A continuous
-  // contract (!-suffixed) is still a futures contract; anything else is
-  // reported as a proxy rather than being called the futures contract.
-  const candidate: SymbolCandidate =
-    findCandidate(instrumentId, symbol) ??
-    (symbol.endsWith('!')
-      ? { symbol, kind: 'futures', description: `${symbol} (configured)`, continuous: true }
-      : { symbol, kind: 'proxy', description: `${symbol} (configured)` });
-
-  return {
-    candles: result.candles,
-    cached: false,
-    resolved: {
-      candidate,
-      vendorSymbol: result.symbol,
-      instrumentType: result.instrumentType,
-      exchange: result.exchange,
-      resolvedAt: Date.now(),
-      tried: [],
-    },
-  };
 }

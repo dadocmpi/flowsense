@@ -5,9 +5,12 @@
 // "no data source configured" instead of an error, and so the data-source
 // panel can name the vendor. Never returns the key itself.
 //
-// It also reports whether the vendor WebSocket is enabled and which symbol is
-// currently resolved for each instrument, so the UI can label a proxy honestly
-// before the first candle request lands.
+// It costs NO vendor credits: it reads the symbol mapping (a configuration fact)
+// and the in-memory credit meter, and makes no Twelve Data request. That is
+// deliberate — a health check that spent a credit would be a hidden consumer.
+//
+// It reports the symbol each instrument is configured to read, the credit meter
+// state, and whether the vendor WebSocket is enabled.
 
 import {
   resolveVendor,
@@ -21,23 +24,23 @@ import {
 } from '../_lib/futuresShared.js';
 import { knownResolution } from '../_lib/candleCache.js';
 import { INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
+import { meterSnapshot } from '../_lib/creditMeter.js';
 import { POLL_INTERVAL_MS } from '../../src/core/providers/polling.js';
 
 export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const vendor = resolveVendor();
   const hasKey = vendorApiKey() !== null;
+  const meter = meterSnapshot();
 
-  // What each instrument will ask for, in priority order. `resolved` is filled
-  // in once a request has actually confirmed a symbol works.
+  // What each instrument is configured to read. The symbol is a configuration
+  // fact now, so it is always known — not "resolved once a request confirmed it".
   const instruments = INSTRUMENT_SYMBOLS.map(entry => {
     const resolved = knownResolution(entry.instrumentId);
     return {
       instrumentId: entry.instrumentId,
-      candidates: entry.candidates.map(candidate => ({
-        symbol: candidate.symbol,
-        kind: candidate.kind,
-        description: candidate.description,
-      })),
+      symbol: entry.symbol.symbol,
+      kind: entry.symbol.kind,
+      description: entry.symbol.description,
       resolved: resolved
         ? {
             symbol: resolved.candidate.symbol,
@@ -60,6 +63,17 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
     websocket: websocketEnabled(),
     pollIntervalsMs: POLL_INTERVAL_MS,
     instruments,
+    // The credit meter, so the client can show a rate-limit state before it even
+    // attempts a candles request.
+    credits: {
+      limit: meter.limit,
+      used: meter.used,
+      remaining: meter.remaining,
+      resetAt: meter.resetAt,
+      exhausted: meter.exhausted,
+      coldStart: meter.coldStart,
+      reason: meter.reason,
+    },
     note:
       vendor && hasKey
         ? `Configured: ${vendor}`

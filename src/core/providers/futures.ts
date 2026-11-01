@@ -51,7 +51,18 @@ export interface FuturesRouteResponse {
   instrumentType?: string;
   exchange?: string;
   cached?: boolean;
-  error?: { kind: string; message: string };
+  error?: { kind: string; message: string; retryAfterMs?: number };
+}
+
+/** The credit meter state the status route reports, so the UI can warn early. */
+export interface CreditState {
+  limit: number;
+  used: number;
+  remaining: number;
+  resetAt: number;
+  exhausted: boolean;
+  coldStart: boolean;
+  reason: string | null;
 }
 
 const ERROR_KINDS = new Set([
@@ -65,9 +76,14 @@ const ERROR_KINDS = new Set([
   'UNKNOWN',
 ]);
 
-function toProviderError(kind: string | undefined, message: string, status: number): ProviderError {
+function toProviderError(
+  kind: string | undefined,
+  message: string,
+  status: number,
+  retryAfterMs?: number
+): ProviderError {
   const normalized = kind && ERROR_KINDS.has(kind) ? (kind as ProviderError['kind']) : 'UNKNOWN';
-  return new ProviderError(normalized, message, status);
+  return new ProviderError(normalized, message, status, retryAfterMs);
 }
 
 /**
@@ -80,6 +96,10 @@ let configuredCache: boolean | null = null;
 let liveStreamCache: boolean | null = null;
 /** The resolved symbol per instrument, as last reported by the server. */
 const resolvedCache = new Map<string, ResolvedSource>();
+/** The last credit-meter state the server reported. */
+let creditCache: CreditState | null = null;
+/** The in-flight status probe, so two callers share one request. */
+let statusProbe: Promise<FuturesProbeResult> | null = null;
 
 export function setFuturesConfigured(value: boolean | null): void {
   configuredCache = value;
@@ -94,9 +114,16 @@ export function resolvedSourceFor(instrumentId: string): ResolvedSource | undefi
   return resolvedCache.get(instrumentId);
 }
 
+/** The last credit-meter state, for the UI's rate-limit banner. */
+export function futuresCreditState(): CreditState | null {
+  return creditCache;
+}
+
 export function clearFuturesCaches(): void {
   configuredCache = null;
   liveStreamCache = null;
+  creditCache = null;
+  statusProbe = null;
   resolvedCache.clear();
 }
 
@@ -147,7 +174,12 @@ export const futuresProvider: MarketDataProvider = {
 
     if (payload.ok === false) {
       if (payload.error?.kind === 'NOT_CONFIGURED') setFuturesConfigured(false);
-      throw toProviderError(payload.error?.kind, payload.error?.message ?? 'Futures request failed', response.status);
+      throw toProviderError(
+        payload.error?.kind,
+        payload.error?.message ?? 'Futures request failed',
+        response.status,
+        payload.error?.retryAfterMs
+      );
     }
 
     if (!Array.isArray(payload.candles)) {
@@ -185,9 +217,30 @@ export interface FuturesProbeResult {
   note?: string;
 }
 
-export async function probeFuturesProvider(signal?: AbortSignal): Promise<FuturesProbeResult> {
+/**
+ * Ask the route whether the server has a key configured, and what it resolved.
+ *
+ * Concurrent callers share ONE in-flight request: the page mounts the feed hook
+ * and the selector, both of which need this answer, and two identical calls to
+ * our own status route is waste. The status route itself costs no vendor credits,
+ * but there is no reason to make it twice.
+ *
+ * The shared request deliberately ignores the caller's AbortSignal: with two
+ * callers on one promise, letting either abort would reject the other's answer.
+ * A caller that unmounts ignores the result itself.
+ */
+export function probeFuturesProvider(_signal?: AbortSignal): Promise<FuturesProbeResult> {
+  if (statusProbe) return statusProbe;
+  const probe = runStatusProbe().finally(() => {
+    statusProbe = null;
+  });
+  statusProbe = probe;
+  return probe;
+}
+
+async function runStatusProbe(): Promise<FuturesProbeResult> {
   try {
-    const response = await fetch('/api/futures/status', { signal, headers: { Accept: 'application/json' } });
+    const response = await fetch('/api/futures/status', { headers: { Accept: 'application/json' } });
     if (!response.ok) {
       setFuturesConfigured(false);
       return { configured: false, reachable: false, note: `Status route returned HTTP ${response.status}` };
@@ -197,11 +250,13 @@ export async function probeFuturesProvider(signal?: AbortSignal): Promise<Future
       provider?: string;
       note?: string;
       websocket?: boolean;
+      credits?: CreditState;
       instruments?: Array<{ instrumentId: string; resolved: ResolvedSource | null }>;
     };
     const configured = payload.configured === true;
     setFuturesConfigured(configured);
     liveStreamCache = payload.websocket === true;
+    if (payload.credits) creditCache = payload.credits;
     // Prefer a server-known resolution, but never overwrite one we learned from
     // a real candles response.
     for (const entry of payload.instruments ?? []) {
@@ -255,6 +310,15 @@ export function pollCandles(instrument: Instrument, timeframe: Timeframe, handle
         handlers.onCandle?.(timeframe, latest);
         handlers.onTick({ instrumentId: instrument.id, price: latest.close, timestamp: Date.now() });
         rememberResolution(instrument.id, payload);
+        handlers.onStatus?.('UNAVAILABLE');
+      } else if (payload.error?.kind === 'RATE_LIMIT') {
+        // The meter blocked the poll. Do not retry in a loop: the server will
+        // refuse every call until the minute resets, so report the state and wait
+        // out the reset before the next attempt.
+        handlers.onStatus?.('RATE_LIMITED');
+        const delay = Math.max(payload.error.retryAfterMs ?? 0, PRICE_POLL_INTERVAL_MS);
+        if (!closed) timer = setTimeout(tick, delay);
+        return;
       }
     } catch {
       // A failed poll is not fatal: the next one may succeed, and the hook
