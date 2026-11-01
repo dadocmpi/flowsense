@@ -1,6 +1,10 @@
 // ============================================
-// TECHNICAL METRICS PANEL
+// TECHNICAL METRICS
 // ============================================
+// ATR, VWAP, session range and the volume point of control, measured over the
+// current session (RTH or FULL, per src/config/compass.ts). Pure: no clock, no
+// I/O. These numbers are computed for the reading; the screen no longer has a
+// separate "Technical metrics" panel.
 
 import type { Candle, TechnicalMetrics } from './types';
 import { atr, pointOfControl, volumeProfile, vwap } from './indicators';
