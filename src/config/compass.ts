@@ -7,7 +7,6 @@
 //
 // The scoring code reads this object; nothing is hardcoded downstream.
 
-import type { Timeframe } from '../core/types';
 
 export interface SessionConfig {
   /**
@@ -31,20 +30,23 @@ export interface SessionConfig {
 
 export interface EntryCheckConfig {
   /**
-   * Timeframes treated as "higher" for the higher-timeframe rule. The default
-   * starts at 1H: an intraday entry that fights the 1H-and-above trend is the
-   * one worth warning about.
+   * Weight each compass carries when judging whether the market agrees with the
+   * chosen direction. The summary is the blended overall read, so it carries
+   * more than its two inputs. A compass with no reading is excluded, not
+   * weighted as neutral.
    */
-  higherTimeframes: Timeframe[];
-  /** Warn (and never report ALIGNED) when a higher timeframe disagrees. */
-  warnOnHigherTimeframeDisagreement: boolean;
+  compassWeights: {
+    technical: number;
+    summary: number;
+    orderFlow: number;
+  };
   /**
    * Share of the weighted directional vote that must agree before the verdict
-   * can be ALIGNED. Measured only across timeframes that actually took a side,
-   * so a neutral timeframe neither helps nor hurts.
+   * can be ALIGNED. Measured only across compasses that actually took a side, so
+   * a neutral compass neither helps nor hurts.
    */
   alignedShare: number;
-  /** Below this share the verdict is AGAINST rather than PARTIAL. */
+  /** Below this share the verdict is AGAINST rather than MIXED. */
   againstShare: number;
 }
 
@@ -55,23 +57,30 @@ export interface CompassConfig {
    */
   maTolerancePercent: number;
 
-  /** Weight each moving average carries inside the MA gauge. */
+  /** Weight each moving average carries inside the MA block. */
   maWeights: Record<string, number>;
 
-  /** Weight each technical indicator carries inside the indicators gauge. */
+  /** Weight each oscillator carries inside the oscillator block. */
   indicatorWeights: Record<string, number>;
 
   /**
-   * Blend between the two gauges when forming the per-timeframe summary.
-   * These are normalised, so only the ratio matters.
+   * Blend between the two blocks that make up the LEFT "Technical indicators"
+   * gauge. These are normalised, so only the ratio matters.
    */
-  gaugeBlend: {
+  technicalBlend: {
     movingAverages: number;
     indicators: number;
   };
 
-  /** How each timeframe's reading contributes to the multi-timeframe confluence. */
-  timeframeWeights: Record<Timeframe, number>;
+  /**
+   * Blend between the technical gauge and the order-flow gauge when forming the
+   * CENTER "Summary" gauge. Ignored when no order-flow source is configured,
+   * because the summary is then the technical reading itself.
+   */
+  orderFlowBlend: {
+    technical: number;
+    orderFlow: number;
+  };
 
   /** Rules behind the LONG / SHORT entry check. */
   entryCheck: EntryCheckConfig;
@@ -86,6 +95,12 @@ export interface CompassConfig {
 
   /** Number of candles needed before a timeframe is considered available. */
   minCandles: number;
+
+  /**
+   * Candles requested per timeframe load. At least 250 so EMA 200 is valid;
+   * one request per timeframe, so a bigger window costs the same credit.
+   */
+  requestedCandles: number;
 
   /** Session definition used by VWAP and the volume point of control. */
   session: SessionConfig;
@@ -131,32 +146,27 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     'Bull/Bear Power (13)': 1.0,
   },
 
-  // The summary is an even blend of the two blocks.
-  gaugeBlend: {
+  // The technical gauge is an even blend of the two blocks.
+  technicalBlend: {
     movingAverages: 1.0,
     indicators: 1.0,
   },
 
-  // M1 is deliberately light: it is noisy and useful mainly for entry timing,
-  // not for the trend read. M5 and M15 are medium; M30 and above carry the
-  // trend and dominate the confluence bias.
-  timeframeWeights: {
-    '1m': 0.2,
-    '5m': 0.6,
-    '15m': 1.0,
-    '30m': 1.2,
-    '1h': 1.6,
-    '4h': 1.8,
-    '1D': 2.0,
-    '1W': 1.2,
+  // An even blend of the technical read and order flow, when flow exists.
+  orderFlowBlend: {
+    technical: 1.0,
+    orderFlow: 1.0,
   },
 
   entryCheck: {
-    // 1H and above is "the trend" for an intraday entry.
-    higherTimeframes: ['1h', '4h', '1D', '1W'],
-    warnOnHigherTimeframeDisagreement: true,
-    // A majority of the weighted directional vote, plus agreement from the
-    // higher timeframes, is what earns ALIGNED.
+    // The summary already blends the technical read and order flow, so it is
+    // the strongest single signal and carries the most weight.
+    compassWeights: {
+      technical: 1.0,
+      summary: 1.4,
+      orderFlow: 1.0,
+    },
+    // A weighted majority of the compasses is what earns ALIGNED.
     alignedShare: 0.6,
     againstShare: 0.4,
   },
@@ -169,6 +179,9 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
   },
 
   minCandles: 30,
+
+  // EMA 200 needs 200 closes; 300 leaves room for the other warmups.
+  requestedCandles: 300,
 
   session: {
     mode: 'RTH',
@@ -192,8 +205,8 @@ export function mergeCompassConfig(
     ...override,
     maWeights: { ...base.maWeights, ...(override.maWeights ?? {}) },
     indicatorWeights: { ...base.indicatorWeights, ...(override.indicatorWeights ?? {}) },
-    gaugeBlend: { ...base.gaugeBlend, ...(override.gaugeBlend ?? {}) },
-    timeframeWeights: { ...base.timeframeWeights, ...(override.timeframeWeights ?? {}) },
+    technicalBlend: { ...base.technicalBlend, ...(override.technicalBlend ?? {}) },
+    orderFlowBlend: { ...base.orderFlowBlend, ...(override.orderFlowBlend ?? {}) },
     entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
     session: { ...base.session, ...(override.session ?? {}) },

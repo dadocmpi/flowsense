@@ -74,6 +74,11 @@ describe('movingAverageVotes', () => {
     const votes = movingAverageVotes(ramp(250, 400, -1), DEFAULT_COMPASS_CONFIG);
     expect(votes.every(v => v.vote === 'SELL')).toBe(true);
   });
+
+  it('tags every moving-average vote with the MA block', () => {
+    const votes = movingAverageVotes(ramp(250), DEFAULT_COMPASS_CONFIG);
+    expect(votes.every(v => v.group === 'MA')).toBe(true);
+  });
 });
 
 describe('indicatorVotes', () => {
@@ -90,13 +95,20 @@ describe('indicatorVotes', () => {
       'Williams %R (14)',
       'CCI (14)',
       'ATR (14)',
+      'ATR vs average',
       'Highs/Lows (14)',
       'Ultimate Oscillator',
       'ROC (12)',
       'Bull/Bear Power (13)',
+      'Bollinger Bands (20,2)',
+      'VWAP',
     ]) {
       expect(names).toContain(required);
     }
+  });
+
+  it('tags every oscillator vote with the OSCILLATOR block', () => {
+    expect(votes.every(v => v.group === 'OSCILLATOR')).toBe(true);
   });
 
   it('every vote is one of Buy / Neutral / Sell', () => {
@@ -128,6 +140,23 @@ describe('indicatorVotes', () => {
     const down = Array.from({ length: 120 }, (_, i) => candle(500 - i * i * 0.05, i));
     expect(indicatorVotes(up, DEFAULT_COMPASS_CONFIG).find(v => v.name === 'MACD (12,26,9)')!.vote).toBe('BUY');
     expect(indicatorVotes(down, DEFAULT_COMPASS_CONFIG).find(v => v.name === 'MACD (12,26,9)')!.vote).toBe('SELL');
+  });
+
+  it('keeps the ATR-vs-average reading neutral: a volatility regime is not a direction', () => {
+    const vote = votes.find(v => v.name === 'ATR vs average');
+    expect(vote!.vote).toBe('NEUTRAL');
+    expect(vote!.value).toBeGreaterThan(0);
+  });
+
+  it('votes Bollinger Sell at the upper band and Buy at the lower band', () => {
+    // A relentless rise pins price at the top of the band (overbought) and a
+    // relentless fall pins it at the bottom (oversold).
+    const up = indicatorVotes(ramp(300), DEFAULT_COMPASS_CONFIG).find(v => v.name === 'Bollinger Bands (20,2)');
+    expect(up!.vote).toBe('SELL');
+    const down = indicatorVotes(ramp(300, 400, -1), DEFAULT_COMPASS_CONFIG).find(
+      v => v.name === 'Bollinger Bands (20,2)'
+    );
+    expect(down!.vote).toBe('BUY');
   });
 
   it('returns nothing for an empty series', () => {

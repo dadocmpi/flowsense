@@ -25,21 +25,21 @@ arithmetic over one. Nothing is simulated.
 ```
 src/core/indicators.ts         pure indicator math, no I/O
 src/core/votes.ts              per-indicator and per-MA vote logic
-src/core/scoring.ts            gauges, score -> label mapping, confluence
+src/core/scoring.ts            gauges, score -> label mapping, technical/summary blends
 src/core/structure.ts          swing highs/lows, BOS, CHoCH, premium/discount
 src/core/session.ts            session open resolution (RTH/FULL), DST-safe
 src/core/metrics.ts            ATR, VWAP, session range, point of control
 src/core/candles.ts            bucketing, resampling, live-tail merge
-src/core/timeframeEngine.ts    one timeframe -> three gauges + structure + metrics
-src/core/multiTimeframe.ts     every timeframe + the confluence bias
-src/core/entryCheck.ts         does the market agree with a long/short? (pure)
+src/core/timeframeEngine.ts    ONE timeframe -> the three compasses + structure + metrics
+src/core/entryCheck.ts         do the selected timeframe's compasses agree with a long/short? (pure)
 src/core/marketHours.ts        is the market still producing bars? (pure)
 src/core/providers/            MarketDataProvider interface + the futures provider
 src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
+src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
 src/config/compass.ts          every weight, tolerance and session setting
 src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
-src/hooks/useMultiTimeframeCompass.ts runs the multi-timeframe engine
+src/hooks/useTimeframeReadings.ts     one reading per (asset, timeframe), kept apart
 api/_lib/creditMeter.ts        the per-minute meter that gates EVERY vendor call
 api/_lib/symbols.ts            the ONE place the single symbol per instrument is mapped
 api/_lib/twelvedata.ts         vendor adapter: meter, request, parse, classify error kind
@@ -47,6 +47,8 @@ api/_lib/candleCache.ts        short-lived candle cache (one vendor call per TTL
 api/futures/candles.ts         server-side futures candle proxy
 api/futures/status.ts          is a key configured, what symbol is read, meter state
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
+api/orderflow/reading.ts       is an order-flow source configured, and its reading
+api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
@@ -109,11 +111,21 @@ reset the server reported, and never in a loop.
 
 ### Timeframes are fetched, not aggregated from one series
 
-Each timeframe is requested from the provider at its own interval, so a 1m seed
-cannot cap how far back the weekly reaches — but only the SELECTED timeframe is
-fetched on load, one credit each, and the rest load on demand when the user
-selects them. Do not reintroduce a mount-time sweep of every timeframe: eight
-timeframes is eight credits, which alone can spend a small plan's whole minute.
+There are seven timeframes (1m, 5m, 15m, 30m, 1h, 4h, 1D). Each is requested
+from the provider at its own interval, so a 1m seed cannot cap how far back the
+daily reaches — but only the SELECTED timeframe is fetched on load, one credit
+each, and the rest load on demand when the user selects them. Do not reintroduce
+a mount-time sweep of every timeframe: seven timeframes is seven credits, which
+alone can spend a small plan's whole minute. Each request asks for at least 250
+candles (`requestedCandles` in `src/config/compass.ts`) so EMA 200 is valid; a
+wider window is still ONE request and so still one credit.
+
+Readings are keyed by `asset:timeframe` in `useTimeframeReadings`, so switching
+timeframes never mixes their series and a chip for a timeframe loaded earlier
+still shows that timeframe's own reading and its age. The entry-check chip row
+fills ONLY from timeframes already loaded this session; an unloaded timeframe
+reads "Not loaded" and is never fetched to fill a chip.
+
 The live stream carries the 1m bar;
 the newest bar of the mergeable timeframes (5m, 15m, 30m, 1h, 4h, 1D) is
 refreshed from that 1m tail via `mergeLiveTail`, so a higher timeframe moves
@@ -122,12 +134,42 @@ with the market between fetches.
 `mergeLiveTail` refuses a partial rebuild: a 1m window covers only hours, so a
 daily bucket is usually only partly observed, and rebuilding it from that tail
 would report a high/low/volume for a day that has barely started. When the base
-window does not reach the bucket open, the natively fetched bar is kept. Weekly
-is excluded entirely: its exchange boundary (Monday open) is not the epoch-based
-bucket, so a rebuild would put the bar at the wrong time. Do not "fix" that by
-bucketing the weekly from 1m.
+window does not reach the bucket open, the natively fetched bar is kept.
+
+### Order flow is a separate provider, never derived from candles
+
+The RIGHT compass is order flow: delta/CVD, order-book imbalance, absorption.
+Twelve Data carries NO order-flow data — a candle has no aggressor side and no
+order book — so it is never computed from the candle feed. It comes from a
+provider behind `src/core/providers/orderflow.ts`, selected server-side by
+`ORDERFLOW_PROVIDER` / `ORDERFLOW_API_KEY` (see `api/_lib/orderflow.ts`).
+
+The shipped adapter is `none`: the card then reads "No order flow source
+configured" and draws NO gauge. It must never draw a neutral needle or a `0` in
+place of a missing reading — a neutral needle looks like a real "neutral market"
+read. With no source the Summary compass IS the technical reading rather than a
+blend against a stand-in zero.
+
+Connecting a vendor means implementing `fetchOrderFlowReading` in
+`api/_lib/orderflow.ts` and setting the two environment variables. Nothing else
+changes: the client, the summary blend and the entry check already speak that
+shape. The key stays server-side; check `grep -c "apikey" dist/assets/*.js` is
+still 0 after adding one.
 
 ## UI
+
+The main screen, top to bottom, and it fits 1920x1080 without scrolling: the top
+bar (price, feed state, provenance, asset tabs, timeframe buttons), three
+compasses in one row, then the merged technical table (two thirds) beside the
+entry check (one third).
+
+The timeframe buttons carry the LABEL ONLY — M1 M5 M15 M30 1H 4H 1D. No score,
+no signal word, no colour that implies a signal; only the selected one is
+highlighted, and every button is disabled while a request is in flight.
+
+There is no multi-timeframe confluence grid, no "Timeframe detail" panel and no
+separate "Technical metrics" panel. Do not re-add them. There is exactly ONE
+technical table, holding both the moving averages and the oscillators.
 
 The top bar holds the price and the asset tabs only. The removed "DATA: LIVE",
 "CANDLES IN" countdown and REFRESH button were obsolete once the feed became

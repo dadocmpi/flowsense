@@ -9,6 +9,8 @@ import { describe, expect, it } from 'vitest';
 import {
   adx,
   atr,
+  atrSeries,
+  bollinger,
   bullBearPower,
   cci,
   ema,
@@ -23,6 +25,7 @@ import {
   rsi,
   rsiSeries,
   sma,
+  smaSeries,
   stochastic,
   stochasticRsi,
   ultimateOscillator,
@@ -365,5 +368,61 @@ describe('percentChange', () => {
     expect(percentChange(110, 100)).toBeCloseTo(10, 10);
     expect(percentChange(90, 100)).toBeCloseTo(-10, 10);
     expect(percentChange(10, 0)).toBe(0);
+  });
+});
+
+describe('smaSeries', () => {
+  it('produces one average per input from the seed onwards', () => {
+    const series = smaSeries([1, 2, 3, 4, 5], 3);
+    expect(series).toEqual([2, 3, 4]);
+  });
+
+  it('returns nothing when there are too few values', () => {
+    expect(smaSeries([1, 2], 3)).toEqual([]);
+    expect(smaSeries([1, 2, 3], 0)).toEqual([]);
+  });
+});
+
+describe('bollinger', () => {
+  it('centres the band on the SMA and widens it by two standard deviations', () => {
+    const values = [2, 4, 4, 4, 5, 5, 7, 9];
+    const bands = bollinger(values, 8, 2);
+    // Population mean 5, population standard deviation 2.
+    expect(bands!.middle).toBeCloseTo(5, 6);
+    expect(bands!.upper).toBeCloseTo(9, 6);
+    expect(bands!.lower).toBeCloseTo(1, 6);
+  });
+
+  it('locates price near the top of the band on a rise and near the bottom on a fall', () => {
+    expect(bollinger([2, 4, 4, 4, 5, 5, 7, 9], 8, 2)!.percentB).toBeCloseTo(1, 6);
+    // The mirror image: the last value sits below the middle and near the lower
+    // band, so %B is small but not necessarily exactly 0.
+    expect(bollinger([9, 7, 5, 5, 4, 4, 2, 1], 8, 2)!.percentB).toBeLessThan(0.2);
+  });
+
+  it('is 0.5 when the band has zero width, rather than dividing by zero', () => {
+    expect(bollinger([5, 5, 5, 5], 4, 2)!.percentB).toBe(0.5);
+  });
+
+  it('returns null when there are too few values', () => {
+    expect(bollinger([1, 2, 3], 20, 2)).toBeNull();
+  });
+});
+
+describe('atrSeries', () => {
+  it('ends on the same value as atr', () => {
+    const candles = Array.from({ length: 40 }, (_, i) => candle(100 + i, i, 101 + i, 99 + i));
+    const series = atrSeries(candles, 14);
+    expect(series[series.length - 1]).toBeCloseTo(atr(candles, 14)!, 9);
+  });
+
+  it('has one value per bar from the warmup onwards', () => {
+    const candles = Array.from({ length: 40 }, (_, i) => candle(100 + i, i, 101 + i, 99 + i));
+    // 40 candles -> 39 true ranges -> 39 - 14 + 1 = 26 ATR values.
+    expect(atrSeries(candles, 14)).toHaveLength(26);
+  });
+
+  it('returns nothing when there is not enough data', () => {
+    expect(atrSeries([candle(100, 0)], 14)).toEqual([]);
   });
 });

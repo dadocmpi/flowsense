@@ -5,11 +5,17 @@
 // vote. The thresholds here are the standard ones used by public technical
 // summaries. A reading outside the usable window casts NEUTRAL rather than
 // guessing a direction.
+//
+// Every vote is tagged with the block it came from (MA or OSCILLATOR), which is
+// what lets the UI render the merged table and the combined technical gauge from
+// the same votes without a second source of truth.
 
 import type { Candle, Vote, VoteDetail } from './types';
 import {
   adx,
   atr,
+  atrSeries,
+  bollinger,
   bullBearPower,
   cci,
   ema,
@@ -19,11 +25,14 @@ import {
   roc,
   rsi,
   sma,
+  smaSeries,
   stochastic,
   stochasticRsi,
   ultimateOscillator,
+  vwap,
   williamsR,
 } from './indicators';
+import { candlesInCurrentSession } from './session';
 import type { CompassConfig } from '../config/compass';
 
 function fmt(value: number, digits = 2): string {
@@ -67,6 +76,7 @@ export function movingAverageVotes(candles: Candle[], config: CompassConfig): Vo
         display: fmt(value, value >= 100 ? 2 : 4),
         vote: movingAverageVote(price, value, config.maTolerancePercent),
         note: `Price ${distance >= 0 ? '+' : ''}${distance.toFixed(2)}%`,
+        group: 'MA',
       });
     }
   }
@@ -98,6 +108,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       name: 'RSI (14)',
       value: rsiValue,
       display: fmt(rsiValue, 1),
+      group: 'OSCILLATOR',
       vote: rsiValue >= 70 ? 'SELL' : rsiValue <= 30 ? 'BUY' : 'NEUTRAL',
       note: 'Overbought >70 / oversold <30',
     });
@@ -117,6 +128,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: `${fmt(stoch.k, 1)} / ${fmt(stoch.d, 1)}`,
       vote,
       note: '%K / %D',
+      group: 'OSCILLATOR',
     });
   }
 
@@ -134,6 +146,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: `${fmt(stochRsi.k, 1)} / ${fmt(stochRsi.d, 1)}`,
       vote,
       note: '%K / %D',
+      group: 'OSCILLATOR',
     });
   }
 
@@ -150,6 +163,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: fmt(histogram, Math.abs(histogram) >= 1 ? 3 : 5),
       vote,
       note: `MACD ${fmt(macdLine, 4)} vs signal ${fmt(signal, 4)}`,
+      group: 'OSCILLATOR',
     });
   }
 
@@ -168,6 +182,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: fmt(adxValue, 1),
       vote,
       note: `+DI ${fmt(plusDi, 1)} / -DI ${fmt(minusDi, 1)}`,
+      group: 'OSCILLATOR',
     });
   }
 
@@ -178,6 +193,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       name: 'Williams %R (14)',
       value: williams,
       display: fmt(williams, 1),
+      group: 'OSCILLATOR',
       vote: williams <= -80 ? 'BUY' : williams >= -20 ? 'SELL' : 'NEUTRAL',
       note: 'Oversold <=-80 / overbought >=-20',
     });
@@ -192,6 +208,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: fmt(cciValue, 1),
       vote: voteFromScore(cciValue, 100, -100),
       note: 'Buy >100 / sell <-100',
+      group: 'OSCILLATOR',
     });
   }
 
@@ -205,6 +222,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: fmt(atrValue, price >= 100 ? 2 : 4),
       vote: 'NEUTRAL',
       note: `${fmt(atrPercent, 2)}% of price`,
+      group: 'OSCILLATOR',
     });
   }
 
@@ -224,6 +242,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: fmt(hl.value, price >= 100 ? 2 : 4),
       vote,
       note: expanding ? 'Range expanding' : 'Range contracting',
+      group: 'OSCILLATOR',
     });
   }
 
@@ -241,6 +260,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: fmt(uo.value, 1),
       vote,
       note: 'Buy <30 / sell >70',
+      group: 'OSCILLATOR',
     });
   }
 
@@ -251,6 +271,7 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       name: 'ROC (12)',
       value: rocValue,
       display: `${rocValue >= 0 ? '+' : ''}${fmt(rocValue, 2)}%`,
+      group: 'OSCILLATOR',
       vote: rocValue > 0 ? 'BUY' : rocValue < 0 ? 'SELL' : 'NEUTRAL',
       note: 'Change over 12 bars',
     });
@@ -266,6 +287,59 @@ export function indicatorVotes(candles: Candle[], config: CompassConfig): VoteDe
       display: fmt(net, price >= 100 ? 2 : 4),
       vote: net > 0 ? 'BUY' : net < 0 ? 'SELL' : 'NEUTRAL',
       note: `Bull ${fmt(bbp.bull, 2)} / Bear ${fmt(bbp.bear, 2)}`,
+      group: 'OSCILLATOR',
+    });
+  }
+
+  // Bollinger Bands (20,2): at the upper band is overbought, at the lower band
+  // is oversold; in between, the side of the midline decides.
+  const bands = bollinger(values, 20, 2);
+  if (bands) {
+    let vote: Vote = 'NEUTRAL';
+    if (bands.percentB >= 0.8) vote = 'SELL';
+    else if (bands.percentB <= 0.2) vote = 'BUY';
+    else if (bands.percentB > 0.5) vote = 'BUY';
+    else if (bands.percentB < 0.5) vote = 'SELL';
+    details.push({
+      name: 'Bollinger Bands (20,2)',
+      value: bands.percentB,
+      display: `%B ${fmt(bands.percentB, 2)}`,
+      vote,
+      note: `Band ${fmt(bands.bandwidthPercent, 2)}% wide`,
+      group: 'OSCILLATOR',
+    });
+  }
+
+  // ATR (14) against its own recent average: expansion is a volatility regime
+  // change, not a direction, so it votes Neutral and only reports context.
+  const atrValues = atrSeries(candles, 14);
+  if (atrValues.length >= 2) {
+    const current = atrValues[atrValues.length - 1];
+    const average = atrValues.reduce((acc, v) => acc + v, 0) / atrValues.length;
+    const ratio = average === 0 ? 1 : current / average;
+    details.push({
+      name: 'ATR vs average',
+      value: ratio,
+      display: `${fmt(ratio, 2)}× avg`,
+      vote: 'NEUTRAL',
+      note: ratio >= 1 ? 'Volatility expanding' : 'Volatility contracting',
+      group: 'OSCILLATOR',
+    });
+  }
+
+  // VWAP: price above the session's volume-weighted average is bullish. Measured
+  // from the current session only, so it resets at the open.
+  const sessionWindow = candlesInCurrentSession(candles, config.session);
+  const vwapValue = vwap(sessionWindow.length > 0 ? sessionWindow : candles);
+  if (vwapValue !== null) {
+    const distance = percentChange(price, vwapValue);
+    details.push({
+      name: 'VWAP',
+      value: vwapValue,
+      display: fmt(vwapValue, price >= 100 ? 2 : 4),
+      vote: distance > config.maTolerancePercent ? 'BUY' : distance < -config.maTolerancePercent ? 'SELL' : 'NEUTRAL',
+      note: `Price ${distance >= 0 ? '+' : ''}${distance.toFixed(2)}% vs session VWAP`,
+      group: 'OSCILLATOR',
     });
   }
 

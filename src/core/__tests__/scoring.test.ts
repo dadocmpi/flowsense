@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildGauge,
   buildSummaryGauge,
+  buildTechnicalGauge,
   clampScore,
-  computeConfluence,
   confidenceFromGauge,
   isBearishLabel,
   isBullishLabel,
@@ -222,138 +222,78 @@ describe('buildGauge', () => {
   });
 });
 
-describe('buildSummaryGauge', () => {
-  function gauge(score: number): GaugeReading {
-    return {
-      score,
-      label: labelFromScore(score, DEFAULT_COMPASS_CONFIG),
-      tally: { buy: 0, neutral: 0, sell: 0 },
-      details: [],
-    };
+describe('buildTechnicalGauge', () => {
+  function gauge(score: number, tally = { buy: 0, neutral: 0, sell: 0 }): GaugeReading {
+    return { score, label: labelFromScore(score, DEFAULT_COMPASS_CONFIG), tally, details: [] };
   }
 
-  it('blends the two component scores by weight', () => {
+  it('blends the moving averages and the oscillators by weight', () => {
+    const technical = buildTechnicalGauge(gauge(100), gauge(0), DEFAULT_COMPASS_CONFIG);
+    expect(technical.score).toBe(50);
+    expect(technical.label).toBe('BUY');
+  });
+
+  it('adds the two tallies together', () => {
+    const ma = gauge(50, { buy: 3, neutral: 1, sell: 2 });
+    const ind = gauge(-50, { buy: 1, neutral: 4, sell: 5 });
+    expect(buildTechnicalGauge(ma, ind, DEFAULT_COMPASS_CONFIG).tally).toEqual({ buy: 4, neutral: 5, sell: 7 });
+  });
+
+  it('respects an asymmetric blend', () => {
+    const config = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
+      technicalBlend: { movingAverages: 3, indicators: 1 },
+    });
+    // (100*3 + 0*1) / 4 = 75
+    expect(buildTechnicalGauge(gauge(100), gauge(0), config).score).toBe(75);
+  });
+
+  it('never lets a neutral MA block drag a strong oscillator block the other way', () => {
+    const technical = buildTechnicalGauge(gauge(0), gauge(90), DEFAULT_COMPASS_CONFIG);
+    expect(technical.score).toBeGreaterThan(0);
+    expect(isBearishLabel(technical.label)).toBe(false);
+  });
+});
+
+describe('buildSummaryGauge', () => {
+  function gauge(score: number, tally = { buy: 0, neutral: 0, sell: 0 }): GaugeReading {
+    return { score, label: labelFromScore(score, DEFAULT_COMPASS_CONFIG), tally, details: [] };
+  }
+
+  it('IS the technical gauge when no order-flow source is configured', () => {
+    // No source means nothing to blend. Returning the technical reading is the
+    // honest answer; a zero-filled stand-in would read as a neutral market.
+    const technical = gauge(64, { buy: 8, neutral: 1, sell: 3 });
+    const summary = buildSummaryGauge(technical, null, DEFAULT_COMPASS_CONFIG);
+    expect(summary).toBe(technical);
+    expect(summary.score).toBe(64);
+  });
+
+  it('blends the technical read with order flow when a source is present', () => {
     const summary = buildSummaryGauge(gauge(100), gauge(0), DEFAULT_COMPASS_CONFIG);
     expect(summary.score).toBe(50);
     expect(summary.label).toBe('BUY');
   });
 
   it('adds the two tallies together', () => {
-    const ma = { ...gauge(50), tally: { buy: 3, neutral: 1, sell: 2 } };
-    const ind = { ...gauge(-50), tally: { buy: 1, neutral: 4, sell: 5 } };
-    const summary = buildSummaryGauge(ma, ind, DEFAULT_COMPASS_CONFIG);
-    expect(summary.tally).toEqual({ buy: 4, neutral: 5, sell: 7 });
+    const technical = gauge(50, { buy: 3, neutral: 1, sell: 2 });
+    const flow = gauge(-50, { buy: 1, neutral: 4, sell: 5 });
+    expect(buildSummaryGauge(technical, flow, DEFAULT_COMPASS_CONFIG).tally).toEqual({ buy: 4, neutral: 5, sell: 7 });
   });
 
-  it('respects an asymmetric blend', () => {
+  it('respects an asymmetric order-flow blend', () => {
     const config = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      gaugeBlend: { movingAverages: 3, indicators: 1 },
+      orderFlowBlend: { technical: 3, orderFlow: 1 },
     });
     // (100*3 + 0*1) / 4 = 75
     expect(buildSummaryGauge(gauge(100), gauge(0), config).score).toBe(75);
   });
-});
 
-describe('computeConfluence', () => {
-  const readings = [
-    { timeframe: '5m', score: 80, available: true },
-    { timeframe: '15m', score: 60, available: true },
-    { timeframe: '1h', score: 40, available: true },
-    { timeframe: '4h', score: -20, available: true },
-  ];
-
-  it('reports a positive bias when most timeframes agree', () => {
-    const result = computeConfluence(readings, DEFAULT_COMPASS_CONFIG);
-    expect(result.bias).toBeGreaterThan(0);
-    expect(isBullishLabel(result.label)).toBe(true);
-    expect(result.direction).toBe('BULLISH');
-    expect(result.available).toBe(4);
-    expect(result.directional).toBe(4);
-  });
-
-  it('weights timeframes by the config table', () => {
-    // Only the heavily-weighted 4h is bearish, but it must not flip a strong
-    // intraday bullish majority on its own.
-    const heavyBear = computeConfluence(
-      [
-        { timeframe: '5m', score: 90, available: true },
-        { timeframe: '15m', score: 90, available: true },
-        { timeframe: '1h', score: 90, available: true },
-        { timeframe: '4h', score: -90, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    expect(heavyBear.bias).toBeGreaterThan(0);
-  });
-
-  it('reports a negative bias when most timeframes disagree', () => {
-    const result = computeConfluence(
-      [
-        { timeframe: '15m', score: -80, available: true },
-        { timeframe: '1h', score: -60, available: true },
-        { timeframe: '4h', score: -40, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    expect(result.bias).toBeLessThan(0);
-    expect(result.direction).toBe('BEARISH');
-  });
-
-  it('reports no direction when timeframes cancel', () => {
-    // Equal weights on both sides, so the weighted bias cancels exactly.
-    const config = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      timeframeWeights: { '1m': 0, '5m': 0, '15m': 1, '30m': 0, '1h': 1, '4h': 0, '1D': 0, '1W': 0 },
-    });
-    const result = computeConfluence(
-      [
-        { timeframe: '15m', score: 50, available: true },
-        { timeframe: '1h', score: -50, available: true },
-      ],
-      config
-    );
-    expect(result.bias).toBe(0);
-    expect(result.direction).toBeNull();
-    expect(result.agreement).toBe(50);
-  });
-
-  it('reflects the configured weights when the sides are unequal', () => {
-    // 15m (weight 1.0) bullish, 1h (weight 1.6) bearish -> bias is negative.
-    const result = computeConfluence(
-      [
-        { timeframe: '15m', score: 50, available: true },
-        { timeframe: '1h', score: -50, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    // (50 * 1.0 + -50 * 1.6) / (1.0 + 1.6) = -11.538...
-    expect(result.bias).toBeCloseTo(-11.538, 3);
-    expect(result.direction).toBe('BEARISH');
-  });
-
-  it('skips unavailable timeframes', () => {
-    const result = computeConfluence(
-      [
-        { timeframe: '5m', score: 100, available: false },
-        { timeframe: '1h', score: 50, available: true },
-      ],
-      DEFAULT_COMPASS_CONFIG
-    );
-    expect(result.available).toBe(1);
-    expect(result.bias).toBe(50);
-  });
-
-  it('is neutral when nothing is available', () => {
-    const result = computeConfluence([{ timeframe: '5m', score: 0, available: false }], DEFAULT_COMPASS_CONFIG);
-    expect(result.bias).toBe(0);
-    expect(result.label).toBe('NEUTRAL');
-    expect(result.available).toBe(0);
-  });
-
-  it('keeps the bias label consistent with the bias sign', () => {
-    for (let score = -100; score <= 100; score += 10) {
-      const result = computeConfluence([{ timeframe: '1h', score, available: true }], DEFAULT_COMPASS_CONFIG);
-      if (result.bias > 0) expect(isBearishLabel(result.label)).toBe(false);
-      if (result.bias < 0) expect(isBullishLabel(result.label)).toBe(false);
+  it('keeps the summary label consistent with the summary score', () => {
+    for (const [tech, flow] of [[80, -80], [-80, 80], [0, 0], [40, 20], [-40, -20]] as const) {
+      const summary = buildSummaryGauge(gauge(tech), gauge(flow), DEFAULT_COMPASS_CONFIG);
+      expect(summary.label).toBe(labelFromScore(summary.score, DEFAULT_COMPASS_CONFIG));
+      if (summary.score > 0) expect(isBearishLabel(summary.label)).toBe(false);
+      if (summary.score < 0) expect(isBullishLabel(summary.label)).toBe(false);
     }
   });
 });

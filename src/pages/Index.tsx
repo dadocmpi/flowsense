@@ -1,31 +1,37 @@
 // ============================================
-// FLOWSENSE — MULTI-TIMEFRAME MARKET COMPASS
+// FLOWSENSE — MAIN SCREEN
 // ============================================
-// Layout, top to bottom:
-//   1. instrument selector and the selected instrument's live header
-//   2. the multi-timeframe confluence matrix
-//   3. the selected timeframe's three gauges, vote tables and structure read
-//   4. technical metrics for the selected instrument
+// Layout, top to bottom, and it fits 1920x1080 without scrolling:
+//   1. the top bar: price, feed state, provenance, asset tabs, timeframe buttons
+//   2. three compasses in one row — Technical indicators, Summary, Order flow
+//   3. one merged "Technical indicators" table (moving averages + oscillators)
+//   4. the LONG / SHORT entry check for the selected timeframe
 //
-// No panel is collapsible: everything is visible on load.
+// There is no multi-timeframe confluence grid, no timeframe-detail panel and no
+// separate technical-metrics panel any more. Nothing is collapsible: everything
+// renders expanded on load.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInstrumentFeed } from '../hooks/useInstrumentFeed';
-import { useMultiTimeframeCompass } from '../hooks/useMultiTimeframeCompass';
+import { useTimeframeReadings } from '../hooks/useTimeframeReadings';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
-import { ConfluenceMatrix } from '../components/compass/ConfluenceMatrix';
-import { CompassGauge } from '../components/compass/CompassGauge';
-import { VoteTable } from '../components/compass/VoteTable';
-import { TimeframeCard } from '../components/compass/TimeframeCard';
-import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPanel';
-import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
+import { TimeframeButtons } from '../components/compass/TimeframeButtons';
+import { CompassCard } from '../components/compass/CompassCard';
+import { TechnicalTable } from '../components/compass/TechnicalTable';
+import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
-import type { Timeframe } from '../core/types';
+import { TIMEFRAME_LABELS, TIMEFRAMES, type Timeframe } from '../core/types';
 import { probeFuturesProvider } from '../core/providers';
-import { checkEntry, type EntryDirection } from '../core/entryCheck';
+import { checkEntry, type EntryCompassInput, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
-import { formatClock, formatNumber } from '../components/compass/format';
+import {
+  formatAge,
+  formatClock,
+  formatNumber,
+  formatSigned,
+  formatSignedPercent,
+} from '../components/compass/format';
 import { cn } from '@/lib/utils';
 
 const ERROR_TITLES: Record<string, string> = {
@@ -75,11 +81,7 @@ function RateLimitNotice({ until }: { until: number }) {
   }, []);
 
   const seconds = Math.max(0, Math.ceil((until - now) / 1_000));
-  return (
-    <span className="font-bold text-amber-400">
-      Rate limit — retrying in {seconds}s
-    </span>
-  );
+  return <span className="font-bold text-amber-400">Rate limit — retrying in {seconds}s</span>;
 }
 
 /** "GC1! · Gold futures (continuous)" — the symbol and what it really is. */
@@ -102,7 +104,14 @@ const Index: React.FC = () => {
   );
 
   const feed = useInstrumentFeed(instrument, selectedTimeframe);
-  const { reading } = useMultiTimeframeCompass(feed);
+  const { current, stored, orderFlow } = useTimeframeReadings(feed, selectedTimeframe);
+
+  // Ages are shown live ("updated 42s ago"), so a one-second tick drives them.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // Whether the futures source is configured is a server-side fact. The feed
   // only asks for the selected instrument, so ask once here too: otherwise the
@@ -137,52 +146,73 @@ const Index: React.FC = () => {
     return map;
   }, [instrument.id, feed.configured, futuresConfigured]);
 
-  const frame = reading?.timeframes.find(t => t.timeframe === selectedTimeframe) ?? null;
+  const frame = current?.reading ?? null;
   const pricePrecision = instrument.precision;
+  const timeframeLabel = TIMEFRAME_LABELS[selectedTimeframe];
+  const busy = feed.loadingTimeframes.length > 0;
 
-  // The entry check reads every timeframe's summary, so it answers "does the
-  // market agree with the trade I am about to take?" across the whole board.
-  const entryCheck = useMemo(
-    () =>
-      reading
-        ? checkEntry(
-            entryDirection,
-            reading.timeframes.map(tf => ({
-              timeframe: tf.timeframe,
-              label: tf.summary.label,
-              score: tf.summary.score,
-              available: tf.available,
-            })),
-            DEFAULT_COMPASS_CONFIG
-          )
-        : null,
-    [reading, entryDirection]
-  );
+  // The entry check reads the three compasses of the SELECTED timeframe only.
+  const entryCheck = useMemo(() => {
+    if (!frame) return null;
+    const compasses: EntryCompassInput[] = [
+      { key: 'technical', label: 'Technical indicators', scoreLabel: frame.available ? frame.technical.label : null },
+      { key: 'summary', label: 'Summary', scoreLabel: frame.available ? frame.summary.label : null },
+      { key: 'orderFlow', label: 'Order flow', scoreLabel: frame.orderFlow?.gauge.label ?? null },
+    ];
+    return checkEntry(entryDirection, compasses, DEFAULT_COMPASS_CONFIG);
+  }, [frame, entryDirection]);
+
+  // The chip row is filled only from timeframes already loaded this session.
+  // An unloaded timeframe is reported as not loaded and is never fetched here.
+  const chips: EntryChip[] = useMemo(() => {
+    const byTimeframe = new Map(stored.map(entry => [entry.timeframe, entry]));
+    return TIMEFRAMES.map(timeframe => {
+      const entry = byTimeframe.get(timeframe);
+      return {
+        timeframe,
+        scoreLabel: entry?.reading.available ? entry.reading.summary.label : null,
+        updatedAt: entry?.updatedAt ?? null,
+      };
+    });
+  }, [stored]);
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  return (
-    <div className="min-h-screen w-full bg-[#050608] font-sans text-white selection:bg-amber-500/30">
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 w-full border-b border-white/[0.04] bg-[#07080a]/95 px-4 py-3 backdrop-blur-md sm:px-8">
-        <div className="mx-auto flex max-w-[1400px] flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-baseline gap-3">
-              <span className="text-title font-black tracking-tight">FlowSense</span>
-              <span className="text-label text-white/40">Multi-timeframe market compass</span>
-            </div>
+  const change = frame?.change ?? null;
+  const changePercent = frame?.changePercent ?? null;
+  const changeTone =
+    change === null
+      ? 'text-white/50'
+      : change > 0
+        ? 'text-[#26a69a]'
+        : change < 0
+          ? 'text-[#ef5350]'
+          : 'text-white/70';
+  const changeLabel = frame?.changeBasis === 'SESSION' ? 'Session' : 'Window';
 
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-label">
-              <span className="text-white/45">
+  const orderFlowMetrics = frame?.orderFlow?.metrics ?? null;
+
+  return (
+    <div className="flex min-h-screen w-full flex-col bg-[#050608] font-sans text-white selection:bg-amber-500/30">
+      {/* ── Top bar: price, feed state, provenance, tabs, timeframes ────── */}
+      <header className="z-50 w-full border-b border-white/[0.04] bg-[#07080a]/95 px-4 py-2.5 backdrop-blur-md sm:px-8">
+        <div className="mx-auto flex max-w-[1840px] flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <span className="text-title font-black tracking-tight">FlowSense</span>
+              <span className="text-label text-white/40">
                 {instrument.name} <span className="text-white/25">· {instrument.exchange}</span>
               </span>
               <span className="font-mono text-data font-bold text-white">
                 {feed.price > 0 ? formatNumber(feed.price, pricePrecision) : '--'}
                 <span className="ml-1 text-label font-normal text-white/40">{instrument.quote}</span>
               </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-label">
               <span className="flex items-center gap-1.5">
                 {feed.stale && feed.rateLimitedUntil !== null ? (
                   <RateLimitNotice until={feed.rateLimitedUntil} />
@@ -232,22 +262,29 @@ const Index: React.FC = () => {
             </div>
           )}
 
-          <InstrumentSelector selectedId={instrument.id} onSelect={handleSelect} availability={availability} />
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+            <InstrumentSelector selectedId={instrument.id} onSelect={handleSelect} availability={availability} />
+            <div className="flex flex-wrap items-center gap-3">
+              <TimeframeButtons selected={selectedTimeframe} onSelect={setSelectedTimeframe} busy={busy} />
+              <span className="text-micro text-white/35">
+                {busy ? 'Loading timeframe…' : `One timeframe fetched at a time · ${timeframeLabel}`}
+              </span>
+            </div>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-[1400px] flex-col gap-panel px-4 py-6 sm:px-8 sm:py-8">
+      <main className="mx-auto flex w-full max-w-[1840px] flex-1 flex-col gap-3 px-4 py-4 sm:px-8">
         {/* ── Unavailable / error state ────────────────────────────────── */}
         {!feed.configured && !feed.isLoading && (
           <Section
             title={feed.sourceReachable ? ERROR_TITLES.NOT_CONFIGURED : UNREACHABLE_TITLE}
             subtitle={instrument.id}
+            dense
           >
             <div className="flex flex-col gap-2">
               <p className="text-body text-white/70">
-                {feed.unavailableReason ??
-                  feed.error?.message ??
-                  'This instrument has no configured data source.'}
+                {feed.unavailableReason ?? feed.error?.message ?? 'This instrument has no configured data source.'}
               </p>
               {feed.sourceReachable ? (
                 <p className="text-label text-white/45">
@@ -270,84 +307,142 @@ const Index: React.FC = () => {
         {/* A configured source can still fail; that is a real error, not a
             missing one, so it is reported separately. */}
         {feed.configured && feed.error && !feed.isLoading && feed.candles.length === 0 && (
-          <Section title={ERROR_TITLES[feed.error.kind] ?? ERROR_TITLES.UNKNOWN} subtitle={instrument.id}>
+          <Section title={ERROR_TITLES[feed.error.kind] ?? ERROR_TITLES.UNKNOWN} subtitle={instrument.id} dense>
             <p className="text-body text-white/70">{feed.error.message}</p>
           </Section>
         )}
 
-        {/* ── Confluence matrix ────────────────────────────────────────── */}
-        <Section title="Multi-timeframe confluence" subtitle={`${instrument.id} · all timeframes`}>
-          {reading ? (
-            <ConfluenceMatrix reading={reading} selected={selectedTimeframe} onSelect={setSelectedTimeframe} />
-          ) : (
-            <p className="py-8 text-center text-body italic text-white/45">
-              {feed.isLoading ? 'Loading candles…' : 'No candles available for this instrument.'}
-            </p>
-          )}
-        </Section>
+        {/* ── Three compasses in one row ───────────────────────────────── */}
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <CompassCard
+            title="Technical indicators"
+            subtitle={timeframeLabel}
+            gauge={frame?.available ? frame.technical : null}
+            figures={
+              frame?.available
+                ? [
+                    { label: 'MAs', value: `${frame.technical.details.filter(d => d.group === 'MA').length}` },
+                    { label: 'Osc', value: `${frame.technical.details.filter(d => d.group !== 'MA').length}` },
+                    { label: 'Buy', value: `${frame.technical.tally.buy}`, tone: 'text-[#4db6ac]' },
+                    { label: 'Sell', value: `${frame.technical.tally.sell}`, tone: 'text-[#e57373]' },
+                    { label: 'Neutral', value: `${frame.technical.tally.neutral}` },
+                    { label: 'Score', value: `${Math.round(frame.technical.score)}` },
+                  ]
+                : [
+                    { label: 'Candles', value: `${frame?.candleCount ?? 0}` },
+                    { label: 'Needed', value: `${DEFAULT_COMPASS_CONFIG.minCandles}` },
+                  ]
+            }
+            unavailableText={frame ? 'Not enough candles' : feed.isLoading ? 'Loading candles…' : 'No data'}
+            unavailableHint={
+              frame && !frame.available
+                ? `${frame.candleCount} candles on ${timeframeLabel} — needs ${DEFAULT_COMPASS_CONFIG.minCandles} for a reading.`
+                : undefined
+            }
+          />
 
-        {/* ── Entry check ──────────────────────────────────────────────── */}
-        {entryCheck && (
-          <Section title="Entry check" subtitle={`${instrument.id} · does the market agree?`}>
-            <EntryCheckPanel result={entryCheck} direction={entryDirection} onDirectionChange={setEntryDirection} />
-          </Section>
-        )}
+          <CompassCard
+            title="Summary"
+            subtitle={timeframeLabel}
+            gauge={frame?.available ? frame.summary : null}
+            figures={[
+              {
+                label: 'Last price',
+                value: frame && frame.price > 0 ? formatNumber(frame.price, pricePrecision) : '--',
+              },
+              {
+                label: `Change (${changeLabel})`,
+                value: change !== null ? formatSigned(change, pricePrecision) : '--',
+                tone: changeTone,
+              },
+              {
+                label: 'Change %',
+                value: changePercent !== null ? formatSignedPercent(changePercent) : '--',
+                tone: changeTone,
+              },
+              { label: 'Updated', value: formatAge(current?.updatedAt ?? null, now) },
+              { label: 'Candles', value: frame ? `${frame.candleCount}` : '--' },
+              { label: 'Order flow', value: orderFlow?.configured ? 'included' : 'none' },
+            ]}
+            unavailableText={frame ? 'Not enough candles' : feed.isLoading ? 'Loading candles…' : 'No data'}
+          />
 
-        {/* ── Selected timeframe: gauges, tables, structure ────────────── */}
-        {frame && (
-          <>
-            <Section title="Compass" subtitle={`${instrument.id} · ${selectedTimeframe}`}>
-              {frame.available ? (
-                <>
-                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
-                    <CompassGauge title="Moving averages" gauge={frame.movingAverages} size="lg" />
-                    <CompassGauge title="Technical indicators" gauge={frame.indicators} size="lg" />
-                    <CompassGauge title="Summary" gauge={frame.summary} size="lg" />
-                  </div>
+          <CompassCard
+            title="Order flow"
+            subtitle={orderFlow?.configured ? orderFlow.label : 'none'}
+            gauge={frame?.orderFlow?.gauge ?? null}
+            figures={[
+              {
+                label: 'Delta',
+                value: orderFlowMetrics?.delta != null ? formatNumber(orderFlowMetrics.delta, 0) : '--',
+              },
+              {
+                label: 'CVD',
+                value: orderFlowMetrics?.cvd != null ? formatNumber(orderFlowMetrics.cvd, 0) : '--',
+              },
+              {
+                label: 'Imbalance',
+                value: orderFlowMetrics?.imbalance != null ? orderFlowMetrics.imbalance.toFixed(2) : '--',
+              },
+              {
+                label: 'Absorption',
+                value:
+                  orderFlowMetrics?.absorption != null
+                    ? `${Math.round(orderFlowMetrics.absorption * 100)}%`
+                    : '--',
+              },
+            ]}
+            unavailableText="No order flow source configured"
+            unavailableHint="Twelve Data has no order-flow data. Set ORDERFLOW_PROVIDER and ORDERFLOW_API_KEY to add one."
+          />
+        </div>
 
-                  <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
-                    <div>
-                      <h3 className="mb-2 text-title font-bold text-white">Moving averages</h3>
-                      <VoteTable details={frame.movingAverages.details} valueHeading="Level" />
-                    </div>
-                    <div>
-                      <h3 className="mb-2 text-title font-bold text-white">Technical indicators</h3>
-                      <VoteTable details={frame.indicators.details} valueHeading="Value" />
-                    </div>
-                  </div>
-                </>
+        {/* ── Below the compasses: the merged table and the entry check ──
+            The table takes two thirds and the entry check one third. They sit
+            side by side rather than stacked because the whole screen has to fit
+            1920x1080 without scrolling, and this is the arrangement that keeps
+            every row of the table and the full entry check on screen at once. */}
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <Section title="Technical indicators" subtitle={`${instrument.id} · ${timeframeLabel}`} dense>
+              {frame?.available ? (
+                <TechnicalTable details={frame.technical.details} />
               ) : (
-                <p className="py-8 text-center text-body italic text-white/45">
-                  {frame.candleCount} candles on {selectedTimeframe} — not enough to compute a reading (needs{' '}
-                  {DEFAULT_COMPASS_CONFIG.minCandles}).
+                <p className="py-2 text-body italic text-white/45">
+                  {feed.isLoading
+                    ? 'Loading candles…'
+                    : frame
+                      ? `Not enough candles on ${timeframeLabel} to compute a reading.`
+                      : 'No data for this timeframe.'}
                 </p>
               )}
             </Section>
+          </div>
 
-            {frame.available && (
-              <Section title="Timeframe detail" subtitle={`${instrument.id} · ${selectedTimeframe}`}>
-                <TimeframeCard reading={frame} precision={pricePrecision} quote={instrument.quote} />
-              </Section>
-            )}
-
-            {frame.available && (
-              <Section title="Technical metrics" subtitle={`${instrument.id} · ${selectedTimeframe}`}>
-                <TechnicalMetricsPanel
-                  metrics={frame.metrics}
-                  precision={pricePrecision}
-                  quote={instrument.quote}
-                  session={DEFAULT_COMPASS_CONFIG.session}
-                  timeframe={selectedTimeframe}
+          <div>
+            <Section title="Entry check" subtitle={`${instrument.id} · ${timeframeLabel}`} dense>
+              {entryCheck ? (
+                <EntryCheckPanel
+                  result={entryCheck}
+                  direction={entryDirection}
+                  onDirectionChange={setEntryDirection}
+                  chips={chips}
+                  now={now}
+                  timeframeLabel={timeframeLabel}
                 />
-              </Section>
-            )}
-          </>
-        )}
+              ) : (
+                <p className="py-2 text-body italic text-white/45">
+                  {feed.isLoading ? 'Loading candles…' : 'No reading for this timeframe yet.'}
+                </p>
+              )}
+            </Section>
+          </div>
+        </div>
 
       </main>
 
-      <footer className="border-t border-white/[0.04] px-4 py-6 sm:px-8">
-        <p className="mx-auto max-w-[1400px] text-micro text-white/30">
+      <footer className="border-t border-white/[0.04] px-4 py-3 sm:px-8">
+        <p className="mx-auto max-w-[1840px] text-micro text-white/30">
           FlowSense — analysis only. Not investment advice.
         </p>
       </footer>

@@ -316,6 +316,89 @@ export function atr(candles: Candle[], period = 14): number | null {
   return value;
 }
 
+/** Simple moving average series: one value per input from index `period-1`. */
+export function smaSeries(values: number[], period: number): number[] {
+  if (period <= 0 || values.length < period) return [];
+  const out: number[] = [];
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i];
+    if (i >= period) sum -= values[i - period];
+    if (i >= period - 1) out.push(sum / period);
+  }
+  return out;
+}
+
+export interface BollingerResult {
+  upper: number;
+  middle: number;
+  lower: number;
+  /** Where price sits in the band: 0 at the lower band, 1 at the upper. */
+  percentB: number;
+  /** (upper - lower) / middle, as a percentage of the middle band. */
+  bandwidthPercent: number;
+}
+
+/**
+ * Bollinger Bands: an SMA of `period` closes with a band `multiplier` standard
+ * deviations wide. `%B` locates price inside the band, which is the directional
+ * reading; the bandwidth is reported alongside it as context.
+ */
+export function bollinger(values: number[], period = 20, multiplier = 2): BollingerResult | null {
+  if (period <= 0 || values.length < period) return null;
+
+  const window = values.slice(-period);
+  const middle = window.reduce((acc, v) => acc + v, 0) / period;
+  const variance = window.reduce((acc, v) => acc + (v - middle) ** 2, 0) / period;
+  const deviation = Math.sqrt(variance);
+
+  const upper = middle + multiplier * deviation;
+  const lower = middle - multiplier * deviation;
+  const price = values[values.length - 1];
+  const width = upper - lower;
+
+  return {
+    upper,
+    middle,
+    lower,
+    percentB: width === 0 ? 0.5 : (price - lower) / width,
+    bandwidthPercent: middle === 0 ? 0 : (width / middle) * 100,
+  };
+}
+
+/**
+ * Wilder-smoothed ATR for every bar from `period` onwards. The last value is the
+ * same as `atr`, but the series is what lets the caller compare the current ATR
+ * with its own recent average.
+ */
+export function atrSeries(candles: Candle[], period = 14): number[] {
+  if (period <= 0 || candles.length < period + 1) return [];
+
+  const trueRanges: number[] = [];
+  for (let i = 1; i < candles.length; i++) {
+    const current = candles[i];
+    const previousClose = candles[i - 1].close;
+    trueRanges.push(
+      Math.max(
+        current.high - current.low,
+        Math.abs(current.high - previousClose),
+        Math.abs(current.low - previousClose)
+      )
+    );
+  }
+
+  if (trueRanges.length < period) return [];
+
+  const out: number[] = [];
+  let value = trueRanges.slice(0, period).reduce((acc, v) => acc + v, 0) / period;
+  out.push(value);
+  for (let i = period; i < trueRanges.length; i++) {
+    value = (value * (period - 1) + trueRanges[i]) / period;
+    out.push(value);
+  }
+  return out;
+}
+
 export interface UltimateOscillatorResult {
   value: number;
   previous: number;

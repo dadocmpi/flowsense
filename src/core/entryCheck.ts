@@ -3,76 +3,75 @@
 // ============================================
 // "Does the market agree with the trade I am about to take?"
 //
-// Given a LONG or SHORT direction and every timeframe's reading, this answers
-// three things, in plain language:
+// It compares the chosen direction with the three compasses of the SELECTED
+// timeframe — Technical indicators, Summary and Order flow — and returns one
+// verdict in plain language:
 //
-//   * how many timeframes agree with the direction
-//   * which ones disagree
-//   * a verdict: ALIGNED / PARTIAL / AGAINST
+//   ALIGNED  the weighted majority of the compasses agrees
+//   MIXED    some agreement, but not enough for a clean read
+//   AGAINST  the weighted majority disagrees with the direction
 //
 // The verdict is a pure function of the inputs, so it can be tuned in one place
 // (the entryCheck block in src/config/compass.ts) and unit tested without a
 // browser or a market.
 //
-// Agreement is measured on the timeframes that actually took a side, weighted
-// by the configured timeframe weights. A neutral timeframe neither helps nor
-// hurts: it is not counted as agreement, and it is not counted as opposition.
+// Agreement is measured on the compasses that actually took a side, weighted by
+// their configured weight. A neutral compass neither helps nor hurts: it is not
+// counted as agreement, and it is not counted as opposition. A compass with no
+// reading at all — the order-flow card when no source is configured — is
+// reported as unavailable and excluded, so a missing source can never be
+// mistaken for agreement.
 
-import type { ScoreLabel, Timeframe } from './types';
-import { TIMEFRAME_LABELS } from './types';
+import type { ScoreLabel } from './types';
 import type { CompassConfig } from '../config/compass';
 import { isBearishLabel, isBullishLabel } from './scoring';
 
 export type EntryDirection = 'LONG' | 'SHORT';
-export type EntryVerdict = 'ALIGNED' | 'PARTIAL' | 'AGAINST';
+export type EntryVerdict = 'ALIGNED' | 'MIXED' | 'AGAINST';
 
-/** The minimum a timeframe needs to expose to be judged. */
-export interface EntryTimeframeInput {
-  timeframe: Timeframe;
-  label: ScoreLabel;
-  score: number;
-  available: boolean;
+/** The three compasses the entry check judges. */
+export type EntryCompassKey = 'technical' | 'summary' | 'orderFlow';
+
+/** What one compass reports, as the entry check sees it. */
+export interface EntryCompassInput {
+  key: EntryCompassKey;
+  /** Display name, e.g. "Technical indicators". */
+  label: string;
+  /** The compass label, or null when that compass has no reading. */
+  scoreLabel: ScoreLabel | null;
 }
 
-export interface EntryCheckTimeframe {
-  timeframe: Timeframe;
-  label: string;
-  score: number;
+export interface EntryCompassStance extends EntryCompassInput {
   /** 'AGREE' | 'DISAGREE' | 'NEUTRAL' | 'UNAVAILABLE', relative to the direction. */
   stance: 'AGREE' | 'DISAGREE' | 'NEUTRAL' | 'UNAVAILABLE';
-  /** True when this timeframe is one of the configured higher timeframes. */
-  higher: boolean;
+  weight: number;
 }
 
 export interface EntryCheckResult {
   direction: EntryDirection;
   verdict: EntryVerdict;
-  /** Timeframes that agree with the direction. */
+  /** Compasses that agree with the direction. */
   aligned: number;
-  /** Timeframes that disagree with the direction. */
+  /** Compasses that disagree. */
   opposing: number;
-  /** Timeframes that took no side. */
+  /** Compasses that took no side. */
   neutral: number;
-  /** Timeframes with no usable data. */
+  /** Compasses with no reading (no order-flow source, or not enough candles). */
   unavailable: number;
-  /** Timeframes considered at all (available ones). */
+  /** Compasses considered at all (the three, minus the unavailable ones). */
   total: number;
   /** Weighted share of the directional vote that agrees, 0..1. */
   share: number;
-  /** Every timeframe with its stance, in the order supplied. */
-  timeframes: EntryCheckTimeframe[];
-  /** The disagreeing timeframes, for highlighting. */
-  disagreeing: EntryCheckTimeframe[];
-  /** Higher timeframes that disagree. Drives the warning. */
-  higherConflicts: EntryCheckTimeframe[];
-  /** True when a higher timeframe disagrees and the rule is enabled. */
-  higherTimeframeWarning: boolean;
+  /** Every compass with its stance, in the order supplied. */
+  compasses: EntryCompassStance[];
+  /** The disagreeing compasses, for highlighting. */
+  disagreeing: EntryCompassStance[];
   /** A short, plain-language summary of the verdict. */
   message: string;
 }
 
 /** Which way a label points relative to the chosen direction. */
-function stanceFor(label: ScoreLabel, direction: EntryDirection): EntryCheckTimeframe['stance'] {
+function stanceFor(label: ScoreLabel, direction: EntryDirection): EntryCompassStance['stance'] {
   const bullish = isBullishLabel(label);
   const bearish = isBearishLabel(label);
   if (!bullish && !bearish) return 'NEUTRAL';
@@ -80,27 +79,28 @@ function stanceFor(label: ScoreLabel, direction: EntryDirection): EntryCheckTime
   return agrees ? 'AGREE' : 'DISAGREE';
 }
 
+/** The UI word for a verdict. */
+export function verdictWord(verdict: EntryVerdict): string {
+  if (verdict === 'ALIGNED') return 'Aligned';
+  if (verdict === 'AGAINST') return 'Against';
+  return 'Mixed';
+}
+
 /**
- * Judge whether the timeframes agree with a LONG or SHORT entry.
- *
- * ALIGNED  the weighted majority agrees AND no higher timeframe disagrees
- * PARTIAL  some agreement, but not enough — or a higher timeframe is fighting
- * AGAINST  the weighted majority disagrees with the direction
+ * Judge whether the three compasses of one timeframe agree with a LONG or SHORT
+ * entry.
  */
 export function checkEntry(
   direction: EntryDirection,
-  readings: EntryTimeframeInput[],
+  compasses: EntryCompassInput[],
   config: CompassConfig
 ): EntryCheckResult {
   const rules = config.entryCheck;
-  const higherSet = new Set<Timeframe>(rules.higherTimeframes);
 
-  const timeframes: EntryCheckTimeframe[] = readings.map(reading => ({
-    timeframe: reading.timeframe,
-    label: TIMEFRAME_LABELS[reading.timeframe] ?? reading.timeframe,
-    score: reading.score,
-    stance: reading.available ? stanceFor(reading.label, direction) : 'UNAVAILABLE',
-    higher: higherSet.has(reading.timeframe),
+  const judged: EntryCompassStance[] = compasses.map(compass => ({
+    ...compass,
+    stance: compass.scoreLabel ? stanceFor(compass.scoreLabel, direction) : 'UNAVAILABLE',
+    weight: rules.compassWeights[compass.key] ?? 1,
   }));
 
   let alignedWeight = 0;
@@ -110,46 +110,38 @@ export function checkEntry(
   let neutral = 0;
   let unavailable = 0;
 
-  for (const frame of timeframes) {
-    const weight = config.timeframeWeights[frame.timeframe] ?? 0;
-    if (frame.stance === 'UNAVAILABLE') {
+  for (const compass of judged) {
+    if (compass.stance === 'UNAVAILABLE') {
       unavailable += 1;
       continue;
     }
-    if (frame.stance === 'NEUTRAL') {
+    if (compass.stance === 'NEUTRAL') {
       neutral += 1;
       continue;
     }
-    if (frame.stance === 'AGREE') {
+    if (compass.stance === 'AGREE') {
       aligned += 1;
-      alignedWeight += weight;
+      alignedWeight += compass.weight;
     } else {
       opposing += 1;
-      opposingWeight += weight;
+      opposingWeight += compass.weight;
     }
   }
 
   const directionalWeight = alignedWeight + opposingWeight;
   const share = directionalWeight === 0 ? 0 : alignedWeight / directionalWeight;
-
-  const disagreeing = timeframes.filter(frame => frame.stance === 'DISAGREE');
-  const higherConflicts = disagreeing.filter(frame => frame.higher);
-
-  // A higher timeframe fighting the trade is the one case worth a hard warning,
-  // so it is reported separately from the raw count.
-  const higherTimeframeWarning =
-    rules.warnOnHigherTimeframeDisagreement && higherConflicts.length > 0;
+  const disagreeing = judged.filter(compass => compass.stance === 'DISAGREE');
 
   let verdict: EntryVerdict;
   if (directionalWeight === 0) {
     // Nothing has taken a side, so there is nothing to agree or disagree with.
-    verdict = 'PARTIAL';
+    verdict = 'MIXED';
   } else if (share < rules.againstShare) {
     verdict = 'AGAINST';
-  } else if (share >= rules.alignedShare && !higherTimeframeWarning) {
+  } else if (share >= rules.alignedShare) {
     verdict = 'ALIGNED';
   } else {
-    verdict = 'PARTIAL';
+    verdict = 'MIXED';
   }
 
   return {
@@ -161,11 +153,9 @@ export function checkEntry(
     unavailable,
     total: aligned + opposing + neutral,
     share,
-    timeframes,
+    compasses: judged,
     disagreeing,
-    higherConflicts,
-    higherTimeframeWarning,
-    message: describeVerdict(verdict, direction, aligned, opposing, neutral, higherConflicts),
+    message: describeVerdict(verdict, direction, aligned, opposing, neutral, unavailable, disagreeing),
   };
 }
 
@@ -175,26 +165,28 @@ function describeVerdict(
   aligned: number,
   opposing: number,
   neutral: number,
-  higherConflicts: EntryCheckTimeframe[]
+  unavailable: number,
+  disagreeing: EntryCompassStance[]
 ): string {
   const side = direction === 'LONG' ? 'long' : 'short';
 
   if (verdict === 'ALIGNED') {
-    return `${aligned} of ${aligned + opposing + neutral} timeframes back the ${side} setup.`;
+    return `${aligned} of ${aligned + opposing + neutral} compasses back the ${side} setup.`;
   }
 
   if (verdict === 'AGAINST') {
-    return `${opposing} of ${aligned + opposing + neutral} timeframes oppose this ${side}. The market disagrees.`;
+    return `${opposing} of ${aligned + opposing + neutral} compasses oppose this ${side}. The market disagrees.`;
   }
 
   if (aligned + opposing === 0) {
-    return 'No timeframe has taken a side yet — nothing to align with.';
+    return 'No compass has taken a side yet — nothing to align with.';
   }
 
-  if (higherConflicts.length > 0) {
-    const names = higherConflicts.map(frame => frame.label).join(', ');
-    return `Mixed, and ${names} disagree${higherConflicts.length === 1 ? 's' : ''} with this ${side}.`;
+  if (disagreeing.length > 0) {
+    const names = disagreeing.map(compass => compass.label).join(' and ');
+    return `Mixed: ${names} disagree${disagreeing.length === 1 ? 's' : ''} with this ${side}, so it is not a clean setup.`;
   }
 
-  return `Mixed: ${aligned} agree, ${opposing} disagree, ${neutral} neutral. Not a clean ${side}.`;
+  const extra = unavailable > 0 ? `, ${unavailable} with no reading` : '';
+  return `Mixed: ${aligned} agree, ${opposing} disagree, ${neutral} neutral${extra}.`;
 }

@@ -33,13 +33,17 @@ import {
 import { mergeLiveTail, upsertLastCandle } from '../core/candles';
 import { TIMEFRAME_MINUTES } from '../core/types';
 import { marketState, type MarketStateResult } from '../core/marketHours';
+import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 
 /** The base timeframe the live tail is merged from. */
 export const BASE_TIMEFRAME: Timeframe = '1m';
 export const BASE_INTERVAL_MINUTES = 1;
 const BASE_CANDLE_LIMIT = 1000;
-/** Higher timeframes are fetched natively, so 300 bars already covers years. */
-const TIMEFRAME_CANDLE_LIMIT = 300;
+/**
+ * Candles requested per timeframe. At least 250 so EMA 200 is valid; a single
+ * request per timeframe, so the wider window costs the same one credit.
+ */
+const TIMEFRAME_CANDLE_LIMIT = Math.max(250, DEFAULT_COMPASS_CONFIG.requestedCandles);
 /**
  * Timeframes whose bucket boundary lines up with the base series, so their
  * newest bar can be rebuilt from the live base tail. Weekly is excluded: its
@@ -102,6 +106,10 @@ export interface InstrumentFeed {
   market: MarketStateResult;
   /** Bumped whenever the candle series changes, for downstream memo keys. */
   revision: number;
+  /** Timeframes with a request in flight, so the buttons can be disabled. */
+  loadingTimeframes: Timeframe[];
+  /** Timeframes already fetched this session, keyed by asset + timeframe. */
+  loadedTimeframes: Timeframe[];
   /**
    * True when the data on screen is the last known good series because the
    * vendor's credit limit blocked a fresh fetch. The UI marks it stale.
@@ -150,6 +158,9 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [rateLimitedUntil, setRateLimitedUntil] = useState<number | null>(null);
+  // Which timeframes are in flight right now, so the buttons can be disabled
+  // while a request is pending.
+  const [loadingTimeframes, setLoadingTimeframes] = useState<Timeframe[]>([]);
 
   const candlesRef = useRef<Candle[]>(seriesByTimeframe[BASE_TIMEFRAME] ?? []);
   const priceRef = useRef<number>(0);
@@ -209,6 +220,7 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
     dirtyRef.current = false;
     loadedRef.current = new Set(Object.keys(cached?.seriesByTimeframe ?? {}) as Timeframe[]);
     inflightRef.current.clear();
+    setLoadingTimeframes([]);
 
     setSeriesByTimeframe(cached?.seriesByTimeframe ?? {});
     setPrice(priceRef.current);
@@ -232,6 +244,7 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
       if (inflightRef.current.has(timeframe)) return;
 
       inflightRef.current.add(timeframe);
+      setLoadingTimeframes([...inflightRef.current]);
       const controller = controllerRef.current ?? new AbortController();
       controllerRef.current = controller;
 
@@ -272,6 +285,7 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
         }
       } finally {
         inflightRef.current.delete(timeframe);
+        setLoadingTimeframes([...inflightRef.current]);
         setIsLoading(false);
       }
     },
@@ -421,6 +435,8 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
       feedMode,
       market,
       revision,
+      loadingTimeframes,
+      loadedTimeframes: Object.keys(seriesByTimeframe) as Timeframe[],
       stale,
       rateLimitedUntil:
         rateLimitedUntil ?? (serverCredit?.exhausted ? serverCredit.resetAt : null),
@@ -442,6 +458,7 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
       feedMode,
       market,
       revision,
+      loadingTimeframes,
       stale,
       rateLimitedUntil,
       serverCredit?.exhausted,

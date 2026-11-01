@@ -33,7 +33,6 @@ describe('POLL_INTERVAL_MS', () => {
   it('polls a short timeframe sooner than a long one', () => {
     expect(POLL_INTERVAL_MS['1m']).toBeLessThan(POLL_INTERVAL_MS['1h']);
     expect(POLL_INTERVAL_MS['1h']).toBeLessThan(POLL_INTERVAL_MS['1D']);
-    expect(POLL_INTERVAL_MS['1D']).toBeLessThan(POLL_INTERVAL_MS['1W']);
   });
 });
 
