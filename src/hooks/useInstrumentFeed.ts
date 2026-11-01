@@ -8,14 +8,21 @@
 //  * the live price comes from provider.subscribeTicks when the provider has a
 //    tick feed, otherwise it is the last candle close with the fetch time
 //
-// Candle history is cached per instrument so switching instruments and back
-// does not refetch, and live ticks patch the last candle rather than
-// recomputing the whole series.
+// CREDIT MINIMISATION. The feed loads ONE timeframe — the one the user is
+// looking at — not every timeframe the UI can render. Loading all eight on mount
+// cost eight vendor credits per page, which alone can spend a whole minute on a
+// small plan. Switching timeframe fetches the new one on demand and keeps what it
+// already has; switching back is instant and costs nothing.
+//
+// A rate limit is a first-class state, not an error string. The hook shows our
+// own "retrying in Xs" countdown with the last cached series marked stale, and
+// retries exactly once after the reset — never in a loop.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Candle, Timeframe } from '../core/types';
 import type { Instrument, ResolvedSource } from '../core/instruments';
 import {
+  futuresCreditState,
   ProviderError,
   providerForInstrument,
   probeFuturesProvider,
@@ -24,7 +31,7 @@ import {
   type StreamStatus,
 } from '../core/providers';
 import { mergeLiveTail, upsertLastCandle } from '../core/candles';
-import { TIMEFRAMES, TIMEFRAME_MINUTES } from '../core/types';
+import { TIMEFRAME_MINUTES } from '../core/types';
 import { marketState, type MarketStateResult } from '../core/marketHours';
 
 /** The base timeframe the live tail is merged from. */
@@ -45,6 +52,8 @@ const MERGEABLE_TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1D']
 const FLUSH_MS = 200;
 /** A tick this old is reported as delayed rather than live. */
 const LIVE_AGE_MS = 8_000;
+/** A rate limit with no reported reset is retried after this long (ms). */
+const RATE_LIMIT_DEFAULT_RETRY_MS = 60_000;
 
 export interface FeedError {
   kind: ProviderErrorKind;
@@ -56,9 +65,9 @@ export interface InstrumentFeed {
   /** Base-timeframe series, patched live from ticks. */
   candles: Candle[];
   /**
-   * Every timeframe the provider could serve natively. The higher timeframes
-   * are fetched as their own intervals rather than aggregated from the base
-   * series, so a 5m seed cannot cap how far back the weekly reaches.
+   * Every timeframe the feed has loaded so far. The higher timeframes are
+   * fetched as their own intervals when the user selects them, so a 5m seed
+   * cannot cap how far back the weekly reaches.
    */
   seriesByTimeframe: Partial<Record<Timeframe, Candle[]>>;
   price: number;
@@ -80,9 +89,8 @@ export interface InstrumentFeed {
   /** Human label of the source actually serving this instrument. */
   sourceLabel: string;
   /**
-   * What the app is really reading, once the server has resolved a symbol. A
-   * proxy is labelled as a proxy; the UI must never call it the futures
-   * contract.
+   * What the app is really reading. A proxy is labelled as a proxy; the UI must
+   * never call it the futures contract.
    */
   resolvedSource: ResolvedSource | null;
   /**
@@ -94,6 +102,13 @@ export interface InstrumentFeed {
   market: MarketStateResult;
   /** Bumped whenever the candle series changes, for downstream memo keys. */
   revision: number;
+  /**
+   * True when the data on screen is the last known good series because the
+   * vendor's credit limit blocked a fresh fetch. The UI marks it stale.
+   */
+  stale: boolean;
+  /** Epoch ms the rate limit resets, when one is in force. */
+  rateLimitedUntil: number | null;
 }
 
 function toFeedError(error: unknown): FeedError {
@@ -114,12 +129,16 @@ export function clearCandleCache(): void {
   candleCache.clear();
 }
 
-export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
+function limitFor(timeframe: Timeframe): number {
+  return timeframe === BASE_TIMEFRAME ? BASE_CANDLE_LIMIT : TIMEFRAME_CANDLE_LIMIT;
+}
+
+export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Timeframe): InstrumentFeed {
   const provider = providerForInstrument(instrument);
 
-  const [candles, setCandles] = useState<Candle[]>(() => candleCache.get(instrument.id)?.seriesByTimeframe[BASE_TIMEFRAME] ?? []);
+  const initialCache = candleCache.get(instrument.id);
   const [seriesByTimeframe, setSeriesByTimeframe] = useState<Partial<Record<Timeframe, Candle[]>>>(
-    () => candleCache.get(instrument.id)?.seriesByTimeframe ?? {}
+    () => initialCache?.seriesByTimeframe ?? {}
   );
   const [price, setPrice] = useState<number>(0);
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
@@ -130,23 +149,23 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
   const [sourceReachable, setSourceReachable] = useState(true);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  const [rateLimitedUntil, setRateLimitedUntil] = useState<number | null>(null);
 
-  const candlesRef = useRef<Candle[]>(candles);
+  const candlesRef = useRef<Candle[]>(seriesByTimeframe[BASE_TIMEFRAME] ?? []);
   const priceRef = useRef<number>(0);
   const dirtyRef = useRef(false);
-  const streamStatusRef = useRef<StreamStatus>('CONNECTING');
   const activeInstrumentRef = useRef(instrument.id);
-  const mergeableRef = useRef<Timeframe[]>(MERGEABLE_TIMEFRAMES);
+  const seriesRef = useRef(seriesByTimeframe);
+  seriesRef.current = seriesByTimeframe;
 
-  // Mirror the status into a ref so the flush interval reads the current value
-  // without being recreated on every status change.
-  useEffect(() => {
-    streamStatusRef.current = streamStatus;
-  }, [streamStatus]);
+  // Timeframes already fetched (or in flight), so selecting one twice is free.
+  const loadedRef = useRef<Set<Timeframe>>(new Set(Object.keys(seriesByTimeframe) as Timeframe[]));
+  const inflightRef = useRef<Set<Timeframe>>(new Set());
+  const controllerRef = useRef<AbortController | null>(null);
 
   // Futures configuration is a server-side fact; ask the status route first.
-  // Keyed on the provider id, not on capabilities: a futures provider may
-  // advertise a tick feed yet still need the server to confirm a key exists.
+  // The provider caches the answer and shares one in-flight request, so the
+  // selector and this hook asking together costs a single call.
   useEffect(() => {
     if (!provider || provider.id !== 'futures') {
       setConfigured(provider ? provider.isConfigured() : false);
@@ -188,86 +207,100 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
     candlesRef.current = cachedBase;
     priceRef.current = cachedBase.length > 0 ? cachedBase[cachedBase.length - 1].close : 0;
     dirtyRef.current = false;
+    loadedRef.current = new Set(Object.keys(cached?.seriesByTimeframe ?? {}) as Timeframe[]);
+    inflightRef.current.clear();
 
-    setCandles(cachedBase);
     setSeriesByTimeframe(cached?.seriesByTimeframe ?? {});
     setPrice(priceRef.current);
     setError(null);
+    setRateLimitedUntil(null);
     setLastUpdate(cached ? cached.fetchedAt : null);
     setIsLoading(true);
   }, [instrument.id]);
 
-  // Fetch every timeframe natively. The base series is seeded first so the
-  // page can render as soon as it lands; the higher timeframes fill in after.
+  // Fetch one timeframe. On success the series is merged into state and cached;
+  // on a rate limit the hook switches to its own countdown state and schedules a
+  // single retry after the reset.
+  const loadTimeframe = useCallback(
+    async (timeframe: Timeframe) => {
+      if (!provider) return;
+      if (loadedRef.current.has(timeframe)) {
+        // Already in memory: no vendor call, and not loading.
+        setIsLoading(false);
+        return;
+      }
+      if (inflightRef.current.has(timeframe)) return;
+
+      inflightRef.current.add(timeframe);
+      const controller = controllerRef.current ?? new AbortController();
+      controllerRef.current = controller;
+
+      try {
+        const series = await provider.getCandles(instrument, timeframe, limitFor(timeframe), controller.signal);
+        loadedRef.current.add(timeframe);
+
+        const next = { ...seriesRef.current, [timeframe]: series };
+        setSeriesByTimeframe(next);
+
+        // The price is the newest real close we have, whichever timeframe it came
+        // from. Nothing is fabricated: an empty series leaves the price alone.
+        if (series.length > 0) priceRef.current = series[series.length - 1].close;
+        if (timeframe === BASE_TIMEFRAME) candlesRef.current = series;
+        setPrice(priceRef.current);
+        setLastUpdate(Date.now());
+        setError(null);
+        setConfigured(true);
+        setSourceReachable(true);
+        setUnavailableReason(null);
+        setRevision(r => r + 1);
+        candleCache.set(instrument.id, { seriesByTimeframe: next, fetchedAt: Date.now() });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        const feedError = toFeedError(err);
+        if (feedError.kind === 'NOT_CONFIGURED') setConfigured(false);
+
+        if (feedError.kind === 'RATE_LIMIT') {
+          // Our own state, not the vendor's text. The last good series stays on
+          // screen marked stale; the countdown effect below schedules the single
+          // retry for the reset. Nothing here retries in a loop.
+          const retryAfter = err instanceof ProviderError ? err.retryAfterMs : undefined;
+          const delay = Math.max(retryAfter ?? 0, RATE_LIMIT_DEFAULT_RETRY_MS);
+          setRateLimitedUntil(Date.now() + delay);
+          setError({ kind: 'RATE_LIMIT', message: 'Rate limit reached' });
+        } else {
+          setError(feedError);
+        }
+      } finally {
+        inflightRef.current.delete(timeframe);
+        setIsLoading(false);
+      }
+    },
+    [instrument, provider]
+  );
+
+  // Load the selected timeframe. Keyed on the timeframe so selecting a new one
+  // fetches exactly that one; a timeframe already loaded is served from memory.
   useEffect(() => {
     if (!provider) {
       setError({ kind: 'NOT_CONFIGURED', message: `No provider registered for ${instrument.id}` });
       setIsLoading(false);
       return;
     }
+    void loadTimeframe(selectedTimeframe);
+  }, [instrument.id, provider, selectedTimeframe, loadTimeframe]);
 
-    let active = true;
-    const controller = new AbortController();
-
-    const load = async () => {
-      setIsLoading(true);
-      const collected: Partial<Record<Timeframe, Candle[]>> = {};
-      let failed = false;
-
-      // Base first, then the rest. A failure on one timeframe must not blank
-      // the others, so each is caught on its own.
-      for (const timeframe of TIMEFRAMES) {
-        const limit = timeframe === BASE_TIMEFRAME ? BASE_CANDLE_LIMIT : TIMEFRAME_CANDLE_LIMIT;
-        try {
-          const series = await provider.getCandles(instrument, timeframe, limit, controller.signal);
-          if (!active) return;
-          collected[timeframe] = series;
-
-          if (timeframe === BASE_TIMEFRAME) {
-            candlesRef.current = series;
-            if (series.length > 0) priceRef.current = series[series.length - 1].close;
-            setCandles(series);
-            setPrice(priceRef.current);
-            setLastUpdate(Date.now());
-            setIsLoading(false);
-          }
-          setSeriesByTimeframe({ ...collected });
-        } catch (err) {
-          if (!active) return;
-          if (err instanceof DOMException && err.name === 'AbortError') return;
-          const feedError = toFeedError(err);
-          setError(feedError);
-          if (feedError.kind === 'NOT_CONFIGURED') setConfigured(false);
-          failed = true;
-          break;
-        }
-      }
-
-      if (!active) return;
-
-      // A failure must survive: overwriting it here would report an instrument
-      // with no usable candles as configured and error-free.
-      if (failed) {
-        setIsLoading(false);
-        return;
-      }
-
-      candleCache.set(instrument.id, { seriesByTimeframe: collected, fetchedAt: Date.now() });
-      setError(null);
-      setConfigured(true);
-      setSourceReachable(true);
-      setUnavailableReason(null);
-      setIsLoading(false);
-      setRevision(r => r + 1);
-    };
-
-    load();
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [provider, instrument, configured]);
+  // A fresh window after the reset: retry the selected timeframe once, then let
+  // the countdown clear itself. This is the only retry; nothing loops.
+  useEffect(() => {
+    if (rateLimitedUntil === null) return;
+    const delay = Math.max(0, rateLimitedUntil - Date.now()) + 250;
+    const timer = window.setTimeout(() => {
+      setRateLimitedUntil(null);
+      loadedRef.current.delete(selectedTimeframe);
+      void loadTimeframe(selectedTimeframe);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [rateLimitedUntil, selectedTimeframe, loadTimeframe]);
 
   // Live ticks, when the provider has them. A provider without a tick feed
   // simply leaves the price at the last candle close.
@@ -276,7 +309,6 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       setStreamStatus(provider ? 'UNAVAILABLE' : 'OFFLINE');
       return;
     }
-
     let active = true;
     const subscription = provider.subscribeTicks(instrument, {
       onStatus: status => {
@@ -308,23 +340,20 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       dirtyRef.current = false;
 
       const series = candlesRef.current;
-      setCandles(series);
       setPrice(priceRef.current);
       setLastUpdate(Date.now());
 
       // Advance the mergeable higher timeframes from the live base tail so
       // they move with the market instead of freezing at the last fetch.
-      if (mergeableRef.current.length > 0 && series.length > 0) {
-        setSeriesByTimeframe(prev => {
-          const next = { ...prev };
-          for (const timeframe of mergeableRef.current) {
-            const native = prev[timeframe];
-            if (!native) continue;
-            next[timeframe] = mergeLiveTail(native, series, TIMEFRAME_MINUTES[timeframe]);
-          }
-          return next;
-        });
-      }
+      setSeriesByTimeframe(prev => {
+        const next = { ...prev };
+        for (const timeframe of MERGEABLE_TIMEFRAMES) {
+          const native = prev[timeframe];
+          if (!native) continue;
+          next[timeframe] = mergeLiveTail(native, series, TIMEFRAME_MINUTES[timeframe]);
+        }
+        return next;
+      });
     }, FLUSH_MS);
 
     return () => clearInterval(interval);
@@ -336,13 +365,19 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
   // label. Read on each render so it reflects the last candles response.
   const resolvedSource = resolvedSourceFor(instrument.id) ?? null;
 
-  // A tick feed that reports UNAVAILABLE means the provider fell back to REST
-  // polling. That is a delayed feed, and it is labelled as one.
+  const candles = useMemo(() => seriesByTimeframe[BASE_TIMEFRAME] ?? [], [seriesByTimeframe]);
+
+  // What the price feed actually is, read from the live status rather than from
+  // the provider's static capability: the provider advertises a tick feed but
+  // falls back to REST polling when the server has no browser-safe stream, and a
+  // polled price is delayed, not live.
   const feedMode: 'STREAM' | 'POLL' | 'NONE' = useMemo(() => {
     if (!provider) return 'NONE';
-    if (streamStatus === 'UNAVAILABLE') return 'POLL';
-    if (provider.capabilities.ticks) return 'STREAM';
-    return candles.length > 0 ? 'POLL' : 'NONE';
+    if (streamStatus === 'CONNECTING' || streamStatus === 'LIVE' || streamStatus === 'RECONNECTING') {
+      return 'STREAM';
+    }
+    if (candles.length > 0) return 'POLL';
+    return 'NONE';
   }, [provider, streamStatus, candles.length]);
 
   // Whether the market is still producing bars. A closed market must not keep
@@ -356,10 +391,17 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
   // its newest bar is current; the status reflects what is actually true.
   const effectiveStatus: StreamStatus = useMemo(() => {
     if (!provider) return 'OFFLINE';
-    if (streamStatus === 'UNAVAILABLE') return 'UNAVAILABLE';
+    if (rateLimitedUntil !== null) return 'RATE_LIMITED';
+    if (streamStatus === 'UNAVAILABLE' || streamStatus === 'RATE_LIMITED') return 'UNAVAILABLE';
     if (provider.capabilities.ticks) return streamStatus;
     return candles.length > 0 ? 'LIVE' : streamStatus;
-  }, [provider, streamStatus, candles.length]);
+  }, [provider, streamStatus, candles.length, rateLimitedUntil]);
+
+  const stale = rateLimitedUntil !== null || (error?.kind === 'RATE_LIMIT' && candles.length > 0);
+
+  // Server-reported meter state, so a cold start with an exhausted meter is
+  // visible before the first candles request lands.
+  const serverCredit = futuresCreditState();
 
   return useMemo(
     () => ({
@@ -379,6 +421,9 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       feedMode,
       market,
       revision,
+      stale,
+      rateLimitedUntil:
+        rateLimitedUntil ?? (serverCredit?.exhausted ? serverCredit.resetAt : null),
     }),
     [
       instrument,
@@ -397,6 +442,10 @@ export function useInstrumentFeed(instrument: Instrument): InstrumentFeed {
       feedMode,
       market,
       revision,
+      stale,
+      rateLimitedUntil,
+      serverCredit?.exhausted,
+      serverCredit?.resetAt,
     ]
   );
 }

@@ -21,6 +21,7 @@ import { TechnicalMetricsPanel } from '../components/compass/TechnicalMetricsPan
 import { EntryCheckPanel } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
+import type { Timeframe } from '../core/types';
 import { probeFuturesProvider } from '../core/providers';
 import { checkEntry, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
@@ -49,6 +50,7 @@ const STATUS_TEXT: Record<string, string> = {
   // The provider has candles but no live feed; the price is a REST poll, so it
   // is delayed by definition and must not be dressed as a live tick.
   UNAVAILABLE: 'Delayed (polling)',
+  RATE_LIMITED: 'Rate limit',
 };
 
 const STATUS_TONE: Record<string, string> = {
@@ -57,7 +59,28 @@ const STATUS_TONE: Record<string, string> = {
   RECONNECTING: 'text-amber-400',
   OFFLINE: 'text-[#ef5350]',
   UNAVAILABLE: 'text-amber-400',
+  RATE_LIMITED: 'text-amber-400',
 };
+
+/**
+ * "Rate limit — retrying in 12s". Our own wording, never the vendor's raw text:
+ * the raw message is an internal detail, and the countdown is the useful part.
+ */
+function RateLimitNotice({ until }: { until: number }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const seconds = Math.max(0, Math.ceil((until - now) / 1_000));
+  return (
+    <span className="font-bold text-amber-400">
+      Rate limit — retrying in {seconds}s
+    </span>
+  );
+}
 
 /** "GC1! · Gold futures (continuous)" — the symbol and what it really is. */
 function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null {
@@ -70,13 +93,16 @@ function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null
 const Index: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string>(DEFAULT_INSTRUMENT_ID);
   const [entryDirection, setEntryDirection] = useState<EntryDirection>('LONG');
+  // The timeframe the user is looking at. It is the only timeframe the feed
+  // fetches on load; the rest load on demand when selected.
+  const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('15m');
   const instrument: Instrument = useMemo(
     () => findInstrument(selectedId) ?? findInstrument(DEFAULT_INSTRUMENT_ID)!,
     [selectedId]
   );
 
-  const feed = useInstrumentFeed(instrument);
-  const { reading, selected, setSelected } = useMultiTimeframeCompass(feed);
+  const feed = useInstrumentFeed(instrument, selectedTimeframe);
+  const { reading } = useMultiTimeframeCompass(feed);
 
   // Whether the futures source is configured is a server-side fact. The feed
   // only asks for the selected instrument, so ask once here too: otherwise the
@@ -111,7 +137,7 @@ const Index: React.FC = () => {
     return map;
   }, [instrument.id, feed.configured, futuresConfigured]);
 
-  const frame = reading?.timeframes.find(t => t.timeframe === selected) ?? null;
+  const frame = reading?.timeframes.find(t => t.timeframe === selectedTimeframe) ?? null;
   const pricePrecision = instrument.precision;
 
   // The entry check reads every timeframe's summary, so it answers "does the
@@ -158,11 +184,25 @@ const Index: React.FC = () => {
                 <span className="ml-1 text-label font-normal text-white/40">{instrument.quote}</span>
               </span>
               <span className="flex items-center gap-1.5">
-                <span className={cn('font-bold', STATUS_TONE[feed.streamStatus])}>
-                  ● {STATUS_TEXT[feed.streamStatus] ?? feed.streamStatus}
-                </span>
+                {feed.stale && feed.rateLimitedUntil !== null ? (
+                  <RateLimitNotice until={feed.rateLimitedUntil} />
+                ) : (
+                  <span className={cn('font-bold', STATUS_TONE[feed.streamStatus])}>
+                    ● {STATUS_TEXT[feed.streamStatus] ?? feed.streamStatus}
+                  </span>
+                )}
                 <span className="font-mono text-white/40">{formatClock(feed.lastUpdate)}</span>
               </span>
+              {/* A blocked fetch leaves the last real series on screen. Say so
+                  plainly rather than letting it pass as current. */}
+              {feed.stale && (
+                <span
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
+                  title="The credit limit blocked a fresh fetch; this is the last series we loaded."
+                >
+                  Stale
+                </span>
+              )}
               {/* A closed market is stated plainly: the reading below it is the
                   last real one, not a live one. */}
               {feed.market.state === 'CLOSED' && (
@@ -238,7 +278,7 @@ const Index: React.FC = () => {
         {/* ── Confluence matrix ────────────────────────────────────────── */}
         <Section title="Multi-timeframe confluence" subtitle={`${instrument.id} · all timeframes`}>
           {reading ? (
-            <ConfluenceMatrix reading={reading} selected={selected} onSelect={setSelected} />
+            <ConfluenceMatrix reading={reading} selected={selectedTimeframe} onSelect={setSelectedTimeframe} />
           ) : (
             <p className="py-8 text-center text-body italic text-white/45">
               {feed.isLoading ? 'Loading candles…' : 'No candles available for this instrument.'}
@@ -256,7 +296,7 @@ const Index: React.FC = () => {
         {/* ── Selected timeframe: gauges, tables, structure ────────────── */}
         {frame && (
           <>
-            <Section title="Compass" subtitle={`${instrument.id} · ${selected}`}>
+            <Section title="Compass" subtitle={`${instrument.id} · ${selectedTimeframe}`}>
               {frame.available ? (
                 <>
                   <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
@@ -278,26 +318,26 @@ const Index: React.FC = () => {
                 </>
               ) : (
                 <p className="py-8 text-center text-body italic text-white/45">
-                  {frame.candleCount} candles on {selected} — not enough to compute a reading (needs{' '}
+                  {frame.candleCount} candles on {selectedTimeframe} — not enough to compute a reading (needs{' '}
                   {DEFAULT_COMPASS_CONFIG.minCandles}).
                 </p>
               )}
             </Section>
 
             {frame.available && (
-              <Section title="Timeframe detail" subtitle={`${instrument.id} · ${selected}`}>
+              <Section title="Timeframe detail" subtitle={`${instrument.id} · ${selectedTimeframe}`}>
                 <TimeframeCard reading={frame} precision={pricePrecision} quote={instrument.quote} />
               </Section>
             )}
 
             {frame.available && (
-              <Section title="Technical metrics" subtitle={`${instrument.id} · ${selected}`}>
+              <Section title="Technical metrics" subtitle={`${instrument.id} · ${selectedTimeframe}`}>
                 <TechnicalMetricsPanel
                   metrics={frame.metrics}
                   precision={pricePrecision}
                   quote={instrument.quote}
                   session={DEFAULT_COMPASS_CONFIG.session}
-                  timeframe={selected}
+                  timeframe={selectedTimeframe}
                 />
               </Section>
             )}

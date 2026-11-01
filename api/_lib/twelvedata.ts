@@ -24,9 +24,24 @@
 // error KIND is read from the message (see classifyError) rather than the status
 // code. That is what lets the client distinguish "not entitled on your plan"
 // from "you are out of credits" from "the vendor is down".
+//
+// Every request here runs through the credit meter (api/_lib/creditMeter.ts):
+// the meter is checked before the call and the vendor's own api-credits-used /
+// api-credits-left headers are recorded after it, and one line is logged per
+// request. There is no path in this file that reaches the vendor without it.
 
 import type { Candle } from '../../src/core/types.js';
 import { isEntitlementError, isRateLimitError } from './symbols.js';
+import {
+  assertCredits,
+  CreditLimitError,
+  markExhausted,
+  meterSnapshot,
+  readVendorUsage,
+  recordCredits,
+  type MeterSnapshot,
+  type VendorUsage,
+} from './creditMeter.js';
 
 export interface TimeSeriesValue {
   datetime: string;
@@ -69,11 +84,14 @@ export type VendorErrorKind = 'ENTITLEMENT' | 'RATE_LIMIT' | 'NETWORK' | 'UPSTRE
 /** An upstream failure with the kind already worked out. */
 export class TwelveDataError extends Error {
   kind: VendorErrorKind;
+  /** When a rate limit is in force, epoch ms the meter resets. */
+  retryAfterMs?: number;
 
-  constructor(kind: VendorErrorKind, message: string) {
+  constructor(kind: VendorErrorKind, message: string, retryAfterMs?: number) {
     super(message);
     this.name = 'TwelveDataError';
     this.kind = kind;
+    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -82,6 +100,100 @@ export function classifyError(message: string, status = 0): VendorErrorKind {
   if (status === 429 || isRateLimitError(message)) return 'RATE_LIMIT';
   if (isEntitlementError(message)) return 'ENTITLEMENT';
   return 'UPSTREAM';
+}
+
+/**
+ * Pull the "N API credits were used" figure out of a vendor rate-limit message.
+ *
+ * The vendor's own number beats our tally, so it is adopted when present. Returns
+ * undefined for any other message, leaving the meter to fall back on its count.
+ */
+export function parseReportedCredits(message: string): number | undefined {
+  const match = /(\d+)\s+api\s+credits?\s+were\s+used/i.exec(message);
+  if (!match) return undefined;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * One server-side line per vendor request.
+ *
+ * Deliberately a single line: timestamp, endpoint, symbol, timeframe, the credits
+ * assumed, the vendor's response status, and — when the response carried them —
+ * the vendor's own credit-usage figures, which are the source of truth. This is
+ * the record that answers "what spent the credits?" after the fact.
+ */
+export function logVendorRequest(fields: {
+  endpoint: string;
+  symbol: string;
+  timeframe?: string;
+  credits: number;
+  status: number | string;
+  usage?: VendorUsage;
+  meter: MeterSnapshot;
+  note?: string;
+}): void {
+  const parts = [
+    `[twelvedata] ${new Date().toISOString()}`,
+    `endpoint=${fields.endpoint}`,
+    `symbol=${fields.symbol}`,
+    fields.timeframe ? `timeframe=${fields.timeframe}` : null,
+    `credits=${fields.credits}`,
+    `status=${fields.status}`,
+    fields.usage?.used !== undefined ? `vendorUsed=${fields.usage.used}` : 'vendorUsed=-',
+    fields.usage?.left !== undefined ? `vendorLeft=${fields.usage.left}` : 'vendorLeft=-',
+    `meterUsed=${fields.meter.used}/${fields.meter.limit}`,
+    fields.meter.exhausted ? 'meter=EXHAUSTED' : 'meter=OK',
+    fields.note ? `note=${fields.note}` : null,
+  ].filter((part): part is string => part !== null);
+
+  console.log(parts.join(' '));
+}
+
+/**
+ * Run one vendor call under the meter.
+ *
+ * The order matters and is the whole point of the module: the meter is consulted
+ * BEFORE the fetch (so a call that would breach the minute is refused without
+ * spending anything), and the response is recorded AFTER it (so the next call
+ * sees the truth). Every vendor request in this codebase goes through here.
+ */
+async function meteredFetch(
+  url: string,
+  cost: { endpoint: string; symbol: string; timeframe?: string; credits: number },
+  init: RequestInit
+): Promise<{ response: Response; usage: VendorUsage }> {
+  try {
+    assertCredits(cost.credits);
+  } catch (error) {
+    if (error instanceof CreditLimitError) {
+      logVendorRequest({
+        endpoint: cost.endpoint,
+        symbol: cost.symbol,
+        timeframe: cost.timeframe,
+        credits: cost.credits,
+        status: 'BLOCKED',
+        meter: meterSnapshot(),
+        note: error.message,
+      });
+      throw new TwelveDataError('RATE_LIMIT', error.message, error.resetAt - Date.now());
+    }
+    throw error;
+  }
+
+  const response = await fetch(url, init);
+  const usage = readVendorUsage(response.headers);
+  const meter = recordCredits(cost, usage);
+  logVendorRequest({
+    endpoint: cost.endpoint,
+    symbol: cost.symbol,
+    timeframe: cost.timeframe,
+    credits: cost.credits,
+    status: response.status,
+    usage,
+    meter,
+  });
+  return { response, usage };
 }
 
 function num(value: unknown): number {
@@ -176,11 +288,13 @@ export async function fetchTimeSeries({
 
   let response: Response;
   try {
-    response = await fetch(`https://api.twelvedata.com/time_series?${params.toString()}`, {
-      signal,
-      headers: { Accept: 'application/json' },
-    });
+    ({ response } = await meteredFetch(
+      `https://api.twelvedata.com/time_series?${params.toString()}`,
+      { endpoint: 'time_series', symbol, timeframe, credits: 1 },
+      { signal, headers: { Accept: 'application/json' } }
+    ));
   } catch (error) {
+    if (error instanceof TwelveDataError) throw error;
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new TwelveDataError('NETWORK', 'Could not reach Twelve Data');
   }
@@ -196,13 +310,16 @@ export async function fetchTimeSeries({
 
   if (payload.status === 'error') {
     const message = payload.message ?? 'Twelve Data returned an error';
-    throw new TwelveDataError(classifyError(message, response.status), message);
+    const kind = classifyError(message, response.status);
+    throw new TwelveDataError(kind, message, kind === 'RATE_LIMIT' ? handleRateLimit(message) : undefined);
   }
 
   if (!response.ok) {
+    const kind = classifyError(`HTTP ${response.status}`, response.status);
     throw new TwelveDataError(
-      classifyError(`HTTP ${response.status}`, response.status),
-      `Twelve Data returned HTTP ${response.status}`
+      kind,
+      `Twelve Data returned HTTP ${response.status}`,
+      kind === 'RATE_LIMIT' ? handleRateLimit('') : undefined
     );
   }
 
@@ -213,6 +330,18 @@ export async function fetchTimeSeries({
     instrumentType: payload.meta?.type,
     exchange: payload.meta?.exchange,
   };
+}
+
+/**
+ * Mark the meter exhausted for the rest of the minute and return the reset delay.
+ *
+ * The vendor reported a rate limit, so no further call can succeed until the
+ * minute rolls over. Stopping here is what keeps a blocked request from turning
+ * into a retry storm that keeps the account pinned at its ceiling.
+ */
+function handleRateLimit(message: string): number {
+  const snapshot = markExhausted(Date.now(), parseReportedCredits(message));
+  return Math.max(0, snapshot.resetAt - Date.now());
 }
 
 // ============================================
@@ -236,14 +365,22 @@ export interface SymbolSearchResponse {
 
 export async function searchSymbols(query: string, apiKey: string, signal?: AbortSignal): Promise<SymbolSearchMatch[]> {
   const params = new URLSearchParams({ symbol: query, apikey: apiKey, format: 'JSON' });
-  const response = await fetch(`https://api.twelvedata.com/symbol_search?${params.toString()}`, {
-    signal,
-    headers: { Accept: 'application/json' },
-  });
+  let response: Response;
+  try {
+    ({ response } = await meteredFetch(
+      `https://api.twelvedata.com/symbol_search?${params.toString()}`,
+      { endpoint: 'symbol_search', symbol: query, credits: 1 },
+      { signal, headers: { Accept: 'application/json' } }
+    ));
+  } catch (error) {
+    if (error instanceof TwelveDataError) throw error;
+    throw new TwelveDataError('NETWORK', 'Could not reach Twelve Data');
+  }
   const payload = (await response.json()) as SymbolSearchResponse;
   if (payload.status === 'error') {
     const message = payload.message ?? 'symbol_search failed';
-    throw new TwelveDataError(classifyError(message, response.status), message);
+    const kind = classifyError(message, response.status);
+    throw new TwelveDataError(kind, message, kind === 'RATE_LIMIT' ? handleRateLimit(message) : undefined);
   }
   return Array.isArray(payload.data) ? payload.data : [];
 }

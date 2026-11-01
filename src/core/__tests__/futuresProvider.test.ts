@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearFuturesCaches,
+  futuresCreditState,
   futuresProvider,
   probeFuturesProvider,
   resolvedSourceFor,
@@ -88,5 +89,32 @@ describe('probeFuturesProvider', () => {
 
     expect(resolvedSourceFor('ES')?.kind).toBe('proxy');
     expect(resolvedSourceFor('ES')?.description).toBe('SPDR S&P 500 ETF');
+  });
+
+  it('records the credit meter state the status route reports', async () => {
+    vi.stubGlobal('fetch', async () =>
+      jsonResponse({
+        configured: true,
+        credits: { limit: 8, used: 8, remaining: 0, resetAt: 1_700_000_060_000, exhausted: true, coldStart: false, reason: null },
+      })
+    );
+
+    await probeFuturesProvider();
+
+    expect(futuresCreditState()).toMatchObject({ limit: 8, used: 8, exhausted: true });
+  });
+
+  it('shares one in-flight status request between concurrent callers', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', async () => {
+      calls += 1;
+      return jsonResponse({ configured: true });
+    });
+
+    await Promise.all([probeFuturesProvider(), probeFuturesProvider()]);
+
+    // Two callers, one request: the status route costs no credits, but there is
+    // no reason to ask twice.
+    expect(calls).toBe(1);
   });
 });
