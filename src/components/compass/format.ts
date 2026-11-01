@@ -91,3 +91,24 @@ export function formatClock(ms: number | null): string {
   if (!ms) return '--';
   return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
+
+/** "42s ago", "2 min ago", "1h 5m ago" — how old a reading is. */
+export function formatAge(updatedAt: number | null, now = Date.now()): string {
+  if (!updatedAt) return '--';
+  const seconds = Math.max(0, Math.round((now - updatedAt) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m ago`;
+}
+
+/** A signed number with a leading + for positives, e.g. "+12.50". */
+export function formatSigned(value: number, precision: number): string {
+  return `${value > 0 ? '+' : ''}${formatNumber(value, precision)}`;
+}
+
+/** A signed percentage, e.g. "+0.42%". */
+export function formatSignedPercent(value: number, precision = 2): string {
+  return `${value > 0 ? '+' : ''}${value.toFixed(precision)}%`;
+}

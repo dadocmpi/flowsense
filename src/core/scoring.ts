@@ -119,17 +119,17 @@ export function buildGauge(
 }
 
 /**
- * The combined summary gauge: the two component gauges blended by the
- * configured weights. Blending happens on the signed scores, so a neutral MA
- * block cannot drag a strong indicator block to the opposite side.
+ * The LEFT "Technical indicators" gauge: the moving averages and the oscillators
+ * blended by the configured weights. Blending happens on the signed scores, so a
+ * neutral MA block cannot drag a strong oscillator block to the opposite side.
  */
-export function buildSummaryGauge(
+export function buildTechnicalGauge(
   movingAverages: GaugeReading,
   indicators: GaugeReading,
   config: CompassConfig
 ): GaugeReading {
-  const maWeight = config.gaugeBlend.movingAverages;
-  const indWeight = config.gaugeBlend.indicators;
+  const maWeight = config.technicalBlend.movingAverages;
+  const indWeight = config.technicalBlend.indicators;
   const total = maWeight + indWeight;
 
   const score =
@@ -149,78 +149,36 @@ export function buildSummaryGauge(
   };
 }
 
-export interface ConfluenceResult {
-  /** Weighted bias across every available timeframe, -100..+100. */
-  bias: number;
-  label: ScoreLabel;
-  /** How many timeframes agree with the bias direction. */
-  agreeing: number;
-  /** How many timeframes produced a directional vote. */
-  directional: number;
-  /** How many timeframes were available at all. */
-  available: number;
-  /** 0-100: share of the weighted directional vote backing the bias. */
-  agreement: number;
-  /** The direction timeframes agree on, or null when they are split. */
-  direction: 'BULLISH' | 'BEARISH' | null;
-}
-
 /**
- * Multi-timeframe confluence: each timeframe's signed score is weighted and
- * averaged. Agreement is measured on the weighted directional votes, so one
- * strong daily reading is not drowned out by four flat intraday ones.
+ * The CENTER "Summary" gauge: the technical reading blended with order flow.
+ *
+ * With no order-flow source configured there is nothing to blend, so the summary
+ * is the technical gauge itself — never a zero-filled stand-in. The UI labels
+ * that case rather than pretending a second input exists.
  */
-export function computeConfluence(
-  readings: Array<{ timeframe: string; score: number; available: boolean }>,
+export function buildSummaryGauge(
+  technical: GaugeReading,
+  orderFlow: GaugeReading | null,
   config: CompassConfig
-): ConfluenceResult {
-  let weightedSum = 0;
-  let totalWeight = 0;
-  let bullishWeight = 0;
-  let bearishWeight = 0;
-  let available = 0;
-  let directional = 0;
+): GaugeReading {
+  if (!orderFlow) return technical;
 
-  for (const reading of readings) {
-    if (!reading.available) continue;
-    available += 1;
+  const techWeight = config.orderFlowBlend.technical;
+  const flowWeight = config.orderFlowBlend.orderFlow;
+  const total = techWeight + flowWeight;
 
-    const weight = config.timeframeWeights[reading.timeframe as keyof typeof config.timeframeWeights] ?? 0;
-    if (weight <= 0) continue;
-
-    weightedSum += reading.score * weight;
-    totalWeight += weight;
-
-    if (reading.score > 0) {
-      bullishWeight += weight;
-      directional += 1;
-    } else if (reading.score < 0) {
-      bearishWeight += weight;
-      directional += 1;
-    }
-  }
-
-  const bias = totalWeight === 0 ? 0 : clampScore(weightedSum / totalWeight);
-  const label = labelFromScore(bias, config);
-
-  const sideWeight = bullishWeight + bearishWeight;
-  const winningWeight = Math.max(bullishWeight, bearishWeight);
-  const agreement = sideWeight === 0 ? 0 : Math.round((winningWeight / sideWeight) * 100);
-
-  const direction: ConfluenceResult['direction'] =
-    bullishWeight > bearishWeight ? 'BULLISH' : bearishWeight > bullishWeight ? 'BEARISH' : null;
-
-  const agreeing = direction === 'BULLISH' ? bullishWeight : bearishWeight;
-  const agreeingCount = direction === null ? 0 : Math.round((agreeing / Math.max(1, sideWeight)) * directional);
+  const score =
+    total === 0 ? 0 : clampScore((technical.score * techWeight + orderFlow.score * flowWeight) / total);
 
   return {
-    bias,
-    label,
-    agreeing: agreeingCount,
-    directional,
-    available,
-    agreement,
-    direction,
+    score,
+    label: labelFromScore(score, config),
+    tally: {
+      buy: technical.tally.buy + orderFlow.tally.buy,
+      neutral: technical.tally.neutral + orderFlow.tally.neutral,
+      sell: technical.tally.sell + orderFlow.tally.sell,
+    },
+    details: [...technical.details, ...orderFlow.details],
   };
 }
 
