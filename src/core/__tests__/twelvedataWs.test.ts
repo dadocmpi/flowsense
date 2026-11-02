@@ -15,7 +15,7 @@ describe('parseWsMessage', () => {
   });
 
   it('accepts a numeric price sent as a string', () => {
-    const parsed = parseWsMessage(JSON.stringify({ event: 'price', symbol: 'ES1!', price: '5210.25', timestamp: 1718 }));
+    const parsed = parseWsMessage(JSON.stringify({ event: 'price', symbol: 'SPY', price: '5210.25', timestamp: 1718 }));
     expect(parsed.kind).toBe('PRICE');
     if (parsed.kind !== 'PRICE') return;
     expect(parsed.message.price).toBe(5210.25);
@@ -39,7 +39,7 @@ describe('parseWsMessage', () => {
 
   it('reports a failed subscribe-status with the vendor detail', () => {
     const parsed = parseWsMessage(
-      JSON.stringify({ event: 'subscribe-status', status: 'error', fails: [{ symbol: 'ES1!', message: 'not entitled' }] })
+      JSON.stringify({ event: 'subscribe-status', status: 'error', fails: [{ symbol: 'SPY', message: 'not entitled' }] })
     );
     expect(parsed.kind).toBe('STATUS');
     if (parsed.kind !== 'STATUS') return;

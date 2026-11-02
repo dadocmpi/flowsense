@@ -21,8 +21,15 @@
 // A rate limit is remembered for the rest of the wall-clock minute, which is the
 // unit the vendor actually resets on.
 
+import {
+  DAILY_CAP_WARN_FRACTION,
+  DEFAULT_CREDITS_PER_MINUTE,
+  DEFAULT_DAILY_CAP,
+  parseLimit,
+} from '../../src/config/credits.js';
+
 /** Default per-minute ceiling. Twelve Data's Basic plan allows 8 credits/minute. */
-export const DEFAULT_MINUTE_CREDITS = 8;
+export const DEFAULT_MINUTE_CREDITS = DEFAULT_CREDITS_PER_MINUTE;
 
 /**
  * Credits a cold instance may spend in its first COLD_START_WINDOW_MS.
@@ -68,6 +75,16 @@ export interface MeterSnapshot {
   allowed: boolean;
   /** Why a call is blocked, when it is. */
   reason: string | null;
+  /** The daily cap in force; 0 means no daily cap. */
+  dailyCap: number;
+  /** Credits spent since the daily window opened. */
+  dailyUsed: number;
+  /** Epoch ms the daily window resets (next UTC midnight). */
+  dailyResetAt: number;
+  /** True once the daily spend has reached the cap. */
+  dailyExhausted: boolean;
+  /** True once the daily spend has reached the warning fraction of the cap. */
+  dailyWarn: boolean;
 }
 
 /** Raised when the meter refuses a call; the route maps this onto RATE_LIMIT. */
@@ -93,6 +110,10 @@ interface MeterState {
   exhaustedUntil: number;
   coldStartUntil: number;
   coldStartUsed: number;
+  /** UTC day index the daily tally belongs to. */
+  day: number;
+  /** Credits spent in the current day. */
+  dailyUsed: number;
 }
 
 let state: MeterState = {
@@ -102,7 +123,12 @@ let state: MeterState = {
   exhaustedUntil: 0,
   coldStartUntil: 0,
   coldStartUsed: 0,
+  day: -1,
+  dailyUsed: 0,
 };
+
+/** The daily warning is logged once per day, not once per request. */
+let warnedDaily = false;
 
 /** The wall-clock minute index for an epoch ms. */
 function minuteOf(now: number): number {
@@ -114,25 +140,46 @@ function minuteEnd(now: number): number {
   return (minuteOf(now) + 1) * 60_000;
 }
 
-/** The configured ceiling, from env, validated. */
-function envLimit(): number {
-  const parsed = Number.parseInt((process.env.TWELVE_DATA_CREDITS_PER_MINUTE ?? '').trim(), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MINUTE_CREDITS;
+/** The UTC day index for an epoch ms. */
+function dayOf(now: number): number {
+  return Math.floor(now / 86_400_000);
 }
 
-/** Drop the state whenever the wall-clock minute rolls over. */
+/** Epoch ms the UTC day containing `now` ends. */
+function dayEnd(now: number): number {
+  return (dayOf(now) + 1) * 86_400_000;
+}
+
+/** The configured ceiling, from env, validated. */
+function envLimit(): number {
+  return parseLimit(process.env.TWELVE_DATA_CREDITS_PER_MINUTE, DEFAULT_MINUTE_CREDITS) || DEFAULT_MINUTE_CREDITS;
+}
+
+/** The configured daily cap, from env. 0 (or absent) means "no daily cap". */
+export function dailyCap(): number {
+  return parseLimit(process.env.TWELVE_DATA_DAILY_CAP, DEFAULT_DAILY_CAP);
+}
+
+/** Drop the state whenever the wall-clock minute or UTC day rolls over. */
 function roll(now: number): void {
   const minute = minuteOf(now);
-  if (state.minute === minute) return;
-  state = {
-    minute,
-    used: 0,
-    // A vendor-reported limit outlives the minute: it describes the plan.
-    limit: state.limit,
-    exhaustedUntil: 0,
-    coldStartUntil: state.coldStartUntil,
-    coldStartUsed: state.coldStartUsed,
-  };
+  const day = dayOf(now);
+  if (state.minute !== minute || state.day !== day) {
+    const previousDay = state.day;
+    state = {
+      minute,
+      used: state.minute === minute ? state.used : 0,
+      // A vendor-reported limit outlives the minute: it describes the plan.
+      limit: state.limit,
+      exhaustedUntil: 0,
+      coldStartUntil: state.coldStartUntil,
+      coldStartUsed: state.coldStartUsed,
+      day,
+      dailyUsed: previousDay === day ? state.dailyUsed : 0,
+    };
+    // A new UTC day starts the warning over.
+    if (previousDay !== day) warnedDaily = false;
+  }
 }
 
 /** The ceiling in force: the vendor's own number when it has reported one. */
@@ -150,11 +197,19 @@ export function checkCredits(credits: number, now: number = Date.now()): MeterSn
   roll(now);
   const limit = effectiveLimit();
   const resetAt = minuteEnd(now);
+  const cap = dailyCap();
+  const dailyResetAt = dayEnd(now);
   const coldStart = now < state.coldStartUntil;
   const coldStartRemaining = coldStart ? Math.max(0, COLD_START_MAX_CREDITS - state.coldStartUsed) : 0;
+  const dailyUsed = state.dailyUsed;
+  const dailyExhausted = cap > 0 && dailyUsed >= cap;
+  const dailyWarn = cap > 0 && dailyUsed >= Math.floor(cap * DAILY_CAP_WARN_FRACTION);
 
   if (now < state.exhaustedUntil) {
     return blocked('vendor rate limit in force', true);
+  }
+  if (cap > 0 && dailyUsed + credits > cap) {
+    return blocked(`daily cap of ${cap} credits reached (used ${dailyUsed})`, false);
   }
   if (state.used + credits > limit) {
     return blocked(`would exceed ${limit} credits/minute (used ${state.used})`, false);
@@ -173,6 +228,11 @@ export function checkCredits(credits: number, now: number = Date.now()): MeterSn
     coldStartRemaining,
     allowed: true,
     reason: null,
+    dailyCap: cap,
+    dailyUsed,
+    dailyResetAt,
+    dailyExhausted,
+    dailyWarn,
   };
 
   function blocked(reason: string, isColdStart: boolean): MeterSnapshot {
@@ -190,6 +250,11 @@ export function checkCredits(credits: number, now: number = Date.now()): MeterSn
       coldStartRemaining,
       allowed: false,
       reason: isColdStart ? `${reason} (cold start)` : reason,
+      dailyCap: cap,
+      dailyUsed,
+      dailyResetAt,
+      dailyExhausted,
+      dailyWarn,
     };
   }
 }
@@ -249,12 +314,29 @@ export function recordCredits(cost: CreditCost, usage: VendorUsage = {}, now: nu
     state.limit = usage.used + usage.left;
   }
 
+  // The daily tally is our own count of the credits we spent: the vendor reports
+  // usage per minute, not per day, so there is nothing to adopt from a header.
+  state.dailyUsed += cost.credits;
+
   // The first spend starts the cold-start window; it is measured from the
   // instance's first request, not from process start.
   if (state.coldStartUntil === 0) state.coldStartUntil = now + COLD_START_WINDOW_MS;
   if (now < state.coldStartUntil) state.coldStartUsed += cost.credits;
 
-  return checkCredits(0, now);
+  const snapshot = checkCredits(0, now);
+
+  // Warn once, at the moment the daily spend first crosses the warning fraction,
+  // so a deployment sees the cap coming before a vendor call is refused.
+  const cap = snapshot.dailyCap;
+  if (cap > 0 && !warnedDaily && state.dailyUsed >= Math.floor(cap * DAILY_CAP_WARN_FRACTION)) {
+    warnedDaily = true;
+    console.warn(
+      `[twelvedata] ${new Date(now).toISOString()} daily credit warning: ${state.dailyUsed}/${cap} used ` +
+        `(${Math.round((state.dailyUsed / cap) * 100)}%) — raise TWELVE_DATA_DAILY_CAP or the plan`
+    );
+  }
+
+  return snapshot;
 }
 
 /**
@@ -286,5 +368,8 @@ export function resetCreditMeter(): void {
     exhaustedUntil: 0,
     coldStartUntil: 0,
     coldStartUsed: 0,
+    day: -1,
+    dailyUsed: 0,
   };
+  warnedDaily = false;
 }

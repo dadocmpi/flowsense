@@ -1,7 +1,7 @@
 # FlowSense
 
-Multi-timeframe market compass. **Gold futures (GC), S&P 500 futures (ES) and
-Dow Jones futures (YM)** are the instruments this app ships.
+Multi-timeframe market compass. **Gold (GC), S&P 500 (ES), Dow Jones (YM) and
+Nasdaq (NQ)** are the instruments this app ships.
 
 Every number is either a provider response or arithmetic over one. Where a
 figure is not available the app shows an explicit unavailable state — nothing
@@ -11,7 +11,13 @@ is simulated, modelled or back-filled.
 
 | Instruments | Candle source |
 | --- | --- |
-| GC, ES, YM | Twelve Data, via a server-side API route (key never reaches the browser) |
+| GC, ES, YM, NQ | Twelve Data, via a server-side API route (key never reaches the browser) |
+
+By default each instrument reads a spot / ETF **proxy** — Gold `XAU/USD`, S&P 500
+`SPY`, Dow `DIA`, Nasdaq `QQQ` — because Twelve Data does not entitle the
+continuous-futures contracts (`GC1!`, `ES1!`, `YM1!`, `NQ1!`) on every plan; an
+unentitled contract answers "symbol or figi parameter is missing or invalid". A
+proxy is always labelled a proxy, never presented as the futures contract.
 
 ## Timeframes
 
@@ -131,7 +137,7 @@ getCandles(instrument, timeframe, limit, signal): Promise<Candle[]>
 subscribeTicks?(instrument, handlers): StreamHandle   // optional
 ```
 
-- **Futures / Twelve Data** (`src/core/providers/futures.ts`) — GC/ES/YM,
+- **Futures / Twelve Data** (`src/core/providers/futures.ts`) — GC/ES/YM/NQ,
   proxied through `/api/futures/candles` so the key stays server-side. Candles
   plus a polled price (or a browser-safe stream when the server offers one).
 
@@ -145,15 +151,23 @@ the serverless functions under `api/`, never by the browser bundle.
 | --- | --- | --- | --- |
 | `TWELVE_DATA_API_KEY` | yes | — | Server-side credential. The only variable you must set. |
 | `TWELVE_DATA_WS` | no | `true` | Whether the app attempts the vendor price WebSocket. |
-| `TWELVE_DATA_SYMBOL_GC` | no | `GC1!` | The one symbol GC reads. Set it if your plan lacks futures data. |
-| `TWELVE_DATA_SYMBOL_ES` | no | `ES1!` | The one symbol ES reads. |
-| `TWELVE_DATA_SYMBOL_YM` | no | `YM1!` | The one symbol YM reads. |
+| `SYMBOL_GOLD` | no | `XAU/USD` | The one symbol GC reads (Gold spot proxy). |
+| `SYMBOL_SP500` | no | `SPY` | The one symbol ES reads (S&P 500 ETF proxy). |
+| `SYMBOL_DOW` | no | `DIA` | The one symbol YM reads (Dow ETF proxy). |
+| `SYMBOL_NASDAQ` | no | `QQQ` | The one symbol NQ reads (Nasdaq-100 ETF proxy). |
 | `TWELVE_DATA_CREDITS_PER_MINUTE` | no | `8` | Per-minute credit ceiling, when the vendor does not report one. |
+| `TWELVE_DATA_DAILY_CAP` | no | `800` | Daily credit ceiling; `0` disables the daily cap. Warns at 80%, blocks at 100%. |
+| `LIVE_POLL_INTERVAL_MS` | no | `60000` | How often the Summary price and the M1 reading are refreshed. |
+| `NEWS_PROVIDER` | no | — | `fmp` or `finnhub` selects the news source; unset shows "No news source configured". |
+| `NEWS_API_KEY` | no | — | The news vendor's server-side key. Never reaches the browser. |
 | `FUTURES_ROLL_METHOD` | no | `frontMonth` | How the continuous series is described. |
 | `FUTURES_ROLL_ADJUSTMENT` | no | `none` | Adjustment across a roll. |
 | `FUTURES_PROVIDER` | no | — | Legacy; setting the key alone selects Twelve Data. |
 
-Until `TWELVE_DATA_API_KEY` is set, futures instruments render a "no data source
+The symbol defaults and the environment-variable names both live in the one
+config file `src/config/symbols.ts`; `api/_lib/symbols.ts` reads the override.
+
+Until `TWELVE_DATA_API_KEY` is set, the instruments render a "no data source
 configured" state and no numbers at all. `/api/futures/status` reports whether
 the key is present, which symbol each instrument is configured to read, and the
 current credit-meter state.
@@ -162,21 +176,21 @@ current credit-meter state.
 
 Twelve Data entitlement varies by plan, but the app does **not** probe for it at
 runtime. Each instrument has exactly ONE configured symbol in
-`api/_lib/symbols.ts`, and a symbol that fails returns an error for that asset
-instead of spending more credits on another attempt:
+`src/config/symbols.ts`, and a symbol that fails returns an error for that asset
+instead of spending more credits on another attempt. The shipped defaults are
+proxies, because the continuous-futures contracts are not entitled on every plan:
 
 | Instrument | Default symbol | Kind |
 | --- | --- | --- |
-| GC | `GC1!` Gold futures | futures |
-| ES | `ES1!` E-mini S&P 500 | futures |
-| YM | `YM1!` E-mini Dow | futures |
+| GC | `XAU/USD` Gold spot | proxy |
+| ES | `SPY` SPDR S&P 500 ETF | proxy |
+| YM | `DIA` SPDR Dow Jones ETF | proxy |
+| NQ | `QQQ` Invesco QQQ Trust (Nasdaq-100) | proxy |
 
-A runtime walk used to try `GC1!` → `XAU/USD` → `GLD` and remember the first that
-worked, which cost one credit per candidate: on a plan without futures data a
-single page load could spend three credits per timeframe before it found a proxy.
-The symbol is now a configuration fact. **A proxy is always labelled a proxy** —
-in the header and in the page footer — and never presented as the futures
-contract.
+The symbol is a single configuration fact, and no code path builds it from
+another source: the client learns what was requested from the candles/status
+response. **A proxy is always labelled a proxy** — in the header and in the page
+footer — and never presented as the futures contract.
 
 To find the symbol your own plan entitles, run discovery out of band:
 
@@ -186,9 +200,9 @@ TWELVE_DATA_API_KEY=... npm run check:symbols -- --search gold
 ```
 
 The first form probes the known alternatives with one small request each and
-prints a table of what works; pin the winner with `TWELVE_DATA_SYMBOL_GC` etc.
-The second runs a `symbol_search`. Neither runs inside a request, so neither can
-spend credits the meter did not authorise.
+prints a table of what works; pin the winner with `SYMBOL_GOLD` etc. The second
+runs a `symbol_search`. Neither runs inside a request, so neither can spend
+credits the meter did not authorise.
 
 ### API credits
 
@@ -222,14 +236,15 @@ exactly once after the reset. The raw vendor text is never shown.
 
 ### Continuous contracts and the roll
 
-The provider asks for the *continuous* symbol (`GC1!`, `ES1!`, `YM1!`), not a
-specific contract, and the roll is handled upstream. That is deliberate: rolling
-correctly needs the exchange calendar and open interest, which a chart client
-cannot reconstruct from candles alone. `FUTURES_ROLL_METHOD` selects between
-following the front month (a price jump at each roll) and a back-adjusted series
-(returns preserved, pre-roll levels shifted). If your plan does not carry the
-continuous contract, the fallback proxies are spot or ETF series and carry no
-roll at all — the UI labels them accordingly.
+The shipped defaults are spot / ETF proxies, so there is no roll: `XAU/USD`,
+`SPY`, `DIA` and `QQQ` are single continuous series with no contract to roll.
+If you pin a real contract instead — a continuous symbol such as `GC1!` or a
+dated one — the provider asks for it directly and the roll is handled upstream.
+That is deliberate: rolling correctly needs the exchange calendar and open
+interest, which a chart client cannot reconstruct from candles alone.
+`FUTURES_ROLL_METHOD` then selects between following the front month (a price
+jump at each roll) and a back-adjusted series (returns preserved, pre-roll levels
+shifted). A proxy carries no roll at all, and the UI labels it accordingly.
 
 ### Adding another provider
 

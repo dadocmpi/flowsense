@@ -23,8 +23,24 @@
 
 import { fetchTimeSeries, TwelveDataError, type TimeSeriesResult } from './twelvedata.js';
 import { configuredSymbol, type SymbolCandidate } from './symbols.js';
-import { cacheTtlFor } from '../../src/core/providers/polling.js';
+import { serverCacheTtlForPlan } from '../../src/config/credits.js';
+import { DEFAULT_CREDITS_PER_MINUTE } from '../../src/config/credits.js';
 import type { Timeframe } from '../../src/core/types.js';
+
+/**
+ * The per-timeframe cache TTL for the plan this deployment is configured for.
+ *
+ * A bigger plan gets a shorter TTL, so a poller sees a new bar sooner; the
+ * shipped 8-credits/minute plan keeps the conservative cadence. Read once at
+ * module load, which is enough: the plan limit is a deployment fact.
+ */
+function planCacheTtl(): Record<Timeframe, number> {
+  const parsed = Number.parseInt((process.env.TWELVE_DATA_CREDITS_PER_MINUTE ?? '').trim(), 10);
+  const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CREDITS_PER_MINUTE;
+  return serverCacheTtlForPlan(limit);
+}
+
+const CACHE_TTL_MS = planCacheTtl();
 
 export interface ResolvedSymbol {
   candidate: SymbolCandidate;
@@ -87,7 +103,7 @@ export async function loadCandles({
   }
 
   const result = await fetchTimeSeries({ symbol: candidate.symbol, timeframe, limit, apiKey });
-  candleCache.set(key, { result, expiresAt: now + cacheTtlFor(timeframe) });
+  candleCache.set(key, { result, expiresAt: now + (CACHE_TTL_MS[timeframe] ?? 60_000) });
   return { candles: sliceTail(result.candles, limit), resolved: resolvedFrom(candidate, result), cached: false };
 }
 

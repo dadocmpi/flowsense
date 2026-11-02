@@ -41,31 +41,48 @@ describe('loadCandles', () => {
     clearServerCaches();
     resetCreditMeter();
     vi.restoreAllMocks();
-    delete process.env.TWELVE_DATA_SYMBOL_GC;
-    delete process.env.TWELVE_DATA_SYMBOL_ES;
-    delete process.env.TWELVE_DATA_SYMBOL_YM;
+    delete process.env.SYMBOL_GOLD;
+    delete process.env.SYMBOL_SP500;
+    delete process.env.SYMBOL_DOW;
+    delete process.env.SYMBOL_NASDAQ;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete process.env.TWELVE_DATA_SYMBOL_GC;
-    delete process.env.TWELVE_DATA_SYMBOL_ES;
-    delete process.env.TWELVE_DATA_SYMBOL_YM;
+    delete process.env.SYMBOL_GOLD;
+    delete process.env.SYMBOL_SP500;
+    delete process.env.SYMBOL_DOW;
+    delete process.env.SYMBOL_NASDAQ;
   });
 
   it('requests the one configured symbol and never probes another', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {
       calls.push(new URL(url).searchParams.get('symbol') ?? '');
-      return jsonResponse(okPayload('ES1!', ['520.25', '521.5']));
+      return jsonResponse(okPayload('SPY', ['520.25', '521.5']));
     });
 
     const result = await loadCandles({ instrumentId: 'ES', timeframe: '1D', limit: 300, apiKey: 'key' });
 
-    expect(calls).toEqual(['ES1!']);
-    expect(result.resolved.candidate.symbol).toBe('ES1!');
-    expect(result.resolved.candidate.kind).toBe('futures');
+    expect(calls).toEqual(['SPY']);
+    expect(result.resolved.candidate.symbol).toBe('SPY');
+    expect(result.resolved.candidate.kind).toBe('proxy');
     expect(result.candles.map(c => c.close)).toEqual([520.25, 521.5]);
+  });
+
+  it('URL-encodes a symbol containing a slash when calling the vendor', async () => {
+    let requestedUrl = '';
+    vi.stubGlobal('fetch', async (url: string) => {
+      requestedUrl = url;
+      return jsonResponse(okPayload('XAU/USD', ['2330.5']));
+    });
+
+    await loadCandles({ instrumentId: 'GC', timeframe: '1D', limit: 300, apiKey: 'key' });
+
+    // The slash in XAU/USD must be percent-encoded so it never splits the query.
+    expect(requestedUrl).toContain('symbol=XAU%2FUSD');
+    expect(requestedUrl).not.toContain('symbol=XAU/USD');
+    expect(new URL(requestedUrl).searchParams.get('symbol')).toBe('XAU/USD');
   });
 
   it('returns an error for a failing symbol instead of trying another', async () => {
@@ -79,7 +96,7 @@ describe('loadCandles', () => {
       kind: 'ENTITLEMENT',
     });
     // Exactly one attempt: no fallback candidate was tried.
-    expect(calls).toEqual(['GC1!']);
+    expect(calls).toEqual(['XAU/USD']);
   });
 
   it('stops on a rate limit and reports the retry window', async () => {
@@ -94,7 +111,7 @@ describe('loadCandles', () => {
     expect(error).toBeInstanceOf(TwelveDataError);
     expect((error as TwelveDataError).kind).toBe('RATE_LIMIT');
     expect((error as TwelveDataError).retryAfterMs).toBeGreaterThan(0);
-    expect(calls).toEqual(['YM1!']);
+    expect(calls).toEqual(['DIA']);
   });
 
   it('caches a payload so a second call makes no vendor request', async () => {
@@ -133,14 +150,14 @@ describe('loadCandles', () => {
 
   it('reports the configured symbol before any request has been made', () => {
     const known = knownResolution('GC');
-    expect(known?.candidate.symbol).toBe('GC1!');
-    expect(known?.candidate.kind).toBe('futures');
+    expect(known?.candidate.symbol).toBe('XAU/USD');
+    expect(known?.candidate.kind).toBe('proxy');
   });
 
   it('reports an environment override in the resolution', () => {
-    process.env.TWELVE_DATA_SYMBOL_ES = 'SPY';
+    process.env.SYMBOL_SP500 = 'IVV';
     const known = knownResolution('ES');
-    expect(known?.candidate.symbol).toBe('SPY');
+    expect(known?.candidate.symbol).toBe('IVV');
     expect(known?.candidate.kind).toBe('proxy');
   });
 

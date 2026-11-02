@@ -1,15 +1,18 @@
 // ============================================
-// TWELVE DATA SYMBOL MAPPING
+// TWELVE DATA SYMBOL MAPPING (server-side)
 // ============================================
-// The ONE place that decides which upstream symbol each instrument requests.
+// The server-side reader of the ONE symbol catalog: src/config/symbols.ts. This
+// file adds the one thing the config cannot — reading the environment override —
+// and re-exports the catalog so nothing else has to reach across the boundary.
 //
 // There is exactly ONE configured symbol per asset. The app does NOT probe at
 // runtime: probing cost a credit per candidate, so a plan that did not entitle
 // the futures contract spent three credits per timeframe before it found a
 // working proxy — a full page load could spend the whole minute on discovery
-// alone. Instead the working symbol is a configuration fact (see
-// `TWELVE_DATA_SYMBOL_<ID>` in the environment), and a symbol that fails returns
-// an error for that asset rather than spending more credits on another attempt.
+// alone. Instead the working symbol is a configuration fact (the instrument's
+// `SYMBOL_*` environment variable, or the default in src/config/symbols.ts), and
+// a symbol that fails returns an error for that asset rather than spending more
+// credits on another attempt.
 //
 // `kind` tells the UI how to label what it is reading honestly:
 //
@@ -20,62 +23,28 @@
 // configured to read SPY, the UI says "SPY (proxy)".
 //
 // Which symbol a given plan entitles is discovered ONCE, out of band, with
-// `npm run check:symbols`; the answer is pinned here or in the environment.
+// `npm run check:symbols`; the answer is pinned in the config or the environment.
 // Nothing here is fabricated: an unconfigured or failing symbol produces an
 // honest error, never a synthetic series.
 
-export type SymbolKind = 'futures' | 'proxy';
+import {
+  INSTRUMENT_SYMBOLS as SYMBOL_CONFIG,
+  instrumentSymbolConfig,
+  type InstrumentSymbolConfig,
+  type SymbolCandidate,
+  type SymbolKind,
+} from '../../src/config/symbols.js';
 
-export interface SymbolCandidate {
-  /** The symbol string sent to Twelve Data. */
-  symbol: string;
-  kind: SymbolKind;
-  /** Plain-English description shown next to the instrument name. */
-  description: string;
-  /**
-   * True for the exchange-traded continuous contract the instrument is really
-   * about (e.g. GC1!). Such a symbol is only worth using on plans that include
-   * futures data.
-   */
-  continuous?: boolean;
-}
-
-export interface InstrumentSymbols {
-  instrumentId: string;
-  /** Human-readable name, for logs and the discovery CLI. */
-  name: string;
-  /** The single symbol the app requests. No ordered fallback list. */
-  symbol: SymbolCandidate;
-}
+export type { SymbolCandidate, SymbolKind } from '../../src/config/symbols.js';
 
 /**
- * Gold, S&P 500 and Dow Jones.
+ * The catalog of configured instruments, re-exported from the config file so the
+ * routes and the discovery CLI have one source of truth.
  *
- * One symbol each, defaulting to the continuous futures contract. A deployment
- * whose plan does not carry futures data changes the symbol in ONE place — the
- * `TWELVE_DATA_SYMBOL_<ID>` environment variable, or the default below — rather
- * than paying for a runtime walk that probes every alternative.
- *
- * Twelve Data's index symbols (SPX, DJI) are quote-only on some plans and cannot
- * serve time_series, so they are not offered as defaults.
+ * Gold, S&P 500, Dow Jones and Nasdaq. One proxy symbol each by default, because
+ * the continuous-futures contracts are not entitled on every Twelve Data plan.
  */
-export const INSTRUMENT_SYMBOLS: InstrumentSymbols[] = [
-  {
-    instrumentId: 'GC',
-    name: 'Gold',
-    symbol: { symbol: 'GC1!', kind: 'futures', description: 'Gold futures (continuous)', continuous: true },
-  },
-  {
-    instrumentId: 'ES',
-    name: 'S&P 500',
-    symbol: { symbol: 'ES1!', kind: 'futures', description: 'E-mini S&P 500 futures (continuous)', continuous: true },
-  },
-  {
-    instrumentId: 'YM',
-    name: 'Dow Jones',
-    symbol: { symbol: 'YM1!', kind: 'futures', description: 'E-mini Dow futures (continuous)', continuous: true },
-  },
-];
+export const INSTRUMENT_SYMBOLS: InstrumentSymbolConfig[] = SYMBOL_CONFIG;
 
 /**
  * Timezone sent to Twelve Data on every request.
@@ -90,8 +59,8 @@ export const TWELVEDATA_TIMEZONE = 'UTC';
 /** Twelve Data's per-request outputsize ceiling on the shipped plan tier. */
 export const TWELVEDATA_MAX_OUTPUTSIZE = 5000;
 
-export function instrumentSymbols(instrumentId: string): InstrumentSymbols | undefined {
-  return INSTRUMENT_SYMBOLS.find(entry => entry.instrumentId === instrumentId.toUpperCase());
+export function instrumentSymbols(instrumentId: string): InstrumentSymbolConfig | undefined {
+  return instrumentSymbolConfig(instrumentId);
 }
 
 export interface DiscoveryCandidate {
@@ -107,17 +76,19 @@ export interface DiscoveryCandidate {
  *
  * This is a superset of the app's single configured symbol. Discovery exists to
  * find a replacement when the default does not work on a plan, so it still knows
- * the futures-then-proxy options — but only an explicit diagnostic run ever
+ * the proxy-then-futures options — but only an explicit diagnostic run ever
  * touches them. The app itself requests only `configuredSymbol`.
  */
 export const DISCOVERY_CANDIDATES: DiscoveryCandidate[] = [
-  { instrumentId: 'GC', name: 'Gold', symbol: 'GC1!', kind: 'futures', description: 'Gold futures (continuous)' },
   { instrumentId: 'GC', name: 'Gold', symbol: 'XAU/USD', kind: 'proxy', description: 'Gold spot' },
   { instrumentId: 'GC', name: 'Gold', symbol: 'GLD', kind: 'proxy', description: 'SPDR Gold Shares ETF' },
-  { instrumentId: 'ES', name: 'S&P 500', symbol: 'ES1!', kind: 'futures', description: 'E-mini S&P 500 futures (continuous)' },
+  { instrumentId: 'GC', name: 'Gold', symbol: 'GC1!', kind: 'futures', description: 'Gold futures (continuous)' },
   { instrumentId: 'ES', name: 'S&P 500', symbol: 'SPY', kind: 'proxy', description: 'SPDR S&P 500 ETF' },
-  { instrumentId: 'YM', name: 'Dow Jones', symbol: 'YM1!', kind: 'futures', description: 'E-mini Dow futures (continuous)' },
+  { instrumentId: 'ES', name: 'S&P 500', symbol: 'ES1!', kind: 'futures', description: 'E-mini S&P 500 futures (continuous)' },
   { instrumentId: 'YM', name: 'Dow Jones', symbol: 'DIA', kind: 'proxy', description: 'SPDR Dow Jones ETF' },
+  { instrumentId: 'YM', name: 'Dow Jones', symbol: 'YM1!', kind: 'futures', description: 'E-mini Dow futures (continuous)' },
+  { instrumentId: 'NQ', name: 'Nasdaq', symbol: 'QQQ', kind: 'proxy', description: 'Invesco QQQ Trust (Nasdaq-100)' },
+  { instrumentId: 'NQ', name: 'Nasdaq', symbol: 'NQ1!', kind: 'futures', description: 'E-mini Nasdaq-100 futures (continuous)' },
 ];
 
 /** The single symbol configured for an instrument, or undefined if unmapped. */
@@ -126,9 +97,10 @@ export function configuredSymbol(instrumentId: string): SymbolCandidate | undefi
   if (!entry) return undefined;
 
   // A per-instrument environment override pins the symbol in ONE place, so a
-  // deployment whose plan does not carry the default contract never pays for a
-  // runtime probe to discover that.
-  const override = (process.env[`TWELVE_DATA_SYMBOL_${entry.instrumentId}`] ?? '').trim();
+  // deployment whose plan does not carry the default symbol never pays for a
+  // runtime probe to discover that. The variable NAME comes from the config, so
+  // it is declared once.
+  const override = (process.env[entry.envVar] ?? '').trim();
   return override.length > 0 ? overrideCandidate(override) : entry.symbol;
 }
 
@@ -162,6 +134,10 @@ export function isEntitlementError(message: string): boolean {
     lower.includes('subscription') ||
     lower.includes('upgrade') ||
     lower.includes('invalid symbol') ||
+    // The wording Twelve Data returns for a symbol this plan cannot read, e.g.
+    // "symbol or figi parameter is missing or invalid".
+    lower.includes('figi') ||
+    lower.includes('missing or invalid') ||
     lower.includes('not found') ||
     lower.includes('no data') ||
     lower.includes('symbol is not available')

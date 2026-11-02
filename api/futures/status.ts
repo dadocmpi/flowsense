@@ -23,9 +23,18 @@ import {
   type ApiResponse,
 } from '../_lib/futuresShared.js';
 import { knownResolution } from '../_lib/candleCache.js';
-import { INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
+import { configuredSymbol, INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
 import { meterSnapshot } from '../_lib/creditMeter.js';
-import { POLL_INTERVAL_MS } from '../../src/core/providers/polling.js';
+import { POLL_INTERVAL_MS, configuredCreditsPerMinute } from '../../src/core/providers/polling.js';
+
+/**
+ * LIVE_POLL_INTERVAL_MS, default 60s. Read here so the client can drive the
+ * live-quote poll without the value being baked into the bundle.
+ */
+function livePollIntervalMs(): number {
+  const parsed = Number.parseInt((process.env.LIVE_POLL_INTERVAL_MS ?? '').trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+}
 
 export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const vendor = resolveVendor();
@@ -33,14 +42,16 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const meter = meterSnapshot();
 
   // What each instrument is configured to read. The symbol is a configuration
-  // fact now, so it is always known — not "resolved once a request confirmed it".
+  // fact (the SYMBOL_* override when set, else the default in the config), so it
+  // is always known — not "resolved once a request confirmed it".
   const instruments = INSTRUMENT_SYMBOLS.map(entry => {
+    const configured = configuredSymbol(entry.instrumentId) ?? entry.symbol;
     const resolved = knownResolution(entry.instrumentId);
     return {
       instrumentId: entry.instrumentId,
-      symbol: entry.symbol.symbol,
-      kind: entry.symbol.kind,
-      description: entry.symbol.description,
+      symbol: configured.symbol,
+      kind: configured.kind,
+      description: configured.description,
       resolved: resolved
         ? {
             symbol: resolved.candidate.symbol,
@@ -62,6 +73,10 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
     // The vendor WebSocket carries price ticks only.
     websocket: websocketEnabled(),
     pollIntervalsMs: POLL_INTERVAL_MS,
+    // Plan values the client needs to pace itself: the per-minute ceiling and
+    // the live-quote cadence. Neither is a secret; the key never appears here.
+    creditsPerMinute: configuredCreditsPerMinute(),
+    livePollIntervalMs: livePollIntervalMs(),
     instruments,
     // The credit meter, so the client can show a rate-limit state before it even
     // attempts a candles request.
@@ -73,10 +88,15 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
       exhausted: meter.exhausted,
       coldStart: meter.coldStart,
       reason: meter.reason,
+      dailyCap: meter.dailyCap,
+      dailyUsed: meter.dailyUsed,
+      dailyResetAt: meter.dailyResetAt,
+      dailyExhausted: meter.dailyExhausted,
+      dailyWarn: meter.dailyWarn,
     },
     note:
       vendor && hasKey
         ? `Configured: ${vendor}`
-        : 'Set TWELVE_DATA_API_KEY to enable Gold, S&P 500 and Dow.',
+        : 'Set TWELVE_DATA_API_KEY to enable Gold, S&P 500, Dow Jones and Nasdaq.',
   });
 }

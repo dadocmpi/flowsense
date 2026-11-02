@@ -3,17 +3,25 @@
 ## What this app is
 
 FlowSense: a React + TypeScript + Vite multi-timeframe market compass for Gold,
-S&P 500 and Dow futures (GC/ES/YM). Every number is a provider response or
-arithmetic over one. Nothing is simulated.
+S&P 500, Dow Jones and Nasdaq (GC/ES/YM/NQ). Every number is a provider response
+or arithmetic over one. Nothing is simulated.
 
 ## Hard rules
 
 - **Never fabricate market data.** No random walks, no synthetic values, no
   placeholder prices that look real. If data is unavailable, show an honest
   unavailable state (`--`, `DATA: UNAVAILABLE`) and an error kind.
-- **Only ship markets we can source honestly.** Futures come from a configured
-  provider. An instrument with no configured source shows "no data source
-  configured" and no numbers at all — never a placeholder that looks real.
+- **Only ship markets we can source honestly.** Every instrument comes from a
+  configured provider. An instrument with no configured source shows "no data
+  source configured" and no numbers at all — never a placeholder that looks real.
+- **One symbol source.** The upstream symbol for every instrument lives in
+  exactly ONE file, `src/config/symbols.ts` (overridable per instrument by the
+  `SYMBOL_GOLD` / `SYMBOL_SP500` / `SYMBOL_DOW` / `SYMBOL_NASDAQ` environment
+  variables). The shipped defaults are spot / ETF proxies (`XAU/USD`, `SPY`,
+  `DIA`, `QQQ`), never the continuous-futures contracts `GC1!`/`ES1!`/`YM1!`/
+  `NQ1!`, which Twelve Data does not entitle on every plan ("symbol or figi
+  parameter is missing or invalid"). No code path builds a symbol from another
+  source; the client learns what was requested from the server response.
 - **Keys stay server-side.** The futures provider's key is read only by the
   functions under `api/` and must never reach the browser. Verify the bundle
   stays credential-free: `grep -c "apikey" dist/assets/*.js` → must be 0. (A
@@ -31,22 +39,31 @@ src/core/session.ts            session open resolution (RTH/FULL), DST-safe
 src/core/metrics.ts            ATR, VWAP, session range, point of control
 src/core/candles.ts            bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts    ONE timeframe -> the three compasses + structure + metrics
-src/core/entryCheck.ts         do the selected timeframe's compasses agree with a long/short? (pure)
+src/core/entryCheck.ts         does the loaded timeframes' compasses agree with a long/short? (pure)
+src/core/timeframeQueue.ts     multi-timeframe load order + retry rules (pure)
 src/core/marketHours.ts        is the market still producing bars? (pure)
+src/core/news/impact.ts        rule-based event -> asset mapping (pure, no forecasts)
 src/core/providers/            MarketDataProvider interface + the futures provider
 src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
+src/core/providers/live.ts     LiveQuoteProvider interface + the polling adapter
+src/core/providers/news.ts     NewsProvider interface + the server route adapter
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
 src/config/compass.ts          every weight, tolerance and session setting
+src/config/credits.ts          plan-aware credit limits, cache TTLs and queue stagger
+src/config/symbols.ts          the ONE place each instrument's upstream symbol is configured
 src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useTimeframeReadings.ts     one reading per (asset, timeframe), kept apart
+src/hooks/useNewsToday.ts             the "Today" panel's snapshot, through the news route
 api/_lib/creditMeter.ts        the per-minute meter that gates EVERY vendor call
-api/_lib/symbols.ts            the ONE place the single symbol per instrument is mapped
+api/_lib/symbols.ts            server-side reader of the symbol config + the SYMBOL_* env override
 api/_lib/twelvedata.ts         vendor adapter: meter, request, parse, classify error kind
 api/_lib/candleCache.ts        short-lived candle cache (one vendor call per TTL)
+api/_lib/news.ts               THE file to edit to connect a news vendor (server-side key)
 api/futures/candles.ts         server-side futures candle proxy
 api/futures/status.ts          is a key configured, what symbol is read, meter state
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
+api/news/today.ts              server-side news/economic-calendar proxy (key stays here)
 api/orderflow/reading.ts       is an order-flow source configured, and its reading
 api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
@@ -97,34 +114,61 @@ last series marked Stale; never surface the vendor's raw text.
 
 ### Streaming, not polling
 
-There is no candle-close poll and no manual refresh. `useInstrumentFeed` seeds
-candle history with REST calls, then the provider's live feed carries updates:
-high-frequency messages accumulate in refs and one coalesced snapshot commits to
-React state every 200 ms, so the compass and price move within a second or two of
-market activity without re-rendering on every tick.
+`useInstrumentFeed` seeds candle history with REST calls, then the provider's
+live feed carries updates: high-frequency messages accumulate in refs and one
+coalesced snapshot commits to React state every 200 ms, so the compass and price
+move within a second or two of market activity without re-rendering on every tick.
 
-Do not reintroduce a candle-close refresh timer or an interval tied to candle
-close. A dropped socket triggers the client's capped-backoff reconnect; the UI
-shows a reconnecting banner instead of presenting stale data as live. The one
-timer that is required is the rate-limit retry: it fires exactly once, after the
+When the server exposes no browser-safe stream, the price and the M1 reading of
+the SELECTED asset are polled through the live-quote provider
+(`src/core/providers/live.ts`) at `LIVE_POLL_INTERVAL_MS` (default 60s). That is a
+polling ADAPTER behind a `LiveQuoteProvider` interface, not a stream: a streaming
+adapter can be registered later without touching the hook. The status reads
+"Delayed (polling)" for a polled price and the UI shows the data age — do not
+dress a polled close as `LIVE`.
+
+The SELECTED timeframe also re-fetches on a plan-scaled cadence
+(`pollIntervalFor` in `src/core/providers/polling.ts`), so the compasses keep
+moving without a click. Only one timeframe refreshes per tick, and a failed or
+waiting one is left to the queue and the resume effect.
+
+Do not reintroduce a per-candle-close sweep of every timeframe or an interval
+that fetches more than one timeframe at a time. A dropped socket triggers the
+client's capped-backoff reconnect; the UI shows a reconnecting banner instead of
+presenting stale data as live. The rate-limit retry fires exactly once, after the
 reset the server reported, and never in a loop.
 
 ### Timeframes are fetched, not aggregated from one series
 
 There are seven timeframes (1m, 5m, 15m, 30m, 1h, 4h, 1D). Each is requested
 from the provider at its own interval, so a 1m seed cannot cap how far back the
-daily reaches — but only the SELECTED timeframe is fetched on load, one credit
-each, and the rest load on demand when the user selects them. Do not reintroduce
-a mount-time sweep of every timeframe: seven timeframes is seven credits, which
-alone can spend a small plan's whole minute. Each request asks for at least 250
-candles (`requestedCandles` in `src/config/compass.ts`) so EMA 200 is valid; a
-wider window is still ONE request and so still one credit.
+daily reaches. Selecting an asset queues ALL seven: the selected timeframe first
+so the compasses and the table fill immediately, then the base timeframe the live
+price is merged from, then the rest highest-first. The queue runs one request at a
+time, staggered by `queueStaggerMs` so a seven-timeframe sweep stays inside the
+per-minute budget instead of firing seven credits at once. The user never has to
+click each timeframe. The order and the retry rules are pure and live in
+`src/core/timeframeQueue.ts` (`loadOrder`, `shouldQueue`, `queueable`).
+
+Each request asks for at least 250 candles (`requestedCandles` in
+`src/config/compass.ts`) so EMA 200 is valid; a wider window is still ONE request
+and so still one credit.
 
 Readings are keyed by `asset:timeframe` in `useTimeframeReadings`, so switching
-timeframes never mixes their series and a chip for a timeframe loaded earlier
-still shows that timeframe's own reading and its age. The entry-check chip row
-fills ONLY from timeframes already loaded this session; an unloaded timeframe
-reads "Not loaded" and is never fetched to fill a chip.
+timeframes never mixes their series. INDEPENDENT STATE per (asset, timeframe):
+data, status, error and last-update are kept apart, and a failure or a rate limit
+on one timeframe never blanks, overwrites or blocks another. Switching the
+selected timeframe only changes what the compasses and the table show, instantly
+and with no new request when the series is cached.
+
+A rate limit marks only the affected timeframes `waiting` and pauses the queue
+until the credit window the server reported; on resume only the waiting
+timeframes are retried. A non-rate-limit failure is `error` and is NEVER retried
+in a loop — a symbol or plan problem does not fix itself. The entry-check chip row
+fills from this state (Loading / Waiting for credits / Agrees / Disagrees /
+Neutral / No data) and the confluence is recomputed from the loaded timeframes
+only (`confluenceCheck` in `src/core/entryCheck.ts`); a timeframe with no reading
+is excluded, never guessed at.
 
 The live stream carries the 1m bar;
 the newest bar of the mergeable timeframes (5m, 15m, 30m, 1h, 4h, 1D) is
@@ -160,22 +204,26 @@ still 0 after adding one.
 
 The main screen, top to bottom, and it fits 1920x1080 without scrolling: the top
 bar (price, feed state, provenance, asset tabs, timeframe buttons), three
-compasses in one row, then the merged technical table (two thirds) beside the
-entry check (one third).
+compasses in one row, then the merged technical table (two thirds) beside a right
+column holding the entry check (one third) with the "Today" news/events panel
+directly below it. The Today panel scrolls internally; the page itself never
+grows a scrollbar.
 
 The timeframe buttons carry the LABEL ONLY — M1 M5 M15 M30 1H 4H 1D. No score,
 no signal word, no colour that implies a signal; only the selected one is
-highlighted, and every button is disabled while a request is in flight.
+highlighted. Selecting a timeframe switches the compasses and the table from
+memory (or moves it to the front of the load queue when it is not loaded yet); it
+does not need a click per timeframe.
 
 There is no multi-timeframe confluence grid, no "Timeframe detail" panel and no
 separate "Technical metrics" panel. Do not re-add them. There is exactly ONE
 technical table, holding both the moving averages and the oscillators.
 
-The top bar holds the price and the asset tabs only. The removed "DATA: LIVE",
-"CANDLES IN" countdown and REFRESH button were obsolete once the feed became
-continuous — do not re-add them. Debug-style internals (raw data-quality
-percentages, last-bar timestamps, candle counts) belong in a secondary section
-below the primary view, not in the primary view.
+The top bar holds the price, the asset tabs, the data-age line and the daily-cap
+notice. The removed "DATA: LIVE", "CANDLES IN" countdown and REFRESH button were
+obsolete once the feed became continuous — do not re-add them. Debug-style
+internals (raw data-quality percentages, last-bar timestamps, candle counts)
+belong in a secondary section below the primary view, not in the primary view.
 
 Every panel is permanently expanded. Do not add collapsible/show-hide controls,
 accordions or any other click-to-reveal wrapper: all data must be visible on
@@ -183,9 +231,20 @@ page load. Put secondary or debug content in its own always-visible section
 instead of hiding it.
 
 The header states the feed's real condition: a rate-limited feed shows our own
-"Rate limit — retrying in Xs" countdown and a Stale badge on the last series.
-Never render the vendor's raw error text, and never leave stale numbers looking
-current.
+"Rate limit — retrying in Xs" countdown and a Stale badge on the last series, and
+the daily cap shows a warning notice at 80% and a "vendor calls paused" notice at
+100%. Never render the vendor's raw error text, and never leave stale numbers
+looking current.
+
+### News and the economic calendar
+
+The "Today" panel reads only provider data — no price predictions and no invented
+forecasts. The source is chosen server-side by `NEWS_PROVIDER` / `NEWS_API_KEY`
+(read only in `api/_lib/news.ts`), the browser calls this app's own route under
+`api/news/`, and the snapshot is cached server-side for ~5 minutes. News calls
+never touch the Twelve Data credit meter. The "affects" tag is a rule-based
+classification of the event (`src/core/news/impact.ts`), never a forecast of its
+outcome. With no source configured the panel says so.
 
 ## Score and labels
 
@@ -219,9 +278,9 @@ spent the credits?"; `vendorUsed`/`vendorLeft` come from the vendor's own
 headers and are the source of truth.
 
 ```
-[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=GC1! timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
-[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=ES1! timeframe=15m credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
-[twelvedata] 2026-01-02T14:31:00.501Z endpoint=time_series symbol=YM1! timeframe=15m credits=1 status=200 vendorUsed=3 vendorLeft=5 meterUsed=3/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=XAU/USD timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=SPY timeframe=15m credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.501Z endpoint=time_series symbol=DIA timeframe=15m credits=1 status=200 vendorUsed=3 vendorLeft=5 meterUsed=3/8 meter=OK
 ```
 
 A blocked call never reaches the vendor and logs `status=BLOCKED` with the
