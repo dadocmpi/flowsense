@@ -1,7 +1,7 @@
 // ============================================
 // TWELVE DATA PROVIDER — SERVER-PROXIED
 // ============================================
-// Gold, S&P 500 and Dow need an API key, and an API key must never reach the
+// Gold, S&P 500, Dow Jones and Nasdaq need an API key, and an API key must never reach the
 // browser. So this provider does not call Twelve Data directly: it calls this
 // app's own serverless routes, which hold the key in a Vercel environment
 // variable and forward the request.
@@ -350,7 +350,15 @@ function openPriceStream(instrument: Instrument, handlers: TickHandlers): Subscr
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let giveUp = false;
 
-  const symbol = resolvedCache.get(instrument.id)?.symbol ?? instrument.providerSymbol;
+  // The symbol is resolved server-side (src/config/symbols.ts). There is no
+  // client-side fallback: until the server has told us what it is reading there
+  // is nothing to subscribe to, and inventing a symbol here would be a second
+  // source of truth.
+  const symbol = resolvedCache.get(instrument.id)?.symbol;
+  if (!symbol) {
+    handlers.onStatus?.('UNAVAILABLE');
+    return { close: () => {} };
+  }
 
   const connect = () => {
     if (closed || giveUp) return;

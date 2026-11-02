@@ -23,7 +23,7 @@ import {
 /** A fixed minute boundary so the wall-clock window is deterministic. */
 const T0 = Date.UTC(2024, 5, 10, 12, 0, 0);
 
-const COST = { endpoint: 'time_series', symbol: 'GC1!', timeframe: '1D', credits: 1 };
+const COST = { endpoint: 'time_series', symbol: 'XAU/USD', timeframe: '1D', credits: 1 };
 
 describe('credit meter', () => {
   beforeEach(() => {
