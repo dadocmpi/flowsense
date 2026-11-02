@@ -22,7 +22,7 @@
 // reported as unavailable and excluded, so a missing source can never be
 // mistaken for agreement.
 
-import type { ScoreLabel } from './types';
+import type { ScoreLabel, Timeframe } from './types';
 import type { CompassConfig } from '../config/compass';
 import { isBearishLabel, isBullishLabel } from './scoring';
 
@@ -189,4 +189,112 @@ function describeVerdict(
 
   const extra = unavailable > 0 ? `, ${unavailable} with no reading` : '';
   return `Mixed: ${aligned} agree, ${opposing} disagree, ${neutral} neutral${extra}.`;
+}
+
+/** One timeframe's Summary label, as the confluence sees it. */
+export interface ConfluenceInput {
+  timeframe: Timeframe;
+  /** The Summary label for that timeframe, or null when it has no reading yet. */
+  label: ScoreLabel | null;
+}
+
+/** One timeframe's contribution to the confluence. */
+export interface ConfluenceMember extends ConfluenceInput {
+  stance: 'AGREE' | 'DISAGREE' | 'NEUTRAL' | 'UNAVAILABLE';
+}
+
+export interface ConfluenceResult {
+  direction: EntryDirection;
+  verdict: EntryVerdict;
+  /** Timeframes whose Summary agrees with the direction. */
+  agree: number;
+  /** Timeframes whose Summary disagrees. */
+  disagree: number;
+  /** Timeframes that took no side. */
+  neutral: number;
+  /** Timeframes with no reading yet (loading, waiting or failed). */
+  pending: number;
+  /** Timeframes considered (the loaded ones). */
+  total: number;
+  /** Agreeing share of the timeframes that took a side, 0..1. */
+  share: number;
+  /** Every timeframe with its stance. */
+  members: ConfluenceMember[];
+  message: string;
+}
+
+/**
+ * How many timeframes line up with the chosen direction.
+ *
+ * This is the multi-timeframe read: each loaded timeframe contributes one vote,
+ * taken from its Summary compass. A timeframe with no reading yet is counted as
+ * pending and excluded, never guessed at, so the percentage is always computed
+ * from what is actually available.
+ */
+export function confluenceCheck(
+  direction: EntryDirection,
+  inputs: ConfluenceInput[],
+  config: CompassConfig
+): ConfluenceResult {
+  const members: ConfluenceMember[] = inputs.map(input => ({
+    ...input,
+    stance: input.label ? stanceFor(input.label, direction) : 'UNAVAILABLE',
+  }));
+
+  let agree = 0;
+  let disagree = 0;
+  let neutral = 0;
+  let pending = 0;
+  for (const member of members) {
+    if (member.stance === 'UNAVAILABLE') pending += 1;
+    else if (member.stance === 'NEUTRAL') neutral += 1;
+    else if (member.stance === 'AGREE') agree += 1;
+    else disagree += 1;
+  }
+
+  const directional = agree + disagree;
+  const share = directional === 0 ? 0 : agree / directional;
+  const rules = config.entryCheck;
+  const verdict: EntryVerdict =
+    directional === 0 ? 'MIXED' : share < rules.againstShare ? 'AGAINST' : share >= rules.alignedShare ? 'ALIGNED' : 'MIXED';
+
+  return {
+    direction,
+    verdict,
+    agree,
+    disagree,
+    neutral,
+    pending,
+    total: directional + neutral,
+    share,
+    members,
+    message: describeConfluence(verdict, direction, agree, disagree, neutral, pending),
+  };
+}
+
+function describeConfluence(
+  verdict: EntryVerdict,
+  direction: EntryDirection,
+  agree: number,
+  disagree: number,
+  neutral: number,
+  pending: number
+): string {
+  const side = direction === 'LONG' ? 'long' : 'short';
+  const available = agree + disagree + neutral;
+  const pendingNote = pending > 0 ? ` ${pending} still loading.` : '';
+
+  if (available === 0) {
+    return 'No timeframe has loaded yet, so there is nothing to align with.';
+  }
+
+  if (verdict === 'ALIGNED') {
+    return `${agree} of ${available} loaded timeframes agree with this ${side} setup.${pendingNote}`;
+  }
+
+  if (verdict === 'AGAINST') {
+    return `${disagree} of ${available} loaded timeframes oppose this ${side}. The market disagrees.${pendingNote}`;
+  }
+
+  return `Mixed: ${agree} agree, ${disagree} disagree, ${neutral} neutral across the loaded timeframes.${pendingNote}`;
 }

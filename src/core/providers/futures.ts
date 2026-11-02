@@ -63,6 +63,16 @@ export interface CreditState {
   exhausted: boolean;
   coldStart: boolean;
   reason: string | null;
+  /** The daily cap in force; 0 means no daily cap. */
+  dailyCap?: number;
+  /** Credits spent since the daily window opened. */
+  dailyUsed?: number;
+  /** Epoch ms the daily window resets. */
+  dailyResetAt?: number;
+  /** True once the daily spend has reached the cap. */
+  dailyExhausted?: boolean;
+  /** True once the daily spend has reached the warning fraction of the cap. */
+  dailyWarn?: boolean;
 }
 
 const ERROR_KINDS = new Set([
@@ -215,6 +225,10 @@ export interface FuturesProbeResult {
    */
   reachable: boolean;
   note?: string;
+  /** The per-minute ceiling the deployment is configured for, when reported. */
+  creditsPerMinute?: number;
+  /** The live-quote poll cadence the deployment is configured for (ms). */
+  livePollIntervalMs?: number;
 }
 
 /**
@@ -251,6 +265,8 @@ async function runStatusProbe(): Promise<FuturesProbeResult> {
       note?: string;
       websocket?: boolean;
       credits?: CreditState;
+      creditsPerMinute?: number;
+      livePollIntervalMs?: number;
       instruments?: Array<{ instrumentId: string; resolved: ResolvedSource | null }>;
     };
     const configured = payload.configured === true;
@@ -264,7 +280,13 @@ async function runStatusProbe(): Promise<FuturesProbeResult> {
         resolvedCache.set(entry.instrumentId, entry.resolved);
       }
     }
-    return { configured, reachable: true, note: payload.note };
+    return {
+      configured,
+      reachable: true,
+      note: payload.note,
+      creditsPerMinute: payload.creditsPerMinute,
+      livePollIntervalMs: payload.livePollIntervalMs,
+    };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     setFuturesConfigured(false);

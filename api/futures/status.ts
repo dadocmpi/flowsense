@@ -25,7 +25,16 @@ import {
 import { knownResolution } from '../_lib/candleCache.js';
 import { configuredSymbol, INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
 import { meterSnapshot } from '../_lib/creditMeter.js';
-import { POLL_INTERVAL_MS } from '../../src/core/providers/polling.js';
+import { POLL_INTERVAL_MS, configuredCreditsPerMinute } from '../../src/core/providers/polling.js';
+
+/**
+ * LIVE_POLL_INTERVAL_MS, default 60s. Read here so the client can drive the
+ * live-quote poll without the value being baked into the bundle.
+ */
+function livePollIntervalMs(): number {
+  const parsed = Number.parseInt((process.env.LIVE_POLL_INTERVAL_MS ?? '').trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+}
 
 export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const vendor = resolveVendor();
@@ -64,6 +73,10 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
     // The vendor WebSocket carries price ticks only.
     websocket: websocketEnabled(),
     pollIntervalsMs: POLL_INTERVAL_MS,
+    // Plan values the client needs to pace itself: the per-minute ceiling and
+    // the live-quote cadence. Neither is a secret; the key never appears here.
+    creditsPerMinute: configuredCreditsPerMinute(),
+    livePollIntervalMs: livePollIntervalMs(),
     instruments,
     // The credit meter, so the client can show a rate-limit state before it even
     // attempts a candles request.
@@ -75,6 +88,11 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
       exhausted: meter.exhausted,
       coldStart: meter.coldStart,
       reason: meter.reason,
+      dailyCap: meter.dailyCap,
+      dailyUsed: meter.dailyUsed,
+      dailyResetAt: meter.dailyResetAt,
+      dailyExhausted: meter.dailyExhausted,
+      dailyWarn: meter.dailyWarn,
     },
     note:
       vendor && hasKey

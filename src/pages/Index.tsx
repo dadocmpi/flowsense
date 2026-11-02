@@ -18,12 +18,14 @@ import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { TimeframeButtons } from '../components/compass/TimeframeButtons';
 import { CompassCard } from '../components/compass/CompassCard';
 import { TechnicalTable } from '../components/compass/TechnicalTable';
-import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryCheckPanel';
+import { EntryCheckPanel, type ChipState, type EntryChip } from '../components/compass/EntryCheckPanel';
+import { TodayPanel } from '../components/compass/TodayPanel';
+import { useNewsToday } from '../hooks/useNewsToday';
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
 import { TIMEFRAME_LABELS, TIMEFRAMES, type Timeframe } from '../core/types';
-import { probeFuturesProvider } from '../core/providers';
-import { checkEntry, type EntryCompassInput, type EntryDirection } from '../core/entryCheck';
+import { probeFuturesProvider, futuresCreditState } from '../core/providers';
+import { confluenceCheck, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import {
   formatAge,
@@ -105,6 +107,7 @@ const Index: React.FC = () => {
 
   const feed = useInstrumentFeed(instrument, selectedTimeframe);
   const { current, stored, orderFlow } = useTimeframeReadings(feed, selectedTimeframe);
+  const news = useNewsToday();
 
   // Ages are shown live ("updated 42s ago"), so a one-second tick drives them.
   const [now, setNow] = useState(() => Date.now());
@@ -150,31 +153,44 @@ const Index: React.FC = () => {
   const pricePrecision = instrument.precision;
   const timeframeLabel = TIMEFRAME_LABELS[selectedTimeframe];
   const busy = feed.loadingTimeframes.length > 0;
+  // The server's credit meter, read on each render so the daily-cap notice
+  // reflects the last status/candles response. Null until it has answered once.
+  const creditState = futuresCreditState();
 
-  // The entry check reads the three compasses of the SELECTED timeframe only.
-  const entryCheck = useMemo(() => {
-    if (!frame) return null;
-    const compasses: EntryCompassInput[] = [
-      { key: 'technical', label: 'Technical indicators', scoreLabel: frame.available ? frame.technical.label : null },
-      { key: 'summary', label: 'Summary', scoreLabel: frame.available ? frame.summary.label : null },
-      { key: 'orderFlow', label: 'Order flow', scoreLabel: frame.orderFlow?.gauge.label ?? null },
-    ];
-    return checkEntry(entryDirection, compasses, DEFAULT_COMPASS_CONFIG);
-  }, [frame, entryDirection]);
+  // The entry check reads across ALL timeframes: each loaded timeframe's Summary
+  // contributes one vote, and the confluence is recomputed from what is available.
+  const confluence = useMemo(() => {
+    const inputs = TIMEFRAMES.map(timeframe => {
+      const entry = stored.find(candidate => candidate.timeframe === timeframe);
+      return {
+        timeframe,
+        label: entry?.reading.available ? entry.reading.summary.label : null,
+      };
+    });
+    return confluenceCheck(entryDirection, inputs, DEFAULT_COMPASS_CONFIG);
+  }, [stored, entryDirection]);
 
-  // The chip row is filled only from timeframes already loaded this session.
-  // An unloaded timeframe is reported as not loaded and is never fetched here.
+  // The chip row shows every timeframe, filled as each one arrives. The load
+  // state comes from the feed (which knows what is loading, waiting or failed);
+  // the reading comes from the store for a loaded timeframe.
   const chips: EntryChip[] = useMemo(() => {
     const byTimeframe = new Map(stored.map(entry => [entry.timeframe, entry]));
     return TIMEFRAMES.map(timeframe => {
+      const state = feed.timeframeStates[timeframe];
       const entry = byTimeframe.get(timeframe);
+      let chipState: ChipState;
+      if (state?.status === 'loaded' && entry) chipState = 'READY';
+      else if (state?.status === 'loading' || state?.status === 'idle') chipState = 'LOADING';
+      else if (state?.status === 'waiting') chipState = 'WAITING';
+      else chipState = 'NO_DATA';
       return {
         timeframe,
+        state: chipState,
         scoreLabel: entry?.reading.available ? entry.reading.summary.label : null,
-        updatedAt: entry?.updatedAt ?? null,
+        updatedAt: entry?.updatedAt ?? state?.updatedAt ?? null,
       };
     });
-  }, [stored]);
+  }, [stored, feed.timeframeStates]);
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
@@ -210,6 +226,11 @@ const Index: React.FC = () => {
                 {feed.price > 0 ? formatNumber(feed.price, pricePrecision) : '--'}
                 <span className="ml-1 text-label font-normal text-white/40">{instrument.quote}</span>
               </span>
+              {/* The data age of the live price, so a polled quote is never
+                  mistaken for a tick. It is the age of the last real update. */}
+              <span className="text-label text-white/35">
+                {feed.lastUpdate !== null ? `data ${formatAge(feed.lastUpdate, now)}` : 'no data'}
+              </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-label">
@@ -240,6 +261,23 @@ const Index: React.FC = () => {
                   Market closed
                 </span>
               )}
+              {/* The daily credit cap: a small notice at 80%, a clear stop at the
+                  cap. The numbers come from the server's meter, never invented. */}
+              {creditState?.dailyExhausted ? (
+                <span
+                  className="rounded border border-[#ef5350]/40 bg-[#ef5350]/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-[#ef5350]"
+                  title={`Daily cap of ${creditState.dailyCap} credits reached (used ${creditState.dailyUsed}). Vendor calls are paused until the daily window resets.`}
+                >
+                  Daily cap reached — vendor calls paused
+                </span>
+              ) : creditState?.dailyWarn ? (
+                <span
+                  className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
+                  title={`${creditState.dailyUsed} of ${creditState.dailyCap} daily credits used.`}
+                >
+                  {creditState.dailyUsed}/{creditState.dailyCap} daily credits
+                </span>
+              ) : null}
             </div>
           </div>
 
@@ -266,9 +304,6 @@ const Index: React.FC = () => {
             <InstrumentSelector selectedId={instrument.id} onSelect={handleSelect} availability={availability} />
             <div className="flex flex-wrap items-center gap-3">
               <TimeframeButtons selected={selectedTimeframe} onSelect={setSelectedTimeframe} busy={busy} />
-              <span className="text-micro text-white/35">
-                {busy ? 'Loading timeframe…' : `One timeframe fetched at a time · ${timeframeLabel}`}
-              </span>
             </div>
           </div>
         </div>
@@ -419,23 +454,34 @@ const Index: React.FC = () => {
             </Section>
           </div>
 
-          <div>
-            <Section title="Entry check" subtitle={`${instrument.id} · ${timeframeLabel}`} dense>
-              {entryCheck ? (
+          <div className="flex flex-col gap-3">
+            <Section title="Entry check" subtitle={instrument.id} dense>
+              {stored.length === 0 && !confluence.members.some(member => member.label) && feed.isLoading ? (
+                <p className="py-2 text-body italic text-white/45">Loading candles…</p>
+              ) : (
                 <EntryCheckPanel
-                  result={entryCheck}
+                  confluence={confluence}
                   direction={entryDirection}
                   onDirectionChange={setEntryDirection}
                   chips={chips}
                   now={now}
-                  timeframeLabel={timeframeLabel}
                 />
-              ) : (
-                <p className="py-2 text-body italic text-white/45">
-                  {feed.isLoading ? 'Loading candles…' : 'No reading for this timeframe yet.'}
-                </p>
               )}
             </Section>
+
+            {/* Directly below the entry check, filling the column's empty space.
+                It scrolls internally so the page itself never scrolls. */}
+            <TodayPanel
+              configured={news.probe?.configured ?? false}
+              reachable={news.probe?.reachable ?? true}
+              label={news.probe?.label ?? 'None'}
+              note={news.probe?.note ?? null}
+              events={news.events}
+              headlines={news.headlines}
+              fetchedAt={news.fetchedAt}
+              loading={news.loading}
+              now={now}
+            />
           </div>
         </div>
 

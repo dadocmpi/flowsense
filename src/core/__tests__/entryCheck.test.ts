@@ -10,9 +10,10 @@
 // never be counted as agreement, or a missing source would look like support.
 
 import { describe, expect, it } from 'vitest';
-import { checkEntry, verdictWord, type EntryCompassInput } from '../entryCheck';
+import { checkEntry, confluenceCheck, verdictWord, type EntryCompassInput, type ConfluenceInput } from '../entryCheck';
 import { DEFAULT_COMPASS_CONFIG, mergeCompassConfig } from '../../config/compass';
-import type { ScoreLabel } from '../types';
+import type { ScoreLabel, Timeframe } from '../types';
+import { TIMEFRAMES } from '../types';
 
 const CONFIG = DEFAULT_COMPASS_CONFIG;
 
@@ -152,5 +153,65 @@ describe('verdictWord', () => {
     expect(verdictWord('ALIGNED')).toBe('Aligned');
     expect(verdictWord('MIXED')).toBe('Mixed');
     expect(verdictWord('AGAINST')).toBe('Against');
+  });
+});
+
+// ============================================
+// MULTI-TIMEFRAME CONFLUENCE
+// ============================================
+// The confluence is the multi-timeframe read: one vote per LOADED timeframe, and
+// a timeframe still loading is excluded, never guessed at. The percentage is
+// therefore always computed from what is available.
+
+/** The seven timeframes with the given labels (null = not loaded yet). */
+function confluenceInputs(labels: Partial<Record<Timeframe, ScoreLabel | null>>): ConfluenceInput[] {
+  return TIMEFRAMES.map(timeframe => ({ timeframe, label: labels[timeframe] ?? null }));
+}
+
+describe('confluenceCheck', () => {
+  it('counts a loaded timeframe as agreeing when its Summary is bullish for a LONG', () => {
+    const result = confluenceCheck('LONG', confluenceInputs({ '1D': 'BUY', '4h': 'STRONG_BUY' }), CONFIG);
+    expect(result.agree).toBe(2);
+    expect(result.disagree).toBe(0);
+    expect(result.pending).toBe(5);
+    expect(result.share).toBe(1);
+  });
+
+  it('excludes a not-yet-loaded timeframe from the share, never guessing it', () => {
+    const result = confluenceCheck('LONG', confluenceInputs({ '1D': 'BUY', '4h': 'SELL' }), CONFIG);
+    // One agree, one disagree, five pending: the share is over the two loaded.
+    expect(result.agree).toBe(1);
+    expect(result.disagree).toBe(1);
+    expect(result.pending).toBe(5);
+    expect(result.share).toBe(0.5);
+  });
+
+  it('recomputes from what is available as more timeframes arrive', () => {
+    const partial = confluenceCheck('LONG', confluenceInputs({ '1D': 'BUY' }), CONFIG);
+    const fuller = confluenceCheck('LONG', confluenceInputs({ '1D': 'BUY', '4h': 'BUY', '1h': 'BUY' }), CONFIG);
+    expect(partial.pending).toBe(6);
+    expect(fuller.pending).toBe(4);
+    expect(fuller.share).toBe(1);
+  });
+
+  it('calls it against when the loaded majority disagrees', () => {
+    const result = confluenceCheck(
+      'LONG',
+      confluenceInputs({ '1D': 'SELL', '4h': 'SELL', '1h': 'SELL', '30m': 'BUY' }),
+      CONFIG
+    );
+    expect(result.verdict).toBe('AGAINST');
+  });
+
+  it('has nothing to align with when no timeframe has loaded', () => {
+    const result = confluenceCheck('LONG', confluenceInputs({}), CONFIG);
+    expect(result.pending).toBe(7);
+    expect(result.total).toBe(0);
+    expect(result.message).toMatch(/no timeframe has loaded/i);
+  });
+
+  it('names the still-loading count in the message', () => {
+    const result = confluenceCheck('LONG', confluenceInputs({ '1D': 'BUY' }), CONFIG);
+    expect(result.message).toMatch(/still loading/i);
   });
 });

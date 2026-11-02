@@ -7,37 +7,29 @@
 //
 // Pure constants: no I/O, no DOM, safe to import from a serverless function.
 //
-// The rule of thumb: poll a timeframe at a fraction of its own bar length, so a
-// new bar is picked up soon after it opens without hammering the vendor. The
-// server cache TTL sits just under the poll interval, so a user's poll normally
-// gets fresh data while simultaneous users share one vendor call.
+// The cadence SCALES WITH THE PLAN. The tables below are the conservative
+// baseline for the shipped 8-credits/minute plan; `src/config/credits.ts`
+// derives a faster cadence when TWELVE_DATA_CREDITS_PER_MINUTE is higher, so
+// upgrading the plan is an environment change and needs no code change.
 
 import type { Timeframe } from '../types.js';
+import {
+  DEFAULT_CREDITS_PER_MINUTE,
+  pollIntervalForPlan,
+  serverCacheTtlForPlan,
+} from '../../config/credits.js';
 
-/** How often the client re-fetches each timeframe over REST (ms). */
-export const POLL_INTERVAL_MS: Record<Timeframe, number> = {
-  '1m': 20_000,
-  '5m': 45_000,
-  '15m': 60_000,
-  '30m': 90_000,
-  '1h': 120_000,
-  '4h': 300_000,
-  '1D': 600_000,
-};
+/** How often the client re-fetches each timeframe over REST (ms), default plan. */
+export const POLL_INTERVAL_MS: Record<Timeframe, number> = pollIntervalForPlan(DEFAULT_CREDITS_PER_MINUTE);
 
 /**
- * How long a server-side candle payload stays valid (ms).
+ * How long a server-side candle payload stays valid (ms), default plan.
  *
  * Set to 80% of the poll interval: short enough that a poller still sees a new
  * bar promptly, long enough that several users on the same instrument and
  * timeframe collapse into a single vendor call.
  */
-export const SERVER_CACHE_TTL_MS: Record<Timeframe, number> = Object.fromEntries(
-  (Object.entries(POLL_INTERVAL_MS) as Array<[Timeframe, number]>).map(([timeframe, interval]) => [
-    timeframe,
-    Math.round(interval * 0.8),
-  ])
-) as Record<Timeframe, number>;
+export const SERVER_CACHE_TTL_MS: Record<Timeframe, number> = serverCacheTtlForPlan(DEFAULT_CREDITS_PER_MINUTE);
 
 /** How long a resolved symbol choice is trusted before re-verifying (ms). */
 export const SYMBOL_RESOLUTION_TTL_MS = 6 * 60 * 60 * 1000;
@@ -45,20 +37,16 @@ export const SYMBOL_RESOLUTION_TTL_MS = 6 * 60 * 60 * 1000;
 /**
  * How often the live PRICE is polled when no tick feed is available (ms).
  *
- * Every poll costs a credit, so this is the single biggest lever on the spend.
- * At 30s that is at most two calls a minute per open tab — a new 1m bar is
- * picked up within half its own length, which is prompt enough for a compass,
- * while a five-minute chart does not pay for sub-minute precision it cannot use.
- *
- * When a tick feed IS available this is unused: a socket costs no request
- * credits.
+ * The live-quote cadence now comes from LIVE_POLL_INTERVAL_MS (default 60s),
+ * which is applied inside the live-quote provider; this constant is the
+ * default plan's value, kept for callers that only need a sane fallback.
  */
-export const PRICE_POLL_INTERVAL_MS = 30_000;
+export const PRICE_POLL_INTERVAL_MS = 60_000;
 
-export function pollIntervalFor(timeframe: Timeframe): number {
-  return POLL_INTERVAL_MS[timeframe] ?? 60_000;
+export function pollIntervalFor(timeframe: Timeframe, creditsPerMinute = DEFAULT_CREDITS_PER_MINUTE): number {
+  return pollIntervalForPlan(creditsPerMinute)[timeframe] ?? 60_000;
 }
 
-export function cacheTtlFor(timeframe: Timeframe): number {
-  return SERVER_CACHE_TTL_MS[timeframe] ?? 60_000;
+export function cacheTtlFor(timeframe: Timeframe, creditsPerMinute = DEFAULT_CREDITS_PER_MINUTE): number {
+  return serverCacheTtlForPlan(creditsPerMinute)[timeframe] ?? 60_000;
 }

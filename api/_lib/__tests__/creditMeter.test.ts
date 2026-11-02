@@ -130,3 +130,75 @@ describe('credit meter', () => {
     expect(snapshot.resetAt).toBe(T0 + COLD_START_WINDOW_MS);
   });
 });
+
+// ============================================
+// DAILY CAP
+// ============================================
+// The per-minute meter is the vendor's ceiling; the daily cap is ours, so a
+// deployment cannot burn a plan's whole day on one busy hour. These assert the
+// cap blocks calls, reports the usage, and warns at 80%.
+
+describe('credit meter daily cap', () => {
+  const DAY = { endpoint: 'time_series', symbol: 'XAU/USD', timeframe: '1D', credits: 1 };
+
+  beforeEach(() => {
+    resetCreditMeter();
+    delete process.env.TWELVE_DATA_CREDITS_PER_MINUTE;
+    delete process.env.TWELVE_DATA_DAILY_CAP;
+  });
+
+  afterEach(() => {
+    delete process.env.TWELVE_DATA_CREDITS_PER_MINUTE;
+    delete process.env.TWELVE_DATA_DAILY_CAP;
+  });
+
+  it('defaults the daily cap to 800', () => {
+    expect(meterSnapshot(T0).dailyCap).toBe(800);
+    expect(meterSnapshot(T0).dailyExhausted).toBe(false);
+  });
+
+  it('reads the cap from the environment, and 0 means no cap', () => {
+    process.env.TWELVE_DATA_DAILY_CAP = '50';
+    expect(meterSnapshot(T0).dailyCap).toBe(50);
+
+    resetCreditMeter();
+    process.env.TWELVE_DATA_DAILY_CAP = '0';
+    expect(meterSnapshot(T0).dailyCap).toBe(0);
+    expect(meterSnapshot(T0).dailyExhausted).toBe(false);
+  });
+
+  it('tracks the daily spend across minutes', () => {
+    recordCredits(DAY, {}, T0);
+    recordCredits(DAY, {}, T0 + 60_000);
+    recordCredits(DAY, {}, T0 + 120_000);
+    expect(meterSnapshot(T0 + 120_000).dailyUsed).toBe(3);
+  });
+
+  it('blocks a call that would exceed the daily cap', () => {
+    process.env.TWELVE_DATA_DAILY_CAP = '2';
+    recordCredits(DAY, {}, T0);
+    recordCredits(DAY, {}, T0 + 60_000);
+    const snapshot = checkCredits(1, T0 + 120_000);
+    expect(snapshot.allowed).toBe(false);
+    expect(snapshot.dailyExhausted).toBe(true);
+    expect(snapshot.reason).toContain('daily cap');
+  });
+
+  it('flags the warning once the spend crosses 80% of the cap', () => {
+    process.env.TWELVE_DATA_DAILY_CAP = '10';
+    for (let i = 0; i < 7; i += 1) recordCredits(DAY, {}, T0 + i * 60_000);
+    expect(meterSnapshot(T0 + 7 * 60_000).dailyWarn).toBe(false);
+    recordCredits(DAY, {}, T0 + 8 * 60_000);
+    expect(meterSnapshot(T0 + 8 * 60_000).dailyWarn).toBe(true);
+  });
+
+  it('resets the daily tally when the UTC day rolls over', () => {
+    process.env.TWELVE_DATA_DAILY_CAP = '5';
+    recordCredits(DAY, {}, T0);
+    recordCredits(DAY, {}, T0 + 60_000);
+    const nextDay = Date.UTC(2024, 5, 11, 0, 0, 1);
+    expect(meterSnapshot(nextDay).dailyUsed).toBe(0);
+    expect(meterSnapshot(nextDay).dailyWarn).toBe(false);
+  });
+});
+

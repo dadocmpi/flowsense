@@ -156,6 +156,10 @@ the serverless functions under `api/`, never by the browser bundle.
 | `SYMBOL_DOW` | no | `DIA` | The one symbol YM reads (Dow ETF proxy). |
 | `SYMBOL_NASDAQ` | no | `QQQ` | The one symbol NQ reads (Nasdaq-100 ETF proxy). |
 | `TWELVE_DATA_CREDITS_PER_MINUTE` | no | `8` | Per-minute credit ceiling, when the vendor does not report one. |
+| `TWELVE_DATA_DAILY_CAP` | no | `800` | Daily credit ceiling; `0` disables the daily cap. Warns at 80%, blocks at 100%. |
+| `LIVE_POLL_INTERVAL_MS` | no | `60000` | How often the Summary price and the M1 reading are refreshed. |
+| `NEWS_PROVIDER` | no | — | `fmp` or `finnhub` selects the news source; unset shows "No news source configured". |
+| `NEWS_API_KEY` | no | — | The news vendor's server-side key. Never reaches the browser. |
 | `FUTURES_ROLL_METHOD` | no | `frontMonth` | How the continuous series is described. |
 | `FUTURES_ROLL_ADJUSTMENT` | no | `none` | Adjustment across a roll. |
 | `FUTURES_PROVIDER` | no | — | Legacy; setting the key alone selects Twelve Data. |
