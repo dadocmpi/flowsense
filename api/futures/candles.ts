@@ -89,7 +89,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     return;
   }
 
-  // `instrument` is the app's stable id (GC/ES/YM); `symbol` is accepted for
+  // `instrument` is the app's stable id (GC/ES/YM/NQ); `symbol` is accepted for
   // backwards compatibility with an older client.
   const instrumentId = first(req.query.instrument) ?? first(req.query.symbol);
   const rawTimeframe = first(req.query.timeframe) ?? '5m';

@@ -20,7 +20,7 @@
 import { first, resolveVendor, sendJson, vendorApiKey, type ApiRequest, type ApiResponse } from '../_lib/futuresShared.js';
 import { fetchTimeSeries, searchSymbols, TwelveDataError } from '../_lib/twelvedata.js';
 import { meterSnapshot } from '../_lib/creditMeter.js';
-import { DISCOVERY_CANDIDATES, INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
+import { configuredSymbol, DISCOVERY_CANDIDATES } from '../_lib/symbols.js';
 
 /** One small bar is enough to prove entitlement, and costs the least. */
 const PROBE_TIMEFRAME = '1D';
@@ -95,10 +95,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
 
     const instruments = [...byInstrument.entries()].map(([instrumentId, candidates]) => {
       const firstWorking = candidates.find(c => c.ok) ?? null;
-      const entry = INSTRUMENT_SYMBOLS.find(e => e.instrumentId === instrumentId);
+      // What the app is actually configured for: the SYMBOL_* override when set,
+      // else the default. Never the discovery candidate list.
+      const configured = configuredSymbol(instrumentId);
       return {
         instrumentId,
-        configured: entry?.symbol.symbol ?? null,
+        configured: configured?.symbol ?? null,
         candidates,
         // What the app will actually use, and whether it is a proxy.
         chosen: firstWorking,

@@ -1,14 +1,14 @@
 // ============================================
 // INSTRUMENT SELECTOR
 // ============================================
-// Gold, S&P 500 and Dow futures.
+// Gold, S&P 500, Dow Jones and Nasdaq.
 //
 // An instrument whose provider is not configured is still selectable — it is
 // better to show an explicit "no data source configured" state for GC than to
 // hide the instrument the user actually trades — but it is marked as such.
 
 import React from 'react';
-import { FUTURES_INSTRUMENTS } from '../../core/instruments';
+import { INSTRUMENTS } from '../../core/instruments';
 import { cn } from '@/lib/utils';
 
 interface InstrumentSelectorProps {
@@ -25,10 +25,10 @@ export const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({ selected
   return (
     <div className="flex items-center gap-2">
       <span className="hidden text-micro font-semibold uppercase tracking-wider text-white/30 sm:inline">
-        Futures
+        Markets
       </span>
       <div className="flex flex-wrap items-center gap-1.5">
-        {FUTURES_INSTRUMENTS.map(instrument => {
+        {INSTRUMENTS.map(instrument => {
           const isSelected = selectedId === instrument.id;
           const known = availability[instrument.id];
           // Only a confirmed `false` earns the unavailable marker. An

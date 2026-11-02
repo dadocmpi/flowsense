@@ -23,7 +23,7 @@ import {
   type ApiResponse,
 } from '../_lib/futuresShared.js';
 import { knownResolution } from '../_lib/candleCache.js';
-import { INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
+import { configuredSymbol, INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
 import { meterSnapshot } from '../_lib/creditMeter.js';
 import { POLL_INTERVAL_MS } from '../../src/core/providers/polling.js';
 
@@ -33,14 +33,16 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const meter = meterSnapshot();
 
   // What each instrument is configured to read. The symbol is a configuration
-  // fact now, so it is always known — not "resolved once a request confirmed it".
+  // fact (the SYMBOL_* override when set, else the default in the config), so it
+  // is always known — not "resolved once a request confirmed it".
   const instruments = INSTRUMENT_SYMBOLS.map(entry => {
+    const configured = configuredSymbol(entry.instrumentId) ?? entry.symbol;
     const resolved = knownResolution(entry.instrumentId);
     return {
       instrumentId: entry.instrumentId,
-      symbol: entry.symbol.symbol,
-      kind: entry.symbol.kind,
-      description: entry.symbol.description,
+      symbol: configured.symbol,
+      kind: configured.kind,
+      description: configured.description,
       resolved: resolved
         ? {
             symbol: resolved.candidate.symbol,
@@ -77,6 +79,6 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
     note:
       vendor && hasKey
         ? `Configured: ${vendor}`
-        : 'Set TWELVE_DATA_API_KEY to enable Gold, S&P 500 and Dow.',
+        : 'Set TWELVE_DATA_API_KEY to enable Gold, S&P 500, Dow Jones and Nasdaq.',
   });
 }

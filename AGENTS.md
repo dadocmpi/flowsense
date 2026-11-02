@@ -3,17 +3,25 @@
 ## What this app is
 
 FlowSense: a React + TypeScript + Vite multi-timeframe market compass for Gold,
-S&P 500 and Dow futures (GC/ES/YM). Every number is a provider response or
-arithmetic over one. Nothing is simulated.
+S&P 500, Dow Jones and Nasdaq (GC/ES/YM/NQ). Every number is a provider response
+or arithmetic over one. Nothing is simulated.
 
 ## Hard rules
 
 - **Never fabricate market data.** No random walks, no synthetic values, no
   placeholder prices that look real. If data is unavailable, show an honest
   unavailable state (`--`, `DATA: UNAVAILABLE`) and an error kind.
-- **Only ship markets we can source honestly.** Futures come from a configured
-  provider. An instrument with no configured source shows "no data source
-  configured" and no numbers at all — never a placeholder that looks real.
+- **Only ship markets we can source honestly.** Every instrument comes from a
+  configured provider. An instrument with no configured source shows "no data
+  source configured" and no numbers at all — never a placeholder that looks real.
+- **One symbol source.** The upstream symbol for every instrument lives in
+  exactly ONE file, `src/config/symbols.ts` (overridable per instrument by the
+  `SYMBOL_GOLD` / `SYMBOL_SP500` / `SYMBOL_DOW` / `SYMBOL_NASDAQ` environment
+  variables). The shipped defaults are spot / ETF proxies (`XAU/USD`, `SPY`,
+  `DIA`, `QQQ`), never the continuous-futures contracts `GC1!`/`ES1!`/`YM1!`/
+  `NQ1!`, which Twelve Data does not entitle on every plan ("symbol or figi
+  parameter is missing or invalid"). No code path builds a symbol from another
+  source; the client learns what was requested from the server response.
 - **Keys stay server-side.** The futures provider's key is read only by the
   functions under `api/` and must never reach the browser. Verify the bundle
   stays credential-free: `grep -c "apikey" dist/assets/*.js` → must be 0. (A
@@ -38,10 +46,11 @@ src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
 src/config/compass.ts          every weight, tolerance and session setting
+src/config/symbols.ts          the ONE place each instrument's upstream symbol is configured
 src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
 src/hooks/useTimeframeReadings.ts     one reading per (asset, timeframe), kept apart
 api/_lib/creditMeter.ts        the per-minute meter that gates EVERY vendor call
-api/_lib/symbols.ts            the ONE place the single symbol per instrument is mapped
+api/_lib/symbols.ts            server-side reader of the symbol config + the SYMBOL_* env override
 api/_lib/twelvedata.ts         vendor adapter: meter, request, parse, classify error kind
 api/_lib/candleCache.ts        short-lived candle cache (one vendor call per TTL)
 api/futures/candles.ts         server-side futures candle proxy
@@ -219,9 +228,9 @@ spent the credits?"; `vendorUsed`/`vendorLeft` come from the vendor's own
 headers and are the source of truth.
 
 ```
-[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=GC1! timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
-[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=ES1! timeframe=15m credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
-[twelvedata] 2026-01-02T14:31:00.501Z endpoint=time_series symbol=YM1! timeframe=15m credits=1 status=200 vendorUsed=3 vendorLeft=5 meterUsed=3/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=XAU/USD timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=SPY timeframe=15m credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.501Z endpoint=time_series symbol=DIA timeframe=15m credits=1 status=200 vendorUsed=3 vendorLeft=5 meterUsed=3/8 meter=OK
 ```
 
 A blocked call never reaches the vendor and logs `status=BLOCKED` with the

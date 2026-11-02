@@ -84,7 +84,7 @@ function RateLimitNotice({ until }: { until: number }) {
   return <span className="font-bold text-amber-400">Rate limit — retrying in {seconds}s</span>;
 }
 
-/** "GC1! · Gold futures (continuous)" — the symbol and what it really is. */
+/** "XAU/USD · Gold spot" — the symbol and what it really is. */
 function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null {
   const resolved = feed.resolvedSource;
   if (!resolved) return null;
@@ -288,8 +288,8 @@ const Index: React.FC = () => {
               </p>
               {feed.sourceReachable ? (
                 <p className="text-label text-white/45">
-                  FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500 and Dow need{' '}
-                  <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
+                  FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500, Dow and Nasdaq{' '}
+                  need <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
                   environment.
                 </p>
               ) : (

@@ -188,13 +188,15 @@ async function main() {
           ? ` ${YELLOW}(proxy — not the futures contract; the UI labels it as such)${RESET}`
           : '';
       console.log(`  ${GREEN}→ ${chosen.symbol} works — ${chosen.description}${RESET}${proxyNote}`);
-      if (configured && configured.symbol !== chosen.symbol) {
+      const envVar = catalog.configured.find(entry => entry.instrumentId === instrumentId)?.envVar;
+      if (configured && configured.symbol !== chosen.symbol && envVar) {
         console.log(`    ${YELLOW}The app is configured for ${configured.symbol}. To use ${chosen.symbol} instead, set`);
-        console.log(`    TWELVE_DATA_SYMBOL_${instrumentId}=${chosen.symbol} in the deployment.${RESET}`);
+        console.log(`    ${envVar}=${chosen.symbol} in the deployment.${RESET}`);
       }
     } else {
+      const envVar = catalog.configured.find(entry => entry.instrumentId === instrumentId)?.envVar ?? 'SYMBOL_<ID>';
       console.log(
-        `  ${RED}→ no candidate worked.${RESET} Set TWELVE_DATA_SYMBOL_${instrumentId}=<symbol> to pin one manually,`
+        `  ${RED}→ no candidate worked.${RESET} Set ${envVar}=<symbol> to pin one manually,`
       );
       console.log(`    or find one with: npm run check:symbols -- --search ${instrumentId}`);
     }
@@ -220,7 +222,7 @@ async function main() {
   }
 
   console.log(
-    `${DIM}Next: set TWELVE_DATA_API_KEY in Vercel (server-side) and deploy. The app requests only the\nconfigured symbol; use TWELVE_DATA_SYMBOL_<ID> to change it to one that works on your plan.${RESET}\n`
+    `${DIM}Next: set TWELVE_DATA_API_KEY in Vercel (server-side) and deploy. The app requests only the\nconfigured symbol; use SYMBOL_GOLD / SYMBOL_SP500 / SYMBOL_DOW / SYMBOL_NASDAQ to change it to one that\nworks on your plan.${RESET}\n`
   );
 }
 
