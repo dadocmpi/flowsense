@@ -104,6 +104,27 @@ export interface CompassConfig {
 
   /** Session definition used by VWAP and the volume point of control. */
   session: SessionConfig;
+
+  /**
+   * Dampers applied to a gauge before it is drawn, so a score recomputed from
+   * still-forming candles does not make the needle twitch or the label flicker.
+   */
+  smoothing: SmoothingConfig;
+}
+
+export interface SmoothingConfig {
+  /**
+   * EMA smoothing factor for the gauge score, 0..1. Higher follows the raw
+   * score faster; lower glides. 0.25 moves the needle meaningfully within a few
+   * updates without chasing noise.
+   */
+  alpha: number;
+  /**
+   * Hysteresis deadband in score points. The displayed score holds its last
+   * value until the smoothed score moves more than this, so a score sitting on
+   * a label cut-off cannot flap between two labels.
+   */
+  hysteresisPoints: number;
 }
 
 export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
@@ -190,6 +211,13 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     rthCloseMinutes: 16 * 60, // 16:00
     fullOpenMinutes: 18 * 60, // 18:00 previous day
   },
+
+  // Gentle enough that the needle glides and the label is stable, but the score
+  // still tracks a real move within a second or two of it happening.
+  smoothing: {
+    alpha: 0.25,
+    hysteresisPoints: 4,
+  },
 };
 
 /**
@@ -210,5 +238,6 @@ export function mergeCompassConfig(
     entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
     session: { ...base.session, ...(override.session ?? {}) },
+    smoothing: { ...base.smoothing, ...(override.smoothing ?? {}) },
   };
 }

@@ -81,3 +81,15 @@ export function isEntitlementFailure(detail: string | undefined): boolean {
     lower.includes('forbidden')
   );
 }
+
+/**
+ * Whether a subscribe-status frame means "the server has no vendor key", which
+ * no amount of retrying will fix. The relay sends this wording when it cannot
+ * open the upstream socket, so the client stops reconnecting instead of
+ * hammering a relay that can never succeed.
+ */
+export function isConfigurationFailure(detail: string | undefined): boolean {
+  if (!detail) return false;
+  const lower = detail.toLowerCase();
+  return lower.includes('api key') || lower.includes('not configured') || lower.includes('no data source');
+}

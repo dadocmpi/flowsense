@@ -25,4 +25,4 @@ export {
   cacheTtlFor,
   cacheTtlForProvider,
 } from './polling';
-export { parseWsMessage, isEntitlementFailure } from './twelvedataWs';
+export { parseWsMessage, isEntitlementFailure, isConfigurationFailure } from './twelvedataWs';

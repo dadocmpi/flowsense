@@ -27,12 +27,14 @@
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.0.0",
     "sonner": "^2.0.8",
-    "tailwind-merge": "^3.7.0"
+    "tailwind-merge": "^3.7.0",
+    "ws": "^8"
   },
   "devDependencies": {
     "@dyad-sh/react-vite-component-tagger": "^0.9.0",
     "@eslint/js": "^8.57.1",
     "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react-swc": "^4.0.0",
     "autoprefixer": "^10.0.0",
     "eslint": "^8.0.0",
