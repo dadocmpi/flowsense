@@ -30,6 +30,8 @@ export type ProviderErrorKind =
   | 'GEO_BLOCKED'
   | 'RATE_LIMIT'
   | 'SYMBOL_NOT_FOUND'
+  | 'SUBSCRIPTION'
+  | 'AUTH'
   | 'NETWORK'
   | 'UPSTREAM'
   | 'UNKNOWN';
@@ -75,7 +77,10 @@ export interface Subscription {
 }
 
 export interface MarketDataProvider {
-  readonly id: ProviderId;
+  /** Registry key. The client ships ONE server-proxied provider for all vendors. */
+  readonly id: string;
+  /** The vendors this provider can answer for. */
+  readonly serves: ProviderId[];
   readonly label: string;
   readonly capabilities: ProviderCapabilities;
   /**
@@ -92,7 +97,7 @@ export interface MarketDataProvider {
 
 /** What the UI needs to describe a source honestly. */
 export interface ProviderStatus {
-  id: ProviderId;
+  id: string;
   label: string;
   configured: boolean;
   capabilities: ProviderCapabilities;

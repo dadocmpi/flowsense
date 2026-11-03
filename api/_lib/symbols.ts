@@ -24,6 +24,8 @@
 // Nothing here is fabricated: an unconfigured or failing symbol produces an
 // honest error, never a synthetic series.
 
+import { ASSET_PROVIDER_DEFAULTS, assetProviderConfig } from './assets.js';
+
 export type SymbolKind = 'futures' | 'proxy';
 
 export interface SymbolCandidate {
@@ -49,33 +51,39 @@ export interface InstrumentSymbols {
 }
 
 /**
- * Gold, S&P 500 and Dow Jones.
+ * The Twelve Data symbol catalog.
  *
- * One symbol each, defaulting to the continuous futures contract. A deployment
- * whose plan does not carry futures data changes the symbol in ONE place — the
- * `TWELVE_DATA_SYMBOL_<ID>` environment variable, or the default below — rather
- * than paying for a runtime walk that probes every alternative.
+ * This is the subset of the per-asset mapping (api/_lib/assets.ts) whose
+ * provider is Twelve Data. Gold defaults here to spot XAU/USD; an asset moved to
+ * Alpaca simply does not appear, so this list always describes what Twelve Data
+ * is really asked for. A deployment can still pin a symbol with
+ * `TWELVE_DATA_SYMBOL_<ID>` (kept for backwards compatibility) or the newer
+ * `ASSET_SYMBOL_<ID>`.
  *
  * Twelve Data's index symbols (SPX, DJI) are quote-only on some plans and cannot
  * serve time_series, so they are not offered as defaults.
  */
-export const INSTRUMENT_SYMBOLS: InstrumentSymbols[] = [
-  {
-    instrumentId: 'GC',
-    name: 'Gold',
-    symbol: { symbol: 'GC1!', kind: 'futures', description: 'Gold futures (continuous)', continuous: true },
-  },
-  {
-    instrumentId: 'ES',
-    name: 'S&P 500',
-    symbol: { symbol: 'ES1!', kind: 'futures', description: 'E-mini S&P 500 futures (continuous)', continuous: true },
-  },
-  {
-    instrumentId: 'YM',
-    name: 'Dow Jones',
-    symbol: { symbol: 'YM1!', kind: 'futures', description: 'E-mini Dow futures (continuous)', continuous: true },
-  },
-];
+function buildInstrumentSymbols(): InstrumentSymbols[] {
+  const entries: InstrumentSymbols[] = [];
+  for (const [instrumentId, config] of Object.entries(ASSET_PROVIDER_DEFAULTS)) {
+    if (config.provider !== 'twelvedata') continue;
+    entries.push({
+      instrumentId,
+      name: NAME_BY_ID[instrumentId] ?? instrumentId,
+      symbol: { symbol: config.symbol, kind: 'proxy', description: `${config.symbol} (configured)` },
+    });
+  }
+  return entries;
+}
+
+const NAME_BY_ID: Record<string, string> = {
+  GC: 'Gold',
+  ES: 'S&P 500',
+  YM: 'Dow Jones',
+  NQ: 'Nasdaq',
+};
+
+export const INSTRUMENT_SYMBOLS: InstrumentSymbols[] = buildInstrumentSymbols();
 
 /**
  * Timezone sent to Twelve Data on every request.
@@ -118,17 +126,28 @@ export const DISCOVERY_CANDIDATES: DiscoveryCandidate[] = [
   { instrumentId: 'ES', name: 'S&P 500', symbol: 'SPY', kind: 'proxy', description: 'SPDR S&P 500 ETF' },
   { instrumentId: 'YM', name: 'Dow Jones', symbol: 'YM1!', kind: 'futures', description: 'E-mini Dow futures (continuous)' },
   { instrumentId: 'YM', name: 'Dow Jones', symbol: 'DIA', kind: 'proxy', description: 'SPDR Dow Jones ETF' },
+  { instrumentId: 'NQ', name: 'Nasdaq', symbol: 'NQ1!', kind: 'futures', description: 'E-mini Nasdaq 100 futures (continuous)' },
+  { instrumentId: 'NQ', name: 'Nasdaq', symbol: 'QQQ', kind: 'proxy', description: 'Invesco QQQ Trust ETF' },
 ];
 
 /** The single symbol configured for an instrument, or undefined if unmapped. */
 export function configuredSymbol(instrumentId: string): SymbolCandidate | undefined {
-  const entry = instrumentSymbols(instrumentId);
+  const id = instrumentId.toUpperCase();
+  // An asset whose configured provider is Alpaca has no Twelve Data symbol, even
+  // if it appears in the default catalog. Reporting one would let a diagnostic
+  // claim Twelve Data serves an asset it does not.
+  if (assetProviderConfig(id)?.provider !== 'twelvedata') return undefined;
+  const entry = instrumentSymbols(id);
   if (!entry) return undefined;
 
   // A per-instrument environment override pins the symbol in ONE place, so a
   // deployment whose plan does not carry the default contract never pays for a
-  // runtime probe to discover that.
-  const override = (process.env[`TWELVE_DATA_SYMBOL_${entry.instrumentId}`] ?? '').trim();
+  // runtime probe to discover that. The newer ASSET_SYMBOL_<ID> (read through the
+  // per-asset config) is honoured first; TWELVE_DATA_SYMBOL_<ID> is the legacy
+  // name and still works.
+  const fromAssetConfig = (assetProviderConfig(id)?.symbol ?? '').trim();
+  const legacyOverride = (process.env[`TWELVE_DATA_SYMBOL_${id}`] ?? '').trim();
+  const override = legacyOverride.length > 0 ? legacyOverride : fromAssetConfig !== entry.symbol.symbol ? fromAssetConfig : '';
   return override.length > 0 ? overrideCandidate(override) : entry.symbol;
 }
 

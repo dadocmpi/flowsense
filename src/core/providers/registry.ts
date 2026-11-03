@@ -3,24 +3,33 @@
 // ============================================
 // The single lookup the rest of the app uses. Providers register here; nothing
 // else imports a concrete provider.
+//
+// A provider declares which vendors it can serve (`serves`), and an instrument
+// names the vendor that should serve it (`providerId`). The client ships ONE
+// server-proxied provider that serves both Twelve Data and Alpaca, because the
+// vendor choice is a server-side fact — the browser only ever talks to our own
+// routes.
 
-import type { Instrument, ProviderId } from '../instruments';
+import type { Instrument } from '../instruments';
 import type { MarketDataProvider, ProviderStatus } from './types';
 import { futuresProvider } from './futures';
 
-const registry = new Map<ProviderId, MarketDataProvider>();
+const registry = new Map<string, MarketDataProvider>();
 
 export function registerProvider(provider: MarketDataProvider): void {
   registry.set(provider.id, provider);
 }
 
-export function getProvider(id: ProviderId): MarketDataProvider | undefined {
+export function getProvider(id: string): MarketDataProvider | undefined {
   return registry.get(id);
 }
 
-/** The provider that should serve an instrument, if it is registered. */
+/** The provider that should serve an instrument, if one is registered for it. */
 export function providerForInstrument(instrument: Instrument): MarketDataProvider | undefined {
-  return registry.get(instrument.providerId);
+  for (const provider of registry.values()) {
+    if (provider.serves.includes(instrument.providerId)) return provider;
+  }
+  return undefined;
 }
 
 export function listProviders(): MarketDataProvider[] {

@@ -22,9 +22,10 @@ import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryChec
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
 import { TIMEFRAME_LABELS, TIMEFRAMES, type Timeframe } from '../core/types';
-import { probeFuturesProvider } from '../core/providers';
+import { probeFuturesProvider, providerConfiguredState } from '../core/providers';
 import { checkEntry, type EntryCompassInput, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
+import { ProvenancePopover } from '../components/compass/ProvenancePopover';
 import {
   formatAge,
   formatClock,
@@ -40,6 +41,8 @@ const ERROR_TITLES: Record<string, string> = {
   GEO_BLOCKED: 'Data source unavailable in this region',
   RATE_LIMIT: 'Data source rate limit reached',
   SYMBOL_NOT_FOUND: 'Symbol unavailable',
+  SUBSCRIPTION: 'Feed not included in the subscription',
+  AUTH: 'Data source credentials rejected',
   NETWORK: 'Network error',
   UPSTREAM: 'Data source error',
   UNKNOWN: 'Unexpected error',
@@ -84,12 +87,36 @@ function RateLimitNotice({ until }: { until: number }) {
   return <span className="font-bold text-amber-400">Rate limit — retrying in {seconds}s</span>;
 }
 
-/** "GC1! · Gold futures (continuous)" — the symbol and what it really is. */
+/** "SPY · SPY — index proxy (IEX, partial market volume)" — symbol and what it is. */
 function sourceDetail(feed: ReturnType<typeof useInstrumentFeed>): string | null {
   const resolved = feed.resolvedSource;
   if (!resolved) return null;
   const symbol = resolved.vendorSymbol ?? resolved.symbol;
   return `${symbol} · ${resolved.description}`;
+}
+
+/** The provider's display name for the provenance popover. */
+const PROVIDER_LABEL: Record<string, string> = {
+  twelvedata: 'Twelve Data',
+  alpaca: 'Alpaca',
+};
+
+/** The provider + symbol + feed shown in the provenance popover. */
+function provenanceDetails(
+  instrument: Instrument,
+  feed: ReturnType<typeof useInstrumentFeed>
+): import('../components/compass/ProvenancePopover').ProvenanceDetails {
+  const resolved = feed.resolvedSource;
+  const providerId = resolved?.provider ?? feed.providerId;
+  return {
+    asset: instrument.name,
+    provider: PROVIDER_LABEL[providerId] ?? providerId,
+    symbol: resolved?.vendorSymbol ?? resolved?.symbol ?? instrument.providerSymbol,
+    feed: resolved?.feed ?? instrument.feed,
+    partialVolume: resolved?.partialVolume ?? providerId === 'alpaca',
+    isProxy: (resolved?.kind ?? (instrument.proxy ? 'proxy' : 'futures')) === 'proxy',
+    description: resolved?.description,
+  };
 }
 
 const Index: React.FC = () => {
@@ -113,19 +140,21 @@ const Index: React.FC = () => {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Whether the futures source is configured is a server-side fact. The feed
-  // only asks for the selected instrument, so ask once here too: otherwise the
-  // selector would mark every futures tab unavailable until it is opened.
-  const [futuresConfigured, setFuturesConfigured] = useState<boolean | null>(null);
+  // Whether each provider is configured is a server-side fact. The feed only
+  // asks for the selected instrument, so ask once here too: otherwise the
+  // selector would mark every asset of an unconfigured provider as available.
+  const [providerConfigured, setProviderConfigured] = useState<Record<'twelvedata' | 'alpaca', boolean> | null>(null);
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     probeFuturesProvider(controller.signal)
       .then(result => {
-        if (active) setFuturesConfigured(result.configured);
+        if (!active) return;
+        const perProvider = providerConfiguredState();
+        setProviderConfigured(perProvider ?? { twelvedata: result.configured, alpaca: result.configured });
       })
       .catch(() => {
-        if (active) setFuturesConfigured(false);
+        if (active) setProviderConfigured({ twelvedata: false, alpaca: false });
       });
     return () => {
       active = false;
@@ -134,17 +163,17 @@ const Index: React.FC = () => {
   }, []);
 
   // Which instruments currently have a configured source, for the selector.
-  // A futures entry stays `undefined` until the probe answers: marking every
-  // futures tab unavailable before we know would be a guess, not a fact.
+  // An entry stays `undefined` until the probe answers: marking every asset
+  // unavailable before we know would be a guess, not a fact.
   const availability = useMemo(() => {
     const map: Record<string, boolean | undefined> = {};
     for (const candidate of ALL_INSTRUMENTS) {
-      map[candidate.id] = futuresConfigured ?? undefined;
+      map[candidate.id] = providerConfigured ? providerConfigured[candidate.providerId] : undefined;
     }
     // The selected instrument's own feed has the freshest answer.
     if (feed.configured) map[instrument.id] = true;
     return map;
-  }, [instrument.id, feed.configured, futuresConfigured]);
+  }, [instrument.id, feed.configured, providerConfigured]);
 
   const frame = current?.reading ?? null;
   const pricePrecision = instrument.precision;
@@ -162,19 +191,24 @@ const Index: React.FC = () => {
     return checkEntry(entryDirection, compasses, DEFAULT_COMPASS_CONFIG);
   }, [frame, entryDirection]);
 
-  // The chip row is filled only from timeframes already loaded this session.
-  // An unloaded timeframe is reported as not loaded and is never fetched here.
+  // The chip row is filled from timeframes the store has loaded. An unloaded
+  // timeframe is reported as not loaded and is never fetched here. A timeframe
+  // whose market is closed is marked so and excluded from the agreement figure.
   const chips: EntryChip[] = useMemo(() => {
     const byTimeframe = new Map(stored.map(entry => [entry.timeframe, entry]));
     return TIMEFRAMES.map(timeframe => {
       const entry = byTimeframe.get(timeframe);
+      const market = feed.timeframeMarket[timeframe];
+      const marketClosed = market?.state === 'CLOSED';
       return {
         timeframe,
         scoreLabel: entry?.reading.available ? entry.reading.summary.label : null,
         updatedAt: entry?.updatedAt ?? null,
+        marketClosed,
+        marketReason: marketClosed ? market?.reason : undefined,
       };
     });
-  }, [stored]);
+  }, [stored, feed.timeframeMarket]);
 
   const handleSelect = (id: string) => {
     setSelectedId(id);
@@ -216,6 +250,13 @@ const Index: React.FC = () => {
               <span className="flex items-center gap-1.5">
                 {feed.stale && feed.rateLimitedUntil !== null ? (
                   <RateLimitNotice until={feed.rateLimitedUntil} />
+                ) : feed.market.state === 'CLOSED' ? (
+                  // A closed market is the plain truth, not a feed fault: the
+                  // reading below is the last real close, and it must not read as
+                  // "Delayed (polling)" or as an error.
+                  <span className="font-bold text-amber-400" title={feed.market.reason}>
+                    ● Market closed
+                  </span>
                 ) : (
                   <span className={cn('font-bold', STATUS_TONE[feed.streamStatus])}>
                     ● {STATUS_TEXT[feed.streamStatus] ?? feed.streamStatus}
@@ -224,8 +265,9 @@ const Index: React.FC = () => {
                 <span className="font-mono text-white/40">{formatClock(feed.lastUpdate)}</span>
               </span>
               {/* A blocked fetch leaves the last real series on screen. Say so
-                  plainly rather than letting it pass as current. */}
-              {feed.stale && (
+                  plainly rather than letting it pass as current. A closed market
+                  is not stale, so it never earns this badge. */}
+              {feed.stale && feed.market.state !== 'CLOSED' && (
                 <span
                   className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
                   title="The credit limit blocked a fresh fetch; this is the last series we loaded."
@@ -233,41 +275,37 @@ const Index: React.FC = () => {
                   Stale
                 </span>
               )}
-              {/* A closed market is stated plainly: the reading below it is the
-                  last real one, not a live one. */}
-              {feed.market.state === 'CLOSED' && (
-                <span className="font-bold text-amber-400" title={feed.market.reason}>
-                  Market closed
-                </span>
-              )}
             </div>
           </div>
 
           {/* What we are really reading. A proxy is called a proxy, never the
-              futures contract. */}
-          {sourceDetail(feed) && (
-            <div className="flex flex-wrap items-center gap-2 text-label text-white/45">
-              <span className="uppercase tracking-wider text-white/30">Source</span>
-              <span className="font-mono text-white/70">{feed.sourceLabel}</span>
-              <span className="text-white/25">·</span>
-              <span className="font-mono text-white/70">{sourceDetail(feed)}</span>
-              {feed.resolvedSource?.kind === 'proxy' && (
-                <span
-                  className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
-                  title="This is a proxy for the futures contract, not the contract itself."
-                >
-                  Proxy
-                </span>
-              )}
-            </div>
-          )}
+              index itself, and the popover states the provider, symbol and feed. */}
+          <div className="flex flex-wrap items-center gap-2 text-label text-white/45">
+            <span className="uppercase tracking-wider text-white/30">Source</span>
+            <span className="font-mono text-white/70">{feed.sourceLabel}</span>
+            {sourceDetail(feed) && (
+              <>
+                <span className="text-white/25">·</span>
+                <span className="font-mono text-white/70">{sourceDetail(feed)}</span>
+              </>
+            )}
+            {feed.resolvedSource?.kind === 'proxy' && (
+              <span
+                className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-amber-400"
+                title="This is an ETF proxy for the index, not the index itself."
+              >
+                Proxy
+              </span>
+            )}
+            <ProvenancePopover details={provenanceDetails(instrument, feed)} />
+          </div>
 
           <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
             <InstrumentSelector selectedId={instrument.id} onSelect={handleSelect} availability={availability} />
             <div className="flex flex-wrap items-center gap-3">
               <TimeframeButtons selected={selectedTimeframe} onSelect={setSelectedTimeframe} busy={busy} />
               <span className="text-micro text-white/35">
-                {busy ? 'Loading timeframe…' : `One timeframe fetched at a time · ${timeframeLabel}`}
+                {busy ? 'Loading timeframes…' : `All timeframes loaded · ${timeframeLabel}`}
               </span>
             </div>
           </div>
@@ -288,8 +326,10 @@ const Index: React.FC = () => {
               </p>
               {feed.sourceReachable ? (
                 <p className="text-label text-white/45">
-                  FlowSense shows nothing rather than a fabricated number. Gold, S&amp;P 500 and Dow need{' '}
-                  <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span> set in the deployment
+                  FlowSense shows nothing rather than a fabricated number. Gold needs{' '}
+                  <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span>; the S&amp;P 500, Dow and
+                  Nasdaq assets need <span className="font-mono text-white/70">ALPACA_API_KEY</span> and{' '}
+                  <span className="font-mono text-white/70">ALPACA_API_SECRET</span> set in the deployment
                   environment.
                 </p>
               ) : (

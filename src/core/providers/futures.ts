@@ -1,38 +1,32 @@
 // ============================================
-// TWELVE DATA PROVIDER — SERVER-PROXIED
+// SERVER-PROXIED MARKET DATA PROVIDER (client)
 // ============================================
-// Gold, S&P 500 and Dow need an API key, and an API key must never reach the
-// browser. So this provider does not call Twelve Data directly: it calls this
-// app's own serverless routes, which hold the key in a Vercel environment
-// variable and forward the request.
+// The assets need vendor keys, and a key must never reach the browser. So this
+// provider does not call a vendor directly: it calls this app's own serverless
+// routes, which hold the keys in Vercel environment variables and forward the
+// request. WHICH vendor serves an asset (Twelve Data for Gold, Alpaca for the
+// index assets) is a server-side configuration fact — this client asks for an
+// instrument and is told which provider answered.
 //
-//   /api/futures/candles   real OHLCV, symbol-resolved and briefly cached
-//   /api/futures/status    whether a key is configured, and what is resolved
-//   /api/futures/stream    WebSocket relay (only when the key may reach a socket)
+//   /api/futures/candles   real OHLCV, per-asset provider, briefly cached
+//   /api/futures/status    whether a provider is configured, and what is resolved
+//   /api/health            provider credential + call-rate report
 //
 // ALL indicators are computed locally from these candles. The vendor's own
-// indicator endpoints are never used, which keeps the credit spend at one call
-// per symbol/timeframe rather than one per indicator.
+// indicator endpoints are never used, which keeps the spend at one call per
+// symbol/timeframe rather than one per indicator.
 //
-// Capabilities are declared honestly:
-//   candles   yes
-//   ticks     yes, but only through a live feed the server is willing to expose;
-//             otherwise the feed polls REST and the UI shows a "polling" badge
+// The provider reports WHICH symbol answered and whether it is a proxy. An index
+// asset read through an ETF is never presented as the index itself.
 //
-// The provider reports WHICH symbol answered and whether it is a proxy. A proxy
-// is never presented as the futures contract.
-//
-// KEY HANDLING: Twelve Data's price WebSocket authenticates with the API key in
-// the URL. A browser connecting to it directly would therefore expose the key,
-// which is not acceptable. So the live path here is REST polling by default; a
-// WebSocket is only attempted when the server explicitly says a browser-safe
-// relay is available (see `websocket` in the status route).
+// KEY HANDLING: no vendor key is ever put in a URL. The live path is REST
+// polling; a WebSocket relay is only used when the server says one is available.
 
 import type { Candle, Timeframe } from '../types';
-import type { Instrument, ResolvedSource } from '../instruments';
+import type { Instrument, ProviderId, ResolvedSource } from '../instruments';
 import { normalizeSeries } from '../candles';
 import { ProviderError, type MarketDataProvider, type Subscription, type TickHandlers } from './types';
-import { PRICE_POLL_INTERVAL_MS } from './polling';
+import { PRICE_POLL_INTERVAL_MS, pollIntervalForProvider } from './polling';
 import { isEntitlementFailure, parseWsMessage } from './twelvedataWs';
 
 export interface FuturesRouteResponse {
@@ -50,12 +44,26 @@ export interface FuturesRouteResponse {
   requestedSymbol?: string;
   instrumentType?: string;
   exchange?: string;
+  /** Which provider served this payload, e.g. "alpaca". */
+  provider?: ProviderId;
+  /** The feed, e.g. "iex". Alpaca only. */
+  feed?: string;
+  /** True when the volume is a single exchange's, not consolidated. */
+  partialVolume?: boolean;
   cached?: boolean;
   error?: { kind: string; message: string; retryAfterMs?: number };
 }
 
-/** The credit meter state the status route reports, so the UI can warn early. */
-export interface CreditState {
+/** A batch candles response: one payload per asset id, all on one provider. */
+export interface FuturesBatchResponse {
+  ok: boolean;
+  provider?: ProviderId;
+  timeframe?: string;
+  assets?: Record<string, FuturesRouteResponse>;
+}
+
+/** A provider's rate-meter state the status route reports. */
+export interface ProviderMeterState {
   limit: number;
   used: number;
   remaining: number;
@@ -65,6 +73,16 @@ export interface CreditState {
   reason: string | null;
 }
 
+/** The status route's per-provider block. */
+export interface ProviderStatusState {
+  configured: boolean;
+  credits?: ProviderMeterState;
+  requests?: ProviderMeterState;
+}
+
+/** The credit/request meter state the status route reports, for the UI. */
+export interface CreditState extends ProviderMeterState {}
+
 const ERROR_KINDS = new Set([
   'NOT_CONFIGURED',
   'UNSUPPORTED_INSTRUMENT',
@@ -73,6 +91,8 @@ const ERROR_KINDS = new Set([
   'SYMBOL_NOT_FOUND',
   'NETWORK',
   'UPSTREAM',
+  'AUTH',
+  'SUBSCRIPTION',
   'UNKNOWN',
 ]);
 
@@ -87,8 +107,8 @@ function toProviderError(
 }
 
 /**
- * Whether the futures source is configured is a server-side fact, so the client
- * asks the route once and caches the answer. Until it knows, the UI shows the
+ * Whether each provider is configured is a server-side fact, so the client asks
+ * the route once and caches the answer. Until it knows, the UI shows the
  * instrument as "checking", never as if it had data.
  */
 let configuredCache: boolean | null = null;
@@ -96,8 +116,12 @@ let configuredCache: boolean | null = null;
 let liveStreamCache: boolean | null = null;
 /** The resolved symbol per instrument, as last reported by the server. */
 const resolvedCache = new Map<string, ResolvedSource>();
-/** The last credit-meter state the server reported. */
+/** The provider per instrument, as last reported by the server. */
+const providerCache = new Map<string, ProviderId>();
+/** The last Twelve Data meter state the server reported. */
 let creditCache: CreditState | null = null;
+/** The last Alpaca meter state the server reported. */
+let alpacaCreditCache: CreditState | null = null;
 /** The in-flight status probe, so two callers share one request. */
 let statusProbe: Promise<FuturesProbeResult> | null = null;
 
@@ -114,21 +138,47 @@ export function resolvedSourceFor(instrumentId: string): ResolvedSource | undefi
   return resolvedCache.get(instrumentId);
 }
 
-/** The last credit-meter state, for the UI's rate-limit banner. */
+/** The provider the server last reported serving this instrument, if known. */
+export function providerForResolved(instrumentId: string): ProviderId | undefined {
+  return providerCache.get(instrumentId);
+}
+
+/** The last Twelve Data meter state, for the UI's rate-limit banner. */
 export function futuresCreditState(): CreditState | null {
   return creditCache;
+}
+
+/** The last Alpaca meter state, for the UI's rate-limit banner. */
+export function alpacaCreditState(): CreditState | null {
+  return alpacaCreditCache;
+}
+
+/** Which vendors the server reports as configured, per the last status probe. */
+let providerConfigured: Record<'twelvedata' | 'alpaca', boolean> | null = null;
+
+export function providerConfiguredState(): Record<'twelvedata' | 'alpaca', boolean> | null {
+  return providerConfigured;
+}
+
+/** The meter state for whichever provider serves this instrument. */
+export function creditStateFor(instrumentId: string): CreditState | null {
+  return providerCache.get(instrumentId) === 'alpaca' ? alpacaCreditCache : creditCache;
 }
 
 export function clearFuturesCaches(): void {
   configuredCache = null;
   liveStreamCache = null;
   creditCache = null;
+  alpacaCreditCache = null;
+  providerConfigured = null;
   statusProbe = null;
   resolvedCache.clear();
+  providerCache.clear();
 }
 
 /** Record provenance from a candles response, for the UI to render. */
 function rememberResolution(instrumentId: string, payload: FuturesRouteResponse): void {
+  if (payload.provider) providerCache.set(instrumentId, payload.provider);
   if (!payload.symbol || !payload.symbolKind) return;
   resolvedCache.set(instrumentId, {
     symbol: payload.requestedSymbol ?? payload.symbol,
@@ -137,12 +187,16 @@ function rememberResolution(instrumentId: string, payload: FuturesRouteResponse)
     description: payload.symbolLabel ?? payload.symbol,
     instrumentType: payload.instrumentType,
     exchange: payload.exchange,
+    provider: payload.provider,
+    feed: payload.feed,
+    partialVolume: payload.partialVolume,
   });
 }
 
 export const futuresProvider: MarketDataProvider = {
   id: 'futures',
-  label: 'Twelve Data (server-proxied)',
+  serves: ['twelvedata', 'alpaca'],
+  label: 'Server-proxied (Twelve Data + Alpaca)',
   capabilities: { candles: true, ticks: true },
 
   isConfigured: () => configuredCache === true,
@@ -205,7 +259,67 @@ export const futuresProvider: MarketDataProvider = {
   },
 };
 
-/** Ask the route whether the server has a key configured, and what it resolved. */
+// ============================================
+// BATCH LOAD (all assets on one provider, one request)
+// ============================================
+
+export interface BatchLoadResult {
+  /** Per instrument id: the candles, or an error. One failure never blocks another. */
+  byInstrument: Record<string, { candles: Candle[] } | { error: ProviderError }>;
+}
+
+/**
+ * Load every Alpaca-backed asset for one timeframe in ONE vendor request.
+ *
+ * This is what makes "load everything on open" cheap: seven timeframes are
+ * seven requests for all Alpaca assets, not one request per asset per timeframe.
+ * The result is keyed per asset so one bad symbol cannot block the others.
+ */
+export async function loadAlpacaBatch(
+  timeframe: Timeframe,
+  limit: number,
+  signal?: AbortSignal
+): Promise<BatchLoadResult> {
+  const params = new URLSearchParams({ assets: '1', timeframe, limit: String(limit) });
+  let response: Response;
+  try {
+    response = await fetch(`/api/futures/candles?${params.toString()}`, {
+      signal,
+      headers: { Accept: 'application/json' },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    throw new ProviderError('NETWORK', 'Could not reach the futures data route');
+  }
+
+  let payload: FuturesBatchResponse;
+  try {
+    payload = (await response.json()) as FuturesBatchResponse;
+  } catch {
+    throw new ProviderError('UPSTREAM', `Futures route returned HTTP ${response.status}`);
+  }
+
+  const byInstrument: BatchLoadResult['byInstrument'] = {};
+  for (const [instrumentId, entry] of Object.entries(payload.assets ?? {})) {
+    if (entry.ok && Array.isArray(entry.candles)) {
+      byInstrument[instrumentId] = { candles: normalizeSeries(entry.candles) };
+      rememberResolution(instrumentId, entry);
+    } else {
+      byInstrument[instrumentId] = {
+        error: toProviderError(
+          entry.error?.kind,
+          entry.error?.message ?? 'Futures request failed',
+          response.status,
+          entry.error?.retryAfterMs
+        ),
+      };
+    }
+  }
+  if (Object.keys(byInstrument).length > 0) setFuturesConfigured(true);
+  return { byInstrument };
+}
+
+/** Ask the route whether the server has keys configured, and what it resolved. */
 export interface FuturesProbeResult {
   configured: boolean;
   /**
@@ -222,7 +336,7 @@ export interface FuturesProbeResult {
  *
  * Concurrent callers share ONE in-flight request: the page mounts the feed hook
  * and the selector, both of which need this answer, and two identical calls to
- * our own status route is waste. The status route itself costs no vendor credits,
+ * our own status route is waste. The status route itself costs no vendor calls,
  * but there is no reason to make it twice.
  *
  * The shared request deliberately ignores the caller's AbortSignal: with two
@@ -250,18 +364,29 @@ async function runStatusProbe(): Promise<FuturesProbeResult> {
       provider?: string;
       note?: string;
       websocket?: boolean;
+      providers?: { twelvedata?: ProviderStatusState; alpaca?: ProviderStatusState };
       credits?: CreditState;
-      instruments?: Array<{ instrumentId: string; resolved: ResolvedSource | null }>;
+      instruments?: Array<{ instrumentId: string; provider?: ProviderId; resolved: ResolvedSource | null }>;
     };
     const configured = payload.configured === true;
     setFuturesConfigured(configured);
     liveStreamCache = payload.websocket === true;
-    if (payload.credits) creditCache = payload.credits;
+    if (payload.providers) {
+      providerConfigured = {
+        twelvedata: payload.providers.twelvedata?.configured === true,
+        alpaca: payload.providers.alpaca?.configured === true,
+      };
+    }
+    // Prefer the per-provider meters; fall back to the legacy top-level block.
+    if (payload.providers?.twelvedata?.credits) creditCache = payload.providers.twelvedata.credits;
+    else if (payload.credits) creditCache = payload.credits;
+    if (payload.providers?.alpaca?.requests) alpacaCreditCache = payload.providers.alpaca.requests;
     // Prefer a server-known resolution, but never overwrite one we learned from
     // a real candles response.
     for (const entry of payload.instruments ?? []) {
+      if (entry.provider) providerCache.set(entry.instrumentId, entry.provider);
       if (entry.resolved && !resolvedCache.has(entry.instrumentId)) {
-        resolvedCache.set(entry.instrumentId, entry.resolved);
+        resolvedCache.set(entry.instrumentId, { ...entry.resolved, provider: entry.resolved.provider ?? entry.provider });
       }
     }
     return { configured, reachable: true, note: payload.note };
@@ -296,6 +421,10 @@ export function pollCandles(instrument: Instrument, timeframe: Timeframe, handle
   // UI must show a delayed/polling badge rather than a live dot.
   handlers.onStatus?.('UNAVAILABLE');
 
+  // The cadence is the PROVIDER's, not a single global one: the two vendors are
+  // metered differently, so their refresh rates differ.
+  const cadenceMs = pollIntervalForProvider(instrument.providerId, timeframe);
+
   const tick = async () => {
     if (closed) return;
     try {
@@ -324,10 +453,10 @@ export function pollCandles(instrument: Instrument, timeframe: Timeframe, handle
       // A failed poll is not fatal: the next one may succeed, and the hook
       // keeps showing the last real bar with its real timestamp.
     }
-    if (!closed) timer = setTimeout(tick, PRICE_POLL_INTERVAL_MS);
+    if (!closed) timer = setTimeout(tick, cadenceMs);
   };
 
-  timer = setTimeout(tick, PRICE_POLL_INTERVAL_MS);
+  timer = setTimeout(tick, cadenceMs);
 
   return {
     close: () => {

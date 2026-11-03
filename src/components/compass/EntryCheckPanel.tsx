@@ -5,10 +5,15 @@
 // the SELECTED timeframe back it. Every number shown here comes from checkEntry
 // in core/entryCheck, so the panel cannot disagree with the compasses above it.
 //
-// The chip row fills only from timeframes already loaded in this session, each
-// with the age of its last reading. A timeframe that has not been opened says
-// "Not loaded" — it is never fetched to fill a chip, which is what keeps a page
-// load at one timeframe's worth of credits.
+// The chip row fills from every timeframe the store has loaded, each with the age
+// of its last reading. A timeframe that has not loaded says "Not loaded" — it is
+// never fetched to fill a chip.
+//
+// A timeframe whose market is CLOSED (a US-equity asset outside the regular
+// session, whose newest bar legitimately stays at the last close) is labelled
+// "Market closed" and EXCLUDED from the timeframe-level agreement figure, with a
+// note saying so. It is never shown as a disagreement and never drags the
+// percentage down.
 
 import React from 'react';
 import type { EntryCheckResult, EntryDirection } from '../../core/entryCheck';
@@ -23,6 +28,10 @@ export interface EntryChip {
   timeframe: Timeframe;
   scoreLabel: ScoreLabel | null;
   updatedAt: number | null;
+  /** True when this timeframe's market is closed, so its reading is the last close. */
+  marketClosed?: boolean;
+  /** Why it is closed, for the tooltip. */
+  marketReason?: string;
 }
 
 interface EntryCheckPanelProps {
@@ -75,6 +84,17 @@ export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({
 }) => {
   const style = VERDICT_STYLE[result.verdict];
 
+  // Timeframe-level agreement, measured ONLY across timeframes that are loaded,
+  // have a reading, and whose market is open. Market-closed timeframes are
+  // excluded, not counted as disagreement, so a closed market never reads as a
+  // signal against the trade.
+  const closedChips = chips.filter(chip => chip.marketClosed);
+  const directional = chips.filter(
+    chip => chip.scoreLabel !== null && !chip.marketClosed && chipStance(chip.scoreLabel, direction) !== 'NEUTRAL'
+  );
+  const agreeing = directional.filter(chip => chipStance(chip.scoreLabel!, direction) === 'AGREE');
+  const timeframeShare = directional.length === 0 ? null : agreeing.length / directional.length;
+
   return (
     <div className="space-y-3">
       {/* Direction switch */}
@@ -100,18 +120,14 @@ export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({
             </button>
           ))}
         </div>
-        <span className="text-label text-white/40">
-          against the three compasses on {timeframeLabel}
-        </span>
+        <span className="text-label text-white/40">against the three compasses on {timeframeLabel}</span>
       </div>
 
       {/* Verdict */}
       <div className={cn('rounded-xl border px-4 py-3', style.ring)}>
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
           <div className="flex items-baseline gap-3">
-            <span className={cn('text-title font-black leading-none', style.text)}>
-              {verdictWord(result.verdict)}
-            </span>
+            <span className={cn('text-title font-black leading-none', style.text)}>{verdictWord(result.verdict)}</span>
             <span className="text-label text-white/50">
               {result.aligned} agree · {result.opposing} disagree · {result.neutral} neutral
               {result.unavailable > 0 && ` · ${result.unavailable} no reading`}
@@ -121,12 +137,43 @@ export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({
         </div>
 
         <p className="mt-1.5 text-body text-white/75">{result.message}</p>
+
+        {/* Timeframe-level agreement, excluding market-closed timeframes. */}
+        {timeframeShare !== null ? (
+          <p className="mt-1 text-label text-white/50">
+            Across loaded timeframes: {agreeing.length} of {directional.length} agree ({Math.round(timeframeShare * 100)}%)
+            {closedChips.length > 0 && ` · ${closedChips.length} excluded (market closed)`}
+          </p>
+        ) : (
+          closedChips.length > 0 && (
+            <p className="mt-1 text-label text-white/50">
+              Across loaded timeframes: no open market to compare — {closedChips.length} market closed
+            </p>
+          )
+        )}
       </div>
 
-      {/* Per-timeframe chips, filled only from what is already loaded */}
+      {/* Per-timeframe chips, filled only from what is loaded */}
       <div className="flex flex-wrap gap-2">
         {chips.map(chip => {
           const label = TIMEFRAME_LABELS[chip.timeframe] ?? chip.timeframe;
+
+          if (chip.marketClosed) {
+            return (
+              <div
+                key={chip.timeframe}
+                className="flex flex-col items-center gap-0.5 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-3 py-1.5"
+                title={chip.marketReason ?? 'The market is closed; the last candle is the last close.'}
+              >
+                <span className="text-label font-bold text-amber-300/90">{label}</span>
+                <span className="text-micro text-amber-300/70">Market closed</span>
+                <span className="text-[0.5625rem] uppercase tracking-wide text-white/35">
+                  {formatAge(chip.updatedAt, now)}
+                </span>
+              </div>
+            );
+          }
+
           if (!chip.scoreLabel || chip.updatedAt === null) {
             return (
               <div
