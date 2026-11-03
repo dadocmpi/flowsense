@@ -10,6 +10,7 @@ import {
   clearFuturesCaches,
   futuresCreditState,
   futuresProvider,
+  loadAlpacaBatch,
   probeFuturesProvider,
   resolvedSourceFor,
 } from '../providers/futures';
@@ -116,5 +117,60 @@ describe('probeFuturesProvider', () => {
     // Two callers, one request: the status route costs no credits, but there is
     // no reason to ask twice.
     expect(calls).toBe(1);
+  });
+});
+
+describe('loadAlpacaBatch', () => {
+  beforeEach(() => {
+    clearFuturesCaches();
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('asks for every Alpaca asset on one timeframe in a single request', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      urls.push(url);
+      return jsonResponse({
+        ok: true,
+        provider: 'alpaca',
+        timeframe: '15m',
+        assets: {
+          ES: { ok: true, candles: [{ datetime: '2024-06-10 13:30:00', open: 1, high: 2, low: 0, close: 1.5, volume: 10 }] },
+          YM: { ok: true, candles: [{ datetime: '2024-06-10 13:30:00', open: 1, high: 2, low: 0, close: 1.5, volume: 10 }] },
+        },
+      });
+    });
+
+    const { byInstrument } = await loadAlpacaBatch('15m', 300);
+
+    // ONE request for the whole timeframe, not one per asset.
+    expect(urls).toHaveLength(1);
+    expect(new URL(urls[0], 'http://localhost').searchParams.get('assets')).toBe('1');
+    expect(urls[0]).toContain('timeframe=15m');
+    expect('candles' in byInstrument.ES).toBe(true);
+    expect('candles' in byInstrument.YM).toBe(true);
+  });
+
+  it('reports a per-asset error without failing the others', async () => {
+    vi.stubGlobal('fetch', async () =>
+      jsonResponse({
+        ok: true,
+        provider: 'alpaca',
+        assets: {
+          ES: { ok: true, candles: [{ datetime: '2024-06-10 13:30:00', open: 1, high: 2, low: 0, close: 1.5, volume: 10 }] },
+          YM: { ok: false, error: { kind: 'SYMBOL_NOT_FOUND', message: 'No candles returned for DIA' } },
+        },
+      })
+    );
+
+    const { byInstrument } = await loadAlpacaBatch('15m', 300);
+
+    // ES still arrives; YM carries its own error and never blocks ES.
+    expect('candles' in byInstrument.ES).toBe(true);
+    expect('error' in byInstrument.YM && byInstrument.YM.error.kind).toBe('SYMBOL_NOT_FOUND');
   });
 });

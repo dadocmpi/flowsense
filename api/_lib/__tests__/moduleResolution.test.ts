@@ -18,7 +18,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const apiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const ENTRY_POINTS = ['futures/status.ts', 'futures/candles.ts', 'futures/symbols.ts', 'orderflow/reading.ts'];
+const ENTRY_POINTS = ['futures/status.ts', 'futures/candles.ts', 'futures/symbols.ts', 'orderflow/reading.ts', 'health.ts'];
 
 const RELATIVE_IMPORT = /from\s+'(\.[^']*)'/g;
 

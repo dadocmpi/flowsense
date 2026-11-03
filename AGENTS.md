@@ -3,8 +3,13 @@
 ## What this app is
 
 FlowSense: a React + TypeScript + Vite multi-timeframe market compass for Gold,
-S&P 500 and Dow futures (GC/ES/YM). Every number is a provider response or
-arithmetic over one. Nothing is simulated.
+the S&P 500, the Dow and the Nasdaq (GC/ES/YM/NQ). Every number is a provider
+response or arithmetic over one. Nothing is simulated.
+
+Gold is served by Twelve Data (XAU/USD spot); the three index assets are served
+by Alpaca, read through the liquid ETF proxies SPY/DIA/QQQ. Which provider serves
+an asset is a per-asset configuration fact (`api/_lib/assets.ts`), overridable by
+env, and switching one needs only a config change.
 
 ## Hard rules
 
@@ -14,11 +19,12 @@ arithmetic over one. Nothing is simulated.
 - **Only ship markets we can source honestly.** Futures come from a configured
   provider. An instrument with no configured source shows "no data source
   configured" and no numbers at all — never a placeholder that looks real.
-- **Keys stay server-side.** The futures provider's key is read only by the
-  functions under `api/` and must never reach the browser. Verify the bundle
-  stays credential-free: `grep -c "apikey" dist/assets/*.js` → must be 0. (A
-  `FUTURES_API_KEY` hit in the bundle is fine only as the env-var *name* in help
-  text, never a value.)
+- **Keys stay server-side.** Each provider's key is read only by the functions
+  under `api/` and must never reach the browser. Verify the bundle stays
+  credential-free: `grep -c "apikey" dist/assets/*.js` → must be 0. (An
+  `ALPACA_API_KEY` / `FUTURES_API_KEY` hit in the bundle is fine only as the
+  env-var *name* in help text, never a value. Never prefix an Alpaca variable
+  with `NEXT_PUBLIC_`.)
 
 ## Architecture
 
@@ -33,19 +39,28 @@ src/core/candles.ts            bucketing, resampling, live-tail merge
 src/core/timeframeEngine.ts    ONE timeframe -> the three compasses + structure + metrics
 src/core/entryCheck.ts         do the selected timeframe's compasses agree with a long/short? (pure)
 src/core/marketHours.ts        is the market still producing bars? (pure)
-src/core/providers/            MarketDataProvider interface + the futures provider
-src/core/providers/polling.ts  poll cadence + server cache TTLs (one place)
+src/core/marketSessions.ts     per-provider market calendar (Alpaca = US equity session) (pure)
+src/core/instruments.ts        the asset catalog + which provider serves each
+src/core/providers/            MarketDataProvider interface + the server-proxied provider
+src/core/providers/polling.ts  per-provider poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
 src/config/compass.ts          every weight, tolerance and session setting
-src/hooks/useInstrumentFeed.ts        candles and ticks for one instrument
+src/hooks/marketDataStore.ts         one store of series keyed asset:timeframe, loaded once on open
+src/hooks/useInstrumentFeed.ts        a per-instrument view over the store
 src/hooks/useTimeframeReadings.ts     one reading per (asset, timeframe), kept apart
-api/_lib/creditMeter.ts        the per-minute meter that gates EVERY vendor call
-api/_lib/symbols.ts            the ONE place the single symbol per instrument is mapped
-api/_lib/twelvedata.ts         vendor adapter: meter, request, parse, classify error kind
-api/_lib/candleCache.ts        short-lived candle cache (one vendor call per TTL)
-api/futures/candles.ts         server-side futures candle proxy
-api/futures/status.ts          is a key configured, what symbol is read, meter state
+api/_lib/assets.ts             THE per-asset provider + symbol mapping (env-overridable)
+api/_lib/rateMeter.ts          the shared per-minute meter implementation
+api/_lib/creditMeter.ts        the Twelve Data meter instance (credits)
+api/_lib/alpacaMeter.ts        the Alpaca meter instance (requests)
+api/_lib/symbols.ts            the Twelve Data symbol mapping (the ONE place)
+api/_lib/twelvedata.ts         Twelve Data adapter: meter, request, parse, classify error kind
+api/_lib/alpaca.ts             Alpaca adapter: meter, request, parse, pagination, classify error kind
+api/_lib/candleCache.ts        short-lived Twelve Data candle cache (one vendor call per TTL)
+api/_lib/alpacaCache.ts        short-lived Alpaca candle cache, incl. the multi-symbol batch
+api/futures/candles.ts         server-side candle proxy (single asset, or one batch per timeframe)
+api/futures/status.ts          which providers are configured, what symbol is read, meter state
+api/health.ts                  provider credentials + last-call time + calls this minute
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
 api/orderflow/reading.ts       is an order-flow source configured, and its reading
 api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor
@@ -78,22 +93,34 @@ that asset rather than spending another credit on a retry. A rate limit stops
 everything until the minute resets. A failure that is not an entitlement problem
 must not be reported as one.
 
-### Every vendor call goes through the credit meter
+### Every vendor call goes through its provider's meter
 
-`api/_lib/creditMeter.ts` is the single gate. `meteredFetch` in
-`api/_lib/twelvedata.ts` checks it before the request and records the vendor's
-own `api-credits-used` / `api-credits-left` headers after it, and logs one line
-per request. Do not add a `fetch` to `api.twelvedata.com` outside that function:
-a call that skips the meter is exactly how the account gets pinned at its
-ceiling. Discovery (`api/futures/symbols.ts`, `npm run check:symbols`) is the
-only code allowed to touch more than one symbol, and it runs out of band, never
-inside a user request.
+There is ONE meter implementation, `api/_lib/rateMeter.ts`, and TWO instances of
+it — one per provider, because the two vendors are metered differently:
 
-The meter is per serverless instance and in memory, so a cold instance starts
-empty and is capped at `COLD_START_MAX_CREDITS` (3) for its first minute. A
-rate-limit response marks the meter exhausted for the rest of the wall-clock
-minute. The client shows its own "Rate limit — retrying in Xs" state with the
-last series marked Stale; never surface the vendor's raw text.
+- `api/_lib/creditMeter.ts` — Twelve Data, metered in CREDITS. `meteredFetch` in
+  `api/_lib/twelvedata.ts` checks it before the request and records the vendor's
+  own `api-credits-used` / `api-credits-left` headers after it, and logs one line
+  per request. Do not add a `fetch` to `api.twelvedata.com` outside that function:
+  a call that skips the meter is exactly how the account gets pinned at its
+  ceiling. Discovery (`api/futures/symbols.ts`, `npm run check:symbols`) is the
+  only code allowed to touch more than one symbol, and it runs out of band, never
+  inside a user request.
+- `api/_lib/alpacaMeter.ts` — Alpaca, metered in REQUESTS (default 200/min,
+  `ALPACA_REQUESTS_PER_MINUTE`). Alpaca does not report usage in headers, so the
+  meter counts the calls it makes. Do not add a `fetch` to `data.alpaca.markets`
+  outside `api/_lib/alpaca.ts`.
+
+The two instances are independent budgets: a Twelve Data credit limit never blocks
+an Alpaca request and vice versa, so one vendor's problem cannot take the whole
+page down.
+
+Each meter is per serverless instance and in memory, so a cold instance starts
+empty and is capped for its first minute (`COLD_START_MAX_CREDITS` for Twelve
+Data; `ALPACA_COLD_START_MAX_REQUESTS` for Alpaca, sized so one full load's seven
+requests get through). A rate-limit response marks that meter exhausted for the
+rest of the wall-clock minute. The client shows its own "Rate limit — retrying in
+Xs" state with the last series marked Stale; never surface the vendor's raw text.
 
 ### Streaming, not polling
 
@@ -113,18 +140,34 @@ reset the server reported, and never in a loop.
 
 There are seven timeframes (1m, 5m, 15m, 30m, 1h, 4h, 1D). Each is requested
 from the provider at its own interval, so a 1m seed cannot cap how far back the
-daily reaches — but only the SELECTED timeframe is fetched on load, one credit
-each, and the rest load on demand when the user selects them. Do not reintroduce
-a mount-time sweep of every timeframe: seven timeframes is seven credits, which
-alone can spend a small plan's whole minute. Each request asks for at least 250
-candles (`requestedCandles` in `src/config/compass.ts`) so EMA 200 is valid; a
-wider window is still ONE request and so still one credit.
+daily reaches. Each request asks for at least 250 candles (`requestedCandles` in
+`src/config/compass.ts`) so EMA 200 is valid; a wider window is still ONE request
+and so still one credit.
+
+EVERY asset and EVERY timeframe loads on open, driven once by `marketDataStore`:
+
+- Alpaca is metered by REQUESTS and accepts many symbols in one call, so all
+  three Alpaca assets for one timeframe arrive in ONE multi-symbol request. Seven
+  timeframes are therefore seven requests total, not one per asset per timeframe.
+- Twelve Data is metered by CREDITS, so its assets are queued one call at a time
+  through the server's credit meter (the existing queue, not bypassed).
 
 Readings are keyed by `asset:timeframe` in `useTimeframeReadings`, so switching
 timeframes never mixes their series and a chip for a timeframe loaded earlier
-still shows that timeframe's own reading and its age. The entry-check chip row
-fills ONLY from timeframes already loaded this session; an unloaded timeframe
-reads "Not loaded" and is never fetched to fill a chip.
+still shows that timeframe's own reading and its age. State is independent per
+`(asset, timeframe)`: one failure never blocks another, and each asset shows as
+soon as its own series arrives. Do not collapse this back to fetching only the
+selected timeframe, and do not reintroduce a per-indicator fetch — every indicator
+is computed locally from the candles, so a refresh costs one request per provider
+and timeframe, never one per indicator.
+
+An Alpaca candle outside the US regular session (09:30–16:00 ET, weekdays, minus
+the NYSE holidays) legitimately stays at the last close. That is NORMAL: the UI
+labels the asset "Market closed" and shows the real last-candle age — never
+"Stale" and never an error. A market-closed timeframe is marked "Market closed"
+and EXCLUDED from the Entry check's timeframe-level agreement figure, with a note
+saying so; it is never counted as a disagreement. The calendar lives in
+`src/core/marketSessions.ts` (pure, DST-safe through `Intl`).
 
 The live stream carries the 1m bar;
 the newest bar of the mergeable timeframes (5m, 15m, 30m, 1h, 4h, 1D) is
@@ -183,9 +226,15 @@ page load. Put secondary or debug content in its own always-visible section
 instead of hiding it.
 
 The header states the feed's real condition: a rate-limited feed shows our own
-"Rate limit — retrying in Xs" countdown and a Stale badge on the last series.
-Never render the vendor's raw error text, and never leave stale numbers looking
-current.
+"Rate limit — retrying in Xs" countdown and a Stale badge on the last series; an
+asset outside its market's hours shows "Market closed" with the real last-candle
+age and no Stale badge. Never render the vendor's raw error text, and never leave
+stale numbers looking current.
+
+The provenance popover on an asset states the provider, the symbol, the feed
+(`IEX`) and that the volume is partial market volume — IEX volume is one
+exchange's, never consolidated volume — and keeps the PROXY marker. An index asset
+read through an ETF is always called a proxy, never the index itself.
 
 ## Score and labels
 
@@ -219,13 +268,24 @@ spent the credits?"; `vendorUsed`/`vendorLeft` come from the vendor's own
 headers and are the source of truth.
 
 ```
-[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=GC1! timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
-[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=ES1! timeframe=15m credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
-[twelvedata] 2026-01-02T14:31:00.501Z endpoint=time_series symbol=YM1! timeframe=15m credits=1 status=200 vendorUsed=3 vendorLeft=5 meterUsed=3/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.123Z endpoint=time_series symbol=XAU/USD timeframe=15m credits=1 status=200 vendorUsed=1 vendorLeft=7 meterUsed=1/8 meter=OK
+[twelvedata] 2026-01-02T14:31:00.310Z endpoint=time_series symbol=XAU/USD timeframe=30m credits=1 status=200 vendorUsed=2 vendorLeft=6 meterUsed=2/8 meter=OK
+```
+
+Every Alpaca request logs its own line under the `[alpaca]` tag. `bars=` is the
+bar count per symbol in that page, `page=`/`pages` shows pagination, and
+`meterUsed=` is the REQUEST count. A vendor message is included on an error, with
+any key-shaped token redacted — a key is never logged.
+
+```
+[alpaca] 2026-01-02T14:31:00.512Z endpoint=stocks_bars symbols=SPY,DIA,QQQ timeframe=15m page=1 status=200 bars=SPY:300,DIA:300,QQQ:300 meterUsed=1/200 meter=OK
+[alpaca] 2026-01-02T14:31:01.004Z endpoint=stocks_bars symbols=SPY timeframe=15m page=1 status=401 meterUsed=2/200 meter=OK note=AUTH message=invalid credentials supplied
 ```
 
 A blocked call never reaches the vendor and logs `status=BLOCKED` with the
-meter's reason instead.
+meter's reason instead. One full load is 7 Alpaca requests (all three symbols
+each) plus 7 Twelve Data credits (Gold). `GET /api/health` costs no vendor calls
+and reports each provider's credentials, last call time and calls this minute.
 
 ## Testing indicator math
 

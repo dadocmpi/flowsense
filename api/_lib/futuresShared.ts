@@ -58,6 +58,26 @@ export function vendorApiKey(): string | null {
 }
 
 /**
+ * Alpaca credentials, read ONLY here on the server and never returned to the
+ * browser. Both are required: Alpaca authenticates with the two headers
+ * APCA-API-KEY-ID and APCA-API-SECRET-KEY, so a lone key id is not enough.
+ */
+export function alpacaKeyId(): string | null {
+  const key = (process.env.ALPACA_API_KEY ?? '').trim();
+  return key.length > 0 ? key : null;
+}
+
+export function alpacaSecretKey(): string | null {
+  const key = (process.env.ALPACA_API_SECRET ?? '').trim();
+  return key.length > 0 ? key : null;
+}
+
+/** True when both Alpaca credentials are present. */
+export function alpacaConfigured(): boolean {
+  return alpacaKeyId() !== null && alpacaSecretKey() !== null;
+}
+
+/**
  * Whether the vendor's WebSocket is usable on this plan.
  *
  * Defaults to enabled: if the plan has no WebSocket entitlement the connection

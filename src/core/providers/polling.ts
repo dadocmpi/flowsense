@@ -43,6 +43,50 @@ export const SERVER_CACHE_TTL_MS: Record<Timeframe, number> = Object.fromEntries
 export const SYMBOL_RESOLUTION_TTL_MS = 6 * 60 * 60 * 1000;
 
 /**
+ * How often the client re-fetches each timeframe over REST, per provider (ms).
+ *
+ * Twelve Data and Alpaca are metered differently — credits versus requests — so
+ * they get their own cadence rather than sharing one. Alpaca allows far more
+ * requests a minute, so it can be polled a little more eagerly, but the two stay
+ * deliberately close: both are REST polls, and neither should outrun the server
+ * cache it shares with every other open tab.
+ */
+export const ALPACA_POLL_INTERVAL_MS: Record<Timeframe, number> = {
+  '1m': 15_000,
+  '5m': 40_000,
+  '15m': 60_000,
+  '30m': 90_000,
+  '1h': 120_000,
+  '4h': 300_000,
+  '1D': 600_000,
+};
+
+/** The poll cadence for one provider and timeframe (ms). */
+export function pollIntervalForProvider(provider: 'twelvedata' | 'alpaca', timeframe: Timeframe): number {
+  return provider === 'alpaca' ? ALPACA_POLL_INTERVAL_MS[timeframe] : POLL_INTERVAL_MS[timeframe];
+}
+
+/**
+ * Per-provider server cache TTL (ms), by timeframe.
+ *
+ * Each provider's TTL sits just under ITS OWN poll interval, for the same reason
+ * the shared rule above does: a poller still sees a new bar, while simultaneous
+ * users collapse into one vendor call. Deriving Alpaca's TTL from Alpaca's cadence
+ * keeps the two from drifting.
+ */
+export const ALPACA_SERVER_CACHE_TTL_MS: Record<Timeframe, number> = Object.fromEntries(
+  (Object.entries(ALPACA_POLL_INTERVAL_MS) as Array<[Timeframe, number]>).map(([timeframe, interval]) => [
+    timeframe,
+    Math.round(interval * 0.8),
+  ])
+) as Record<Timeframe, number>;
+
+/** The server cache TTL for one provider and timeframe (ms). */
+export function cacheTtlForProvider(provider: 'twelvedata' | 'alpaca', timeframe: Timeframe): number {
+  return provider === 'alpaca' ? ALPACA_SERVER_CACHE_TTL_MS[timeframe] : SERVER_CACHE_TTL_MS[timeframe];
+}
+
+/**
  * How often the live PRICE is polled when no tick feed is available (ms).
  *
  * Every poll costs a credit, so this is the single biggest lever on the spend.

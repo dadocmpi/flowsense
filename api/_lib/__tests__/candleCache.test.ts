@@ -8,6 +8,9 @@
 // The invariant they protect: one request costs at most one vendor call. There is
 // no candidate walk, no retry, and a small poll request reuses the payload a big
 // request already paid for.
+//
+// Only Gold is a Twelve Data asset now; the index assets moved to Alpaca, so a
+// Twelve Data call for them is not made at all.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearServerCaches, knownResolution, loadCandles } from '../candleCache';
@@ -36,36 +39,40 @@ function errorPayload(message: string): unknown {
   return { status: 'error', code: 404, message };
 }
 
+const ENV_KEYS = [
+  'TWELVE_DATA_SYMBOL_GC',
+  'TWELVE_DATA_SYMBOL_ES',
+  'TWELVE_DATA_SYMBOL_YM',
+  'ASSET_SYMBOL_GC',
+  'ASSET_PROVIDER_GC',
+  'ASSET_PROVIDER_ES',
+];
+
 describe('loadCandles', () => {
   beforeEach(() => {
     clearServerCaches();
     resetCreditMeter();
     vi.restoreAllMocks();
-    delete process.env.TWELVE_DATA_SYMBOL_GC;
-    delete process.env.TWELVE_DATA_SYMBOL_ES;
-    delete process.env.TWELVE_DATA_SYMBOL_YM;
+    for (const key of ENV_KEYS) delete process.env[key];
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete process.env.TWELVE_DATA_SYMBOL_GC;
-    delete process.env.TWELVE_DATA_SYMBOL_ES;
-    delete process.env.TWELVE_DATA_SYMBOL_YM;
+    for (const key of ENV_KEYS) delete process.env[key];
   });
 
   it('requests the one configured symbol and never probes another', async () => {
     const calls: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {
       calls.push(new URL(url).searchParams.get('symbol') ?? '');
-      return jsonResponse(okPayload('ES1!', ['520.25', '521.5']));
+      return jsonResponse(okPayload('XAU/USD', ['2330.25', '2331.5']));
     });
 
-    const result = await loadCandles({ instrumentId: 'ES', timeframe: '1D', limit: 300, apiKey: 'key' });
+    const result = await loadCandles({ instrumentId: 'GC', timeframe: '1D', limit: 300, apiKey: 'key' });
 
-    expect(calls).toEqual(['ES1!']);
-    expect(result.resolved.candidate.symbol).toBe('ES1!');
-    expect(result.resolved.candidate.kind).toBe('futures');
-    expect(result.candles.map(c => c.close)).toEqual([520.25, 521.5]);
+    expect(calls).toEqual(['XAU/USD']);
+    expect(result.resolved.candidate.symbol).toBe('XAU/USD');
+    expect(result.candles.map(c => c.close)).toEqual([2330.25, 2331.5]);
   });
 
   it('returns an error for a failing symbol instead of trying another', async () => {
@@ -79,7 +86,7 @@ describe('loadCandles', () => {
       kind: 'ENTITLEMENT',
     });
     // Exactly one attempt: no fallback candidate was tried.
-    expect(calls).toEqual(['GC1!']);
+    expect(calls).toEqual(['XAU/USD']);
   });
 
   it('stops on a rate limit and reports the retry window', async () => {
@@ -89,12 +96,25 @@ describe('loadCandles', () => {
       return jsonResponse(errorPayload('You have run out of API credits for the current minute. 13 API credits were used, with the current limit being 8.'));
     });
 
-    const error = await loadCandles({ instrumentId: 'YM', timeframe: '1D', limit: 300, apiKey: 'key' }).catch(e => e);
+    const error = await loadCandles({ instrumentId: 'GC', timeframe: '1D', limit: 300, apiKey: 'key' }).catch(e => e);
 
     expect(error).toBeInstanceOf(TwelveDataError);
     expect((error as TwelveDataError).kind).toBe('RATE_LIMIT');
     expect((error as TwelveDataError).retryAfterMs).toBeGreaterThan(0);
-    expect(calls).toEqual(['YM1!']);
+    expect(calls).toEqual(['XAU/USD']);
+  });
+
+  it('refuses an asset that is not a Twelve Data asset rather than calling the vendor', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', async () => {
+      calls += 1;
+      return jsonResponse(okPayload('SPY'));
+    });
+
+    await expect(loadCandles({ instrumentId: 'ES', timeframe: '1D', limit: 300, apiKey: 'key' })).rejects.toMatchObject({
+      kind: 'ENTITLEMENT',
+    });
+    expect(calls).toBe(0);
   });
 
   it('caches a payload so a second call makes no vendor request', async () => {
@@ -133,35 +153,31 @@ describe('loadCandles', () => {
 
   it('reports the configured symbol before any request has been made', () => {
     const known = knownResolution('GC');
-    expect(known?.candidate.symbol).toBe('GC1!');
-    expect(known?.candidate.kind).toBe('futures');
+    expect(known?.candidate.symbol).toBe('XAU/USD');
   });
 
   it('reports an environment override in the resolution', () => {
-    process.env.TWELVE_DATA_SYMBOL_ES = 'SPY';
-    const known = knownResolution('ES');
-    expect(known?.candidate.symbol).toBe('SPY');
-    expect(known?.candidate.kind).toBe('proxy');
+    process.env.ASSET_SYMBOL_GC = 'GLD';
+    const known = knownResolution('GC');
+    expect(known?.candidate.symbol).toBe('GLD');
   });
 
   it('reports an unmapped instrument as no resolution', () => {
     expect(knownResolution('NOPE')).toBeUndefined();
+    expect(knownResolution('ES')).toBeUndefined();
   });
 
-  it('costs one credit per asset for a full load of the default timeframe', async () => {
+  it('costs one credit for a Gold timeframe load', async () => {
     let calls = 0;
     vi.stubGlobal('fetch', async (url: string) => {
       calls += 1;
       return jsonResponse(okPayload(new URL(url).searchParams.get('symbol') ?? '', ['100']));
     });
 
-    // The default timeframe, one load per asset: three assets, three credits.
-    for (const instrumentId of ['GC', 'ES', 'YM']) {
-      await loadCandles({ instrumentId, timeframe: '15m', limit: 300, apiKey: 'key' });
-    }
+    await loadCandles({ instrumentId: 'GC', timeframe: '15m', limit: 300, apiKey: 'key' });
 
-    expect(calls).toBe(3);
-    expect(meterSnapshot().used).toBe(3);
+    expect(calls).toBe(1);
+    expect(meterSnapshot().used).toBe(1);
   });
 
   it('serves a repeat load from cache, so a reload costs nothing', async () => {

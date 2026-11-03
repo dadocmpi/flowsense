@@ -1,25 +1,32 @@
 // ============================================
 // INSTRUMENT CATALOG
 // ============================================
-// Gold, S&P 500 and Dow futures are the instruments this app ships, all served
-// by the same provider.
+// The assets this app ships, each with the provider that serves it:
 //
-// An instrument does NOT carry a data source of its own: it declares which
-// provider *can* serve it (`providerId`). Whether that provider is actually
-// configured is decided at runtime from the server's environment, so an
-// instrument with no configured source renders an explicit
+//   GC  Gold      -> Twelve Data  (XAU/USD spot)
+//   ES  S&P 500   -> Alpaca       (SPY ETF proxy)
+//   YM  Dow       -> Alpaca       (DIA ETF proxy)
+//   NQ  Nasdaq    -> Alpaca       (QQQ ETF proxy)
+//
+// An instrument declares which provider *can* serve it (`providerId`). Whether
+// that provider is actually configured is decided at runtime from the server's
+// environment, so an instrument with no configured source renders an explicit
 // "no data source configured" state instead of any number at all.
+//
+// Switching an asset to the other provider is a SERVER config change
+// (api/_lib/assets.ts); this catalog mirrors the same defaults so the client can
+// label provenance before the first response lands.
 
-export type ProviderId = 'futures';
+export type ProviderId = 'twelvedata' | 'alpaca';
 
 /**
  * What the app is ACTUALLY reading for an instrument, once the server has
- * resolved a symbol. A futures plan may not entitle the contract itself, so the
- * app can be reading a spot or ETF proxy — and the UI must say so rather than
- * implying it is the futures contract.
+ * resolved a symbol. An index asset is read through an ETF proxy, so the app can
+ * be reading a proxy rather than the index itself — and the UI must say so
+ * rather than implying it is the index.
  */
 export interface ResolvedSource {
-  /** The symbol the vendor was asked for, e.g. "ES1!" or "SPY". */
+  /** The symbol the vendor was asked for, e.g. "XAU/USD" or "SPY". */
   symbol: string;
   /** The symbol the vendor echoed back, when it differs. */
   vendorSymbol?: string;
@@ -29,6 +36,12 @@ export interface ResolvedSource {
   /** Vendor-reported instrument classification, when present. */
   instrumentType?: string;
   exchange?: string;
+  /** The provider that served this reading, when known. */
+  provider?: ProviderId;
+  /** The market-data feed, e.g. "iex". Alpaca only. */
+  feed?: string;
+  /** True when the volume is a single exchange's, not consolidated. */
+  partialVolume?: boolean;
 }
 
 /**
@@ -67,49 +80,66 @@ export interface Instrument {
   roll?: ContractRoll;
   /** Short label for the selector. */
   shortLabel: string;
+  /** True when the provider reads an ETF proxy rather than the index itself. */
+  proxy?: boolean;
+  /** The market-data feed, e.g. "iex". Alpaca only. */
+  feed?: string;
 }
 
-/** Gold, S&P 500 and Dow Jones futures — the instruments this app ships. */
-export const FUTURES_INSTRUMENTS: Instrument[] = [
+/** Gold, S&P 500, Dow and Nasdaq — the instruments this app ships. */
+export const INSTRUMENTS: Instrument[] = [
   {
     id: 'GC',
-    name: 'Gold Futures',
-    exchange: 'COMEX',
+    name: 'Gold',
+    exchange: 'Twelve Data',
     precision: 2,
     quote: 'USD',
-    providerId: 'futures',
-    providerSymbol: 'GC',
-    continuousSymbol: 'GC1!',
-    roll: { method: 'frontMonth', adjustment: 'none' },
+    providerId: 'twelvedata',
+    providerSymbol: 'XAU/USD',
     shortLabel: 'Gold',
   },
   {
     id: 'ES',
-    name: 'S&P 500 Futures',
-    exchange: 'CME',
+    name: 'S&P 500',
+    exchange: 'NYSE Arca',
     precision: 2,
     quote: 'USD',
-    providerId: 'futures',
-    providerSymbol: 'ES',
-    continuousSymbol: 'ES1!',
-    roll: { method: 'frontMonth', adjustment: 'none' },
+    providerId: 'alpaca',
+    providerSymbol: 'SPY',
     shortLabel: 'S&P 500',
+    proxy: true,
+    feed: 'iex',
   },
   {
     id: 'YM',
-    name: 'Dow Jones Futures',
-    exchange: 'CBOT',
-    precision: 0,
+    name: 'Dow Jones',
+    exchange: 'NYSE Arca',
+    precision: 2,
     quote: 'USD',
-    providerId: 'futures',
-    providerSymbol: 'YM',
-    continuousSymbol: 'YM1!',
-    roll: { method: 'frontMonth', adjustment: 'none' },
+    providerId: 'alpaca',
+    providerSymbol: 'DIA',
     shortLabel: 'Dow',
+    proxy: true,
+    feed: 'iex',
+  },
+  {
+    id: 'NQ',
+    name: 'Nasdaq 100',
+    exchange: 'NASDAQ',
+    precision: 2,
+    quote: 'USD',
+    providerId: 'alpaca',
+    providerSymbol: 'QQQ',
+    shortLabel: 'Nasdaq',
+    proxy: true,
+    feed: 'iex',
   },
 ];
 
-export const ALL_INSTRUMENTS: Instrument[] = [...FUTURES_INSTRUMENTS];
+/** Kept as an alias so existing imports of FUTURES_INSTRUMENTS keep working. */
+export const FUTURES_INSTRUMENTS: Instrument[] = INSTRUMENTS;
+
+export const ALL_INSTRUMENTS: Instrument[] = [...INSTRUMENTS];
 
 export const DEFAULT_INSTRUMENT_ID = 'GC';
 

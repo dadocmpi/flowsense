@@ -2,8 +2,12 @@
 // SYMBOL MAPPING TESTS
 // ============================================
 // The mapping decides what the app actually reads. Its invariants changed when
-// runtime probing was removed: there is now exactly ONE symbol per instrument,
-// so a request can never spend a second credit hunting for a working one.
+// runtime probing was removed: there is now exactly ONE symbol per instrument, so
+// a request can never spend a second credit hunting for a working one.
+//
+// It changed again when providers became per-asset: Gold stays on Twelve Data
+// (spot XAU/USD) and the index assets moved to Alpaca, so the Twelve Data catalog
+// now describes only what Twelve Data is really asked for.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -14,7 +18,16 @@ import {
   isRateLimitError,
 } from '../symbols';
 
-const SYMBOL_ENV_KEYS = ['TWELVE_DATA_SYMBOL_GC', 'TWELVE_DATA_SYMBOL_ES', 'TWELVE_DATA_SYMBOL_YM'];
+const SYMBOL_ENV_KEYS = [
+  'TWELVE_DATA_SYMBOL_GC',
+  'TWELVE_DATA_SYMBOL_ES',
+  'TWELVE_DATA_SYMBOL_YM',
+  'TWELVE_DATA_SYMBOL_NQ',
+  'ASSET_SYMBOL_GC',
+  'ASSET_SYMBOL_ES',
+  'ASSET_PROVIDER_GC',
+  'ASSET_PROVIDER_ES',
+];
 
 describe('INSTRUMENT_SYMBOLS', () => {
   beforeEach(() => {
@@ -25,8 +38,8 @@ describe('INSTRUMENT_SYMBOLS', () => {
     for (const key of SYMBOL_ENV_KEYS) delete process.env[key];
   });
 
-  it('covers the three default instruments', () => {
-    expect(INSTRUMENT_SYMBOLS.map(entry => entry.instrumentId)).toEqual(['GC', 'ES', 'YM']);
+  it('covers only the Twelve Data assets — Gold', () => {
+    expect(INSTRUMENT_SYMBOLS.map(entry => entry.instrumentId)).toEqual(['GC']);
   });
 
   it('configures exactly one symbol per instrument, so nothing is probed at runtime', () => {
@@ -34,13 +47,6 @@ describe('INSTRUMENT_SYMBOLS', () => {
       expect(entry.symbol).toBeDefined();
       // There is no candidate list to walk; the mapping carries one symbol.
       expect(entry).not.toHaveProperty('candidates');
-    }
-  });
-
-  it('defaults each instrument to its continuous futures contract', () => {
-    for (const entry of INSTRUMENT_SYMBOLS) {
-      expect(entry.symbol.kind).toBe('futures');
-      expect(entry.symbol.continuous).toBe(true);
     }
   });
 
@@ -60,37 +66,52 @@ describe('configuredSymbol', () => {
     for (const key of SYMBOL_ENV_KEYS) delete process.env[key];
   });
 
-  it('returns the configured symbol, case-insensitively', () => {
-    expect(configuredSymbol('gc')?.symbol).toBe('GC1!');
-    expect(configuredSymbol('ES')?.symbol).toBe('ES1!');
+  it('returns the configured symbol for Gold, case-insensitively', () => {
+    expect(configuredSymbol('gc')?.symbol).toBe('XAU/USD');
+    expect(configuredSymbol('GC')?.symbol).toBe('XAU/USD');
+  });
+
+  it('returns undefined for an asset now served by Alpaca', () => {
+    // ES moved to Alpaca, so Twelve Data has no symbol for it. That is what keeps
+    // a stray Twelve Data call from ever being made for it.
+    expect(configuredSymbol('ES')).toBeUndefined();
   });
 
   it('returns undefined for an unknown instrument rather than guessing', () => {
     expect(configuredSymbol('NOPE')).toBeUndefined();
   });
 
-  it('lets an environment override pin a proxy, labelled as a proxy', () => {
-    process.env.TWELVE_DATA_SYMBOL_ES = 'SPY';
-    const configured = configuredSymbol('ES');
-    expect(configured?.symbol).toBe('SPY');
-    expect(configured?.kind).toBe('proxy');
+  it('lets an environment override pin a symbol', () => {
+    process.env.ASSET_SYMBOL_GC = 'GLD';
+    const configured = configuredSymbol('GC');
+    expect(configured?.symbol).toBe('GLD');
+  });
+
+  it('honours the legacy TWELVE_DATA_SYMBOL override', () => {
+    process.env.TWELVE_DATA_SYMBOL_GC = 'GC1!';
+    expect(configuredSymbol('GC')?.symbol).toBe('GC1!');
   });
 
   it('labels an overridden continuous contract as futures', () => {
     process.env.TWELVE_DATA_SYMBOL_GC = 'GC1!';
     expect(configuredSymbol('GC')?.kind).toBe('futures');
   });
+
+  it('reports a symbol that an env override moved to Alpaca as no Twelve Data symbol', () => {
+    process.env.ASSET_PROVIDER_GC = 'alpaca';
+    expect(configuredSymbol('GC')).toBeUndefined();
+  });
 });
 
 describe('findCandidate', () => {
   it('finds the configured symbol', () => {
-    expect(findCandidate('ES', 'ES1!')?.description).toContain('E-mini S&P 500');
+    expect(findCandidate('GC', 'XAU/USD')?.description).toContain('XAU/USD');
   });
 
   it('returns undefined for a symbol that is not configured', () => {
-    // SPY is no longer a configured symbol for ES, so it must not be reported as
-    // one — that is what stops a runtime probe from ever being reintroduced.
-    expect(findCandidate('ES', 'SPY')).toBeUndefined();
+    // GC1! is not the configured symbol for GC, so it must not be reported as one
+    // — that is what stops a runtime probe from ever being reintroduced.
+    expect(findCandidate('GC', 'GC1!')).toBeUndefined();
   });
 });
 
@@ -124,4 +145,3 @@ describe('isRateLimitError', () => {
     expect(isRateLimitError('not entitled to this symbol')).toBe(false);
   });
 });
-
