@@ -25,6 +25,15 @@ env, and switching one needs only a config change.
   `ALPACA_API_KEY` / `FUTURES_API_KEY` hit in the bundle is fine only as the
   env-var *name* in help text, never a value. Never prefix an Alpaca variable
   with `NEXT_PUBLIC_`.)
+- **A missing-source message names the asset's OWN provider.** `/api/futures/status`
+  also returns a global `note` ("Configured: twelvedata, alpaca") for a human
+  reading the route. That note must never be used as the per-asset explanation: it
+  names whichever providers the *deployment* has, so an Alpaca asset would read
+  "Configured: twelvedata" and look like it resolves to Twelve Data. The card and
+  the hook build the message from the asset's own requirement instead — provider,
+  symbol, and the missing variable names — through the one pure
+  `src/core/assetStatus.ts`. `src/core/__tests__/assetStatus.test.ts` and
+  `api/_lib/__tests__/status.test.ts` hold that invariant.
 
 ## Architecture
 

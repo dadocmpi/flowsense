@@ -72,12 +72,28 @@ describe('createRateMeter', () => {
     expect(meter.lastCallAt()).toBe(now + 5);
   });
 
+  it('tracks the last SUCCESSFUL call separately from the last call', () => {
+    const meter = makeMeter();
+    const now = 1_700_000_000_000;
+    // A call that was made but failed leaves lastSuccessAt untouched.
+    meter.noteCall(now);
+    expect(meter.lastCallAt()).toBe(now);
+    expect(meter.lastSuccessAt()).toBeNull();
+
+    meter.noteSuccess(now + 10);
+    expect(meter.lastSuccessAt()).toBe(now + 10);
+    expect(meter.lastCallAt()).toBe(now);
+  });
+
   it('forgets everything on reset', () => {
     const meter = makeMeter();
     const now = 1_700_000_000_000;
     meter.markExhausted(now);
+    meter.noteCall(now);
+    meter.noteSuccess(now);
     meter.reset();
     expect(meter.snapshot(now).allowed).toBe(true);
     expect(meter.lastCallAt()).toBeNull();
+    expect(meter.lastSuccessAt()).toBeNull();
   });
 });

@@ -29,10 +29,13 @@ import { knownAlpacaResolution } from '../_lib/alpacaCache.js';
 import { INSTRUMENT_SYMBOLS } from '../_lib/symbols.js';
 import { meterSnapshot } from '../_lib/creditMeter.js';
 import { alpacaMeterSnapshot } from '../_lib/alpacaMeter.js';
-import { assetProviderConfig, CONFIGURED_ASSET_IDS } from '../_lib/assets.js';
+import {
+  assetProviderConfig,
+  assetRequirement,
+  assetRequirements,
+  CONFIGURED_ASSET_IDS,
+} from '../_lib/assets.js';
 import { POLL_INTERVAL_MS } from '../../src/core/providers/polling.js';
-
-const NAMES: Record<string, string> = { GC: 'Gold', ES: 'S&P 500', YM: 'Dow Jones', NQ: 'Nasdaq' };
 
 export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const twelveConfigured = Boolean(resolveVendor()) && vendorApiKey() !== null;
@@ -40,18 +43,29 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const meter = meterSnapshot();
   const alpacaMeter = alpacaMeterSnapshot();
 
-  // What each asset is configured to read, and which provider serves it.
+  // What each asset is configured to read, which provider serves it, and exactly
+  // which credential variables it still needs. The requirement is computed from
+  // the per-asset mapping, so an asset can never be described with another
+  // asset's provider or another provider's variables.
   const instruments = CONFIGURED_ASSET_IDS.map(instrumentId => {
     const config = assetProviderConfig(instrumentId)!;
-    const name = NAMES[instrumentId] ?? instrumentId;
+    const requirement = assetRequirement(instrumentId)!;
+    // Per-asset facts, so the client can explain THIS asset without guessing.
+    const shared = {
+      instrumentId,
+      name: requirement.name,
+      provider: config.provider,
+      symbol: config.symbol,
+      credentialsPresent: requirement.credentialsPresent,
+      requiredEnvVars: requirement.requiredEnvVars,
+      missingEnvVars: requirement.missingEnvVars,
+    };
+
     if (config.provider === 'alpaca') {
       const resolved = knownAlpacaResolution(instrumentId);
       const description = `${config.symbol} — index proxy (IEX, partial market volume)`;
       return {
-        instrumentId,
-        name,
-        provider: 'alpaca',
-        symbol: config.symbol,
+        ...shared,
         kind: 'proxy' as const,
         description,
         resolved: resolved ? { symbol: resolved.symbol, vendorSymbol: resolved.symbol, kind: 'proxy' as const, description } : null,
@@ -60,10 +74,7 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
     const entry = INSTRUMENT_SYMBOLS.find(e => e.instrumentId === instrumentId);
     const resolved = knownResolution(instrumentId);
     return {
-      instrumentId,
-      name,
-      provider: 'twelvedata',
-      symbol: entry?.symbol.symbol ?? config.symbol,
+      ...shared,
       kind: entry?.symbol.kind ?? 'proxy',
       description: entry?.symbol.description ?? config.symbol,
       resolved: resolved
@@ -81,6 +92,15 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
 
   const anyConfigured = twelveConfigured || alpaca;
 
+  // Which providers are configured, and which are not, from the per-asset
+  // requirements. A provider is "configured" when its credentials are present;
+  // this is the same answer every asset above is described with.
+  const requirements = assetRequirements();
+  const missingByProvider = {
+    twelvedata: requirements.find(r => r.provider === 'twelvedata')?.missingEnvVars ?? [],
+    alpaca: requirements.find(r => r.provider === 'alpaca')?.missingEnvVars ?? [],
+  };
+
   sendJson(res, 200, {
     configured: anyConfigured,
     // The primary label; each asset carries its own provider in `instruments`.
@@ -95,6 +115,7 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
     providers: {
       twelvedata: {
         configured: twelveConfigured,
+        missingEnvVars: missingByProvider.twelvedata,
         credits: {
           limit: meter.limit,
           used: meter.used,
@@ -107,6 +128,7 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
       },
       alpaca: {
         configured: alpaca,
+        missingEnvVars: missingByProvider.alpaca,
         requests: {
           limit: alpacaMeter.limit,
           used: alpacaMeter.used,
@@ -118,6 +140,9 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
         },
       },
     },
+    // A summary sentence. The client no longer uses this as the per-asset
+    // explanation — each asset carries its own provider and missing variables —
+    // but it stays for a human reading the route directly.
     note: anyConfigured
       ? `Configured: ${[twelveConfigured ? 'twelvedata' : null, alpaca ? 'alpaca' : null].filter(Boolean).join(', ')}`
       : 'Set TWELVE_DATA_API_KEY and ALPACA_API_KEY/ALPACA_API_SECRET to enable the assets.',

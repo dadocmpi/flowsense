@@ -76,3 +76,103 @@ export function assetSymbol(instrumentId: string): string | undefined {
 
 /** Every configured asset id, in display order. */
 export const CONFIGURED_ASSET_IDS = Object.keys(ASSET_PROVIDER_DEFAULTS);
+
+/**
+ * The display name for each asset, as the UI should show it.
+ *
+ * The card names the asset, not the ticker: "Nasdaq", not "NQ". A message about
+ * a missing credential is only useful if it says which asset is affected.
+ */
+export const ASSET_DISPLAY_NAMES: Record<string, string> = {
+  GC: 'Gold',
+  ES: 'S&P 500',
+  YM: 'Dow',
+  NQ: 'Nasdaq',
+};
+
+/** The display name for an asset id, falling back to the id itself. */
+export function assetDisplayName(instrumentId: string): string {
+  const id = instrumentId.toUpperCase();
+  return ASSET_DISPLAY_NAMES[id] ?? id;
+}
+
+/**
+ * The environment variables each provider needs, by their canonical names.
+ *
+ * Names only — a value is never read out of this module for reporting, so a
+ * message built from it can be shown to anyone.
+ */
+export const PROVIDER_ENV_VARS: Record<AssetProviderId, string[]> = {
+  twelvedata: ['TWELVE_DATA_API_KEY'],
+  alpaca: ['ALPACA_API_KEY', 'ALPACA_API_SECRET'],
+};
+
+/** Whether a named credential variable carries a value right now. */
+function envPresent(name: string): boolean {
+  // TWELVE_DATA_API_KEY's historical alias is honoured, because it is a real
+  // way a deployment supplies the same credential.
+  if (name === 'TWELVE_DATA_API_KEY') {
+    return (process.env.TWELVE_DATA_API_KEY ?? process.env.FUTURES_API_KEY ?? '').trim().length > 0;
+  }
+  return (process.env[name] ?? '').trim().length > 0;
+}
+
+export interface ProviderCredentials {
+  /** True only when every required variable is present. */
+  present: boolean;
+  /** The variable names the provider needs, in order. */
+  required: string[];
+  /** The subset that is absent. Names only, never values. */
+  missing: string[];
+}
+
+/** Which of a provider's credentials are present, by name only. */
+export function providerCredentials(provider: AssetProviderId): ProviderCredentials {
+  const required = PROVIDER_ENV_VARS[provider];
+  const missing = required.filter(name => !envPresent(name));
+  return { present: missing.length === 0, required, missing };
+}
+
+/**
+ * What one asset needs in order to serve data: its provider, its symbol, and
+ * exactly which credential variables are missing.
+ *
+ * This is THE answer the status route, /api/health and the client's "no data
+ * source configured" card all read, so the three can never disagree about why an
+ * asset has no source.
+ */
+export interface AssetRequirement {
+  instrumentId: string;
+  /** Display name, e.g. "Nasdaq". */
+  name: string;
+  provider: AssetProviderId;
+  symbol: string;
+  /** True when this asset's provider has every credential it needs. */
+  credentialsPresent: boolean;
+  /** Credential variable names this asset's provider needs. */
+  requiredEnvVars: string[];
+  /** The subset that is missing. Names only. */
+  missingEnvVars: string[];
+}
+
+/** The requirement for one asset, or undefined for an unknown asset. */
+export function assetRequirement(instrumentId: string): AssetRequirement | undefined {
+  const id = instrumentId.toUpperCase();
+  const config = assetProviderConfig(id);
+  if (!config) return undefined;
+  const credentials = providerCredentials(config.provider);
+  return {
+    instrumentId: id,
+    name: assetDisplayName(id),
+    provider: config.provider,
+    symbol: config.symbol,
+    credentialsPresent: credentials.present,
+    requiredEnvVars: credentials.required,
+    missingEnvVars: credentials.missing,
+  };
+}
+
+/** The requirement for every configured asset, in display order. */
+export function assetRequirements(): AssetRequirement[] {
+  return CONFIGURED_ASSET_IDS.map(id => assetRequirement(id)!);
+}

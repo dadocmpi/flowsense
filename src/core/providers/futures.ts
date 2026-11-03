@@ -83,6 +83,23 @@ export interface ProviderStatusState {
 /** The credit/request meter state the status route reports, for the UI. */
 export interface CreditState extends ProviderMeterState {}
 
+/**
+ * What one asset needs in order to serve data, as the status route reports it.
+ *
+ * The card uses THIS, not a guess, to explain a missing source: the provider the
+ * asset resolved to, and exactly which credential variable names are absent.
+ */
+export interface AssetRequirementState {
+  provider: ProviderId;
+  symbol: string;
+  /** True when this asset's provider has every credential it needs. */
+  credentialsPresent: boolean;
+  /** Credential variable names the provider needs. */
+  requiredEnvVars: string[];
+  /** The subset that is missing. Names only, never values. */
+  missingEnvVars: string[];
+}
+
 const ERROR_KINDS = new Set([
   'NOT_CONFIGURED',
   'UNSUPPORTED_INSTRUMENT',
@@ -118,6 +135,8 @@ let liveStreamCache: boolean | null = null;
 const resolvedCache = new Map<string, ResolvedSource>();
 /** The provider per instrument, as last reported by the server. */
 const providerCache = new Map<string, ProviderId>();
+/** Per-asset requirements (provider, symbol, missing credentials) per instrument. */
+const requirementCache = new Map<string, AssetRequirementState>();
 /** The last Twelve Data meter state the server reported. */
 let creditCache: CreditState | null = null;
 /** The last Alpaca meter state the server reported. */
@@ -141,6 +160,15 @@ export function resolvedSourceFor(instrumentId: string): ResolvedSource | undefi
 /** The provider the server last reported serving this instrument, if known. */
 export function providerForResolved(instrumentId: string): ProviderId | undefined {
   return providerCache.get(instrumentId);
+}
+
+/**
+ * What the server last reported this asset needs: its provider, its symbol, and
+ * the credential variable names that are missing. Undefined until the status
+ * probe has answered, so the UI can say "checking" rather than guess.
+ */
+export function requirementForResolved(instrumentId: string): AssetRequirementState | undefined {
+  return requirementCache.get(instrumentId);
 }
 
 /** The last Twelve Data meter state, for the UI's rate-limit banner. */
@@ -174,6 +202,7 @@ export function clearFuturesCaches(): void {
   statusProbe = null;
   resolvedCache.clear();
   providerCache.clear();
+  requirementCache.clear();
 }
 
 /** Record provenance from a candles response, for the UI to render. */
@@ -366,7 +395,15 @@ async function runStatusProbe(): Promise<FuturesProbeResult> {
       websocket?: boolean;
       providers?: { twelvedata?: ProviderStatusState; alpaca?: ProviderStatusState };
       credits?: CreditState;
-      instruments?: Array<{ instrumentId: string; provider?: ProviderId; resolved: ResolvedSource | null }>;
+      instruments?: Array<{
+        instrumentId: string;
+        provider?: ProviderId;
+        symbol?: string;
+        credentialsPresent?: boolean;
+        requiredEnvVars?: string[];
+        missingEnvVars?: string[];
+        resolved: ResolvedSource | null;
+      }>;
     };
     const configured = payload.configured === true;
     setFuturesConfigured(configured);
@@ -387,6 +424,17 @@ async function runStatusProbe(): Promise<FuturesProbeResult> {
       if (entry.provider) providerCache.set(entry.instrumentId, entry.provider);
       if (entry.resolved && !resolvedCache.has(entry.instrumentId)) {
         resolvedCache.set(entry.instrumentId, { ...entry.resolved, provider: entry.resolved.provider ?? entry.provider });
+      }
+      // The per-asset requirement is what the card explains a missing source
+      // with, so it is kept per instrument and never inferred from another.
+      if (entry.provider) {
+        requirementCache.set(entry.instrumentId, {
+          provider: entry.provider,
+          symbol: entry.symbol ?? entry.resolved?.symbol ?? '',
+          credentialsPresent: entry.credentialsPresent === true,
+          requiredEnvVars: entry.requiredEnvVars ?? [],
+          missingEnvVars: entry.missingEnvVars ?? [],
+        });
       }
     }
     return { configured, reachable: true, note: payload.note };
