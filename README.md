@@ -344,3 +344,56 @@ socket triggers capped-backoff reconnect, and the UI shows a reconnecting
 banner instead of presenting stale data as live. When the credit meter blocks a
 fetch, the header shows "Rate limit — retrying in Xs" and the last series is
 marked `Stale`; the retry fires once, after the reset the server reported.
+
+### The live flow relay
+
+`GET /api/futures/stream?symbol=...` is a WebSocket relay for ONE symbol's price
+tape. The browser opens a socket to this app, the relay opens the vendor socket
+server-side with `TWELVE_DATA_API_KEY`, and each price frame is forwarded. The
+key never appears in a URL the browser can see. The relay normalises the vendor
+frame (string price/timestamp) into the frame the client parser expects, and it
+drops heartbeats and anything that is not a price — a non-price frame can never
+become a tick.
+
+The relay carries a PRICE only. It does not carry an aggressor side and it does
+not carry an order book, so the client infers the side with the tick rule (see
+below) and labels that as an inference. When the server has no key it sends one
+`subscribe-status` frame saying so and closes; the client stops reconnecting
+instead of retrying a socket that can never succeed.
+
+The flow panels share ONE socket. `useTickStream` (the tape) and
+`useDepthStream` (the book) are lifted into the page, so the Order Flow panel,
+the Thermal Line and the compass's FLOW tab all read the same connection.
+
+### Order flow vs. book flow
+
+The flow panel toggles between two honest sources:
+
+- **ORDER FLOW** reads the live price tape and infers each print's side with the
+  **tick rule**: a print above the previous one is a buy, below it is a sell, and
+  an unchanged print inherits the previous side. That is an inference, not a
+  vendor-reported aggressor, and the panel says so. The tape carries no size, so
+  the delta counts prints rather than volume — the panel labels that too.
+- **BOOK FLOW** reads a real order book through a `DepthProvider`
+  (`src/core/providers/depth.ts`). The app ships only the `none` adapter, so
+  until a real provider is registered the panel shows "Sem feed de profundidade
+  conectado" and draws nothing. A book is never reconstructed from prints.
+
+### Thermal line
+
+The thermal line is a green↔red bar whose equilibrium point follows the
+buyers/sellers proportion, with a CSS transition so it glides instead of
+flickering. It reads whichever mode (order flow or book flow) is selected, so it
+works in both.
+
+### Compass damping
+
+A raw gauge score is recomputed from candles that are still forming, so it
+jitters. The compass dampens it twice before drawing: an **EMA** pulls the score
+toward the new value so the needle glides (a ~600ms CSS transition on the needle
+does the rest), and a **hysteresis deadband** holds the displayed score until the
+smoothed score moves far enough to matter, so the label cannot flap across a
+threshold. The label is still derived from the displayed score, so the needle,
+the label and the verdict can never disagree. Every factor the compass lists is
+shown even when it could not be computed: a factor with too few candles reads
+"N/A" with the warmup it needs, rather than disappearing from the list.

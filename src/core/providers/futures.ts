@@ -27,7 +27,7 @@ import type { Instrument, ProviderId, ResolvedSource } from '../instruments';
 import { normalizeSeries } from '../candles';
 import { ProviderError, type MarketDataProvider, type Subscription, type TickHandlers } from './types';
 import { PRICE_POLL_INTERVAL_MS, pollIntervalForProvider } from './polling';
-import { isEntitlementFailure, parseWsMessage } from './twelvedataWs';
+import { isConfigurationFailure, isEntitlementFailure, parseWsMessage } from './twelvedataWs';
 
 export interface FuturesRouteResponse {
   ok: boolean;
@@ -512,7 +512,9 @@ function openPriceStream(instrument: Instrument, handlers: TickHandlers): Subscr
         });
         return;
       }
-      if (parsed.kind === 'STATUS' && !parsed.ok && isEntitlementFailure(parsed.detail)) {
+      if (parsed.kind === 'STATUS' && !parsed.ok && (isEntitlementFailure(parsed.detail) || isConfigurationFailure(parsed.detail))) {
+        // Either the plan has no WebSocket access or the server has no key: both
+        // are permanent, so stop reconnecting rather than hammering the relay.
         giveUp = true;
         handlers.onStatus?.('UNAVAILABLE');
         socket?.close();
