@@ -27,11 +27,14 @@ import {
   providerForInstrument,
   providerConfiguredState,
   probeFuturesProvider,
+  requirementForResolved,
   resolvedSourceFor,
   type CreditState,
   type ProviderErrorKind,
   type StreamStatus,
 } from '../core/providers';
+import type { AssetRequirementState } from '../core/providers/futures';
+import { missingSourceMessage } from '../core/assetStatus';
 import { mergeLiveTail, upsertLastCandle } from '../core/candles';
 import { TIMEFRAME_MINUTES } from '../core/types';
 import { marketStateFor, type MarketStateResult } from '../core/marketSessions';
@@ -79,6 +82,12 @@ export interface InstrumentFeed {
   configured: boolean;
   sourceReachable: boolean;
   unavailableReason: string | null;
+  /**
+   * What the server reported THIS asset needs: its provider, its symbol, and the
+   * credential variable names that are missing. Null until the status probe has
+   * answered.
+   */
+  requirement: AssetRequirementState | null;
   sourceLabel: string;
   resolvedSource: ResolvedSource | null;
   /** Which provider is really serving this instrument. */
@@ -117,6 +126,7 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
   const [configured, setConfigured] = useState<boolean>(provider ? provider.isConfigured() : false);
   const [sourceReachable, setSourceReachable] = useState(true);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
+  const [requirement, setRequirement] = useState<AssetRequirementState | null>(null);
   const [tickPrice, setTickPrice] = useState<number | null>(null);
   const [tickAt, setTickAt] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
@@ -147,7 +157,17 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
         const assetConfigured = perProvider ? perProvider[instrument.providerId] : result.configured;
         setConfigured(assetConfigured);
         setSourceReachable(result.reachable);
-        setUnavailableReason(assetConfigured ? null : result.note ?? null);
+        // The per-asset requirement is what the card explains a missing source
+        // with, so it is kept in state (a plain module read would not re-render).
+        const assetRequirement = requirementForResolved(instrument.id) ?? null;
+        setRequirement(assetRequirement);
+        // The reason names THIS asset's provider and ITS missing variables. The
+        // route's global note is deliberately NOT used here: it lists whichever
+        // providers the deployment has, so an Alpaca asset would read
+        // "Configured: twelvedata" — the other provider's name, not its own.
+        setUnavailableReason(
+          assetConfigured ? null : missingSourceMessage(instrument, assetRequirement ?? undefined, result.reachable)
+        );
       })
       .catch(() => {
         if (!active) return;
@@ -159,7 +179,7 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
       active = false;
       controller.abort();
     };
-  }, [instrument.providerId]);
+  }, [instrument]);
 
   // Live ticks, when the provider has them. A provider without a tick feed
   // simply leaves the price at the last candle close.
@@ -326,6 +346,7 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
       configured,
       sourceReachable,
       unavailableReason,
+      requirement,
       sourceLabel,
       resolvedSource,
       providerId,
@@ -351,6 +372,7 @@ export function useInstrumentFeed(instrument: Instrument, selectedTimeframe: Tim
       configured,
       sourceReachable,
       unavailableReason,
+      requirement,
       sourceLabel,
       resolvedSource,
       providerId,

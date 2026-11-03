@@ -66,3 +66,18 @@ export const meterSnapshot = meter.snapshot;
 
 /** Test seam: forget everything the meter has learned. */
 export const resetCreditMeter = meter.reset;
+
+/** Note that one Twelve Data call came back with a usable answer. */
+export const noteCreditSuccess = meter.noteSuccess;
+
+/** Epoch ms of the last successful Twelve Data call, or null. */
+export const lastCreditSuccessAt = meter.lastSuccessAt;
+
+/** Note that one outbound Twelve Data call was actually made. */
+export const noteCreditCall = meter.noteCall;
+
+/** How many Twelve Data calls were made in the current wall-clock minute. */
+export const creditCallsThisMinute = meter.callsThisMinute;
+
+/** Epoch ms of the last Twelve Data call, or null. */
+export const creditLastCallAt = meter.lastCallAt;

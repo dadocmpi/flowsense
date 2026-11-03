@@ -7,11 +7,17 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  ASSET_DISPLAY_NAMES,
   ASSET_PROVIDER_DEFAULTS,
+  assetDisplayName,
   assetProvider,
   assetProviderConfig,
+  assetRequirement,
+  assetRequirements,
   assetSymbol,
   CONFIGURED_ASSET_IDS,
+  PROVIDER_ENV_VARS,
+  providerCredentials,
 } from '../assets';
 
 const ENV_KEYS = [
@@ -23,6 +29,10 @@ const ENV_KEYS = [
   'ASSET_SYMBOL_ES',
   'ASSET_SYMBOL_YM',
   'ASSET_SYMBOL_NQ',
+  'TWELVE_DATA_API_KEY',
+  'FUTURES_API_KEY',
+  'ALPACA_API_KEY',
+  'ALPACA_API_SECRET',
 ];
 
 describe('ASSET_PROVIDER_DEFAULTS', () => {
@@ -35,6 +45,21 @@ describe('ASSET_PROVIDER_DEFAULTS', () => {
 
   it('covers every configured asset', () => {
     expect(CONFIGURED_ASSET_IDS).toEqual(['GC', 'ES', 'YM', 'NQ']);
+  });
+
+  // The regression this task is about: with no environment overrides at all, the
+  // default provider per asset must be Gold -> Twelve Data and every index asset
+  // -> Alpaca. Nasdaq must NOT resolve to Twelve Data.
+  it('resolves the default provider per asset with no environment overrides', () => {
+    for (const key of ENV_KEYS) delete process.env[key];
+    const byId = Object.fromEntries(assetRequirements().map(r => [r.instrumentId, r.provider]));
+    expect(byId).toEqual({
+      GC: 'twelvedata',
+      ES: 'alpaca',
+      YM: 'alpaca',
+      NQ: 'alpaca',
+    });
+    expect(assetProvider('NQ')).toBe('alpaca');
   });
 });
 
@@ -69,5 +94,92 @@ describe('assetProviderConfig', () => {
 
   it('returns undefined for an unknown asset', () => {
     expect(assetProviderConfig('NOPE')).toBeUndefined();
+  });
+});
+
+describe('display names', () => {
+  it('names the assets as the card should, not by ticker', () => {
+    expect(ASSET_DISPLAY_NAMES).toEqual({ GC: 'Gold', ES: 'S&P 500', YM: 'Dow', NQ: 'Nasdaq' });
+    expect(assetDisplayName('NQ')).toBe('Nasdaq');
+    expect(assetDisplayName('gc')).toBe('Gold');
+  });
+
+  it('falls back to the id for an unknown asset', () => {
+    expect(assetDisplayName('ZZ')).toBe('ZZ');
+  });
+});
+
+describe('providerCredentials', () => {
+  beforeEach(() => {
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+
+  it('names the variables each provider needs, and reports the missing subset', () => {
+    expect(PROVIDER_ENV_VARS.twelvedata).toEqual(['TWELVE_DATA_API_KEY']);
+    expect(PROVIDER_ENV_VARS.alpaca).toEqual(['ALPACA_API_KEY', 'ALPACA_API_SECRET']);
+
+    const alpaca = providerCredentials('alpaca');
+    expect(alpaca.present).toBe(false);
+    expect(alpaca.missing).toEqual(['ALPACA_API_KEY', 'ALPACA_API_SECRET']);
+  });
+
+  it('reports only the half that is missing', () => {
+    process.env.ALPACA_API_KEY = 'id';
+    const alpaca = providerCredentials('alpaca');
+    expect(alpaca.present).toBe(false);
+    expect(alpaca.missing).toEqual(['ALPACA_API_SECRET']);
+  });
+
+  it('honours the legacy Twelve Data key alias', () => {
+    process.env.FUTURES_API_KEY = 'legacy';
+    expect(providerCredentials('twelvedata').present).toBe(true);
+  });
+});
+
+describe('assetRequirement', () => {
+  beforeEach(() => {
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+
+  it('reports the resolved provider, symbol and missing variables for an asset', () => {
+    const nasdaq = assetRequirement('NQ');
+    expect(nasdaq).toMatchObject({
+      instrumentId: 'NQ',
+      name: 'Nasdaq',
+      provider: 'alpaca',
+      symbol: 'QQQ',
+      credentialsPresent: false,
+      requiredEnvVars: ['ALPACA_API_KEY', 'ALPACA_API_SECRET'],
+      missingEnvVars: ['ALPACA_API_KEY', 'ALPACA_API_SECRET'],
+    });
+  });
+
+  it('reports Gold against the Twelve Data variable', () => {
+    const gold = assetRequirement('GC');
+    expect(gold).toMatchObject({
+      name: 'Gold',
+      provider: 'twelvedata',
+      symbol: 'XAU/USD',
+      requiredEnvVars: ['TWELVE_DATA_API_KEY'],
+      missingEnvVars: ['TWELVE_DATA_API_KEY'],
+    });
+  });
+
+  it('reports credentials present once they are set', () => {
+    process.env.ALPACA_API_KEY = 'id';
+    process.env.ALPACA_API_SECRET = 'secret';
+    const nasdaq = assetRequirement('NQ');
+    expect(nasdaq?.credentialsPresent).toBe(true);
+    expect(nasdaq?.missingEnvVars).toEqual([]);
+  });
+
+  it('returns undefined for an unknown asset', () => {
+    expect(assetRequirement('NOPE')).toBeUndefined();
   });
 });

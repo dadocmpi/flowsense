@@ -37,6 +37,8 @@ import {
   CreditLimitError,
   markExhausted,
   meterSnapshot,
+  noteCreditCall,
+  noteCreditSuccess,
   readVendorUsage,
   recordCredits,
   type MeterSnapshot,
@@ -181,9 +183,14 @@ async function meteredFetch(
     throw error;
   }
 
+  noteCreditCall();
   const response = await fetch(url, init);
   const usage = readVendorUsage(response.headers);
   const meter = recordCredits(cost, usage);
+  // A 2xx means the vendor answered; the body may still be a status:"error"
+  // payload, which the caller classifies, so success is only noted here for a
+  // transport-level success. `lastSuccessAt` is stamped by the caller once the
+  // payload has parsed into real candles.
   logVendorRequest({
     endpoint: cost.endpoint,
     symbol: cost.symbol,
@@ -195,6 +202,9 @@ async function meteredFetch(
   });
   return { response, usage };
 }
+
+/** Note that a Twelve Data call produced usable candles, for /api/health. */
+export { noteCreditSuccess as noteTwelveDataSuccess };
 
 function num(value: unknown): number {
   const parsed = typeof value === 'string' ? Number.parseFloat(value) : typeof value === 'number' ? value : NaN;
@@ -323,8 +333,13 @@ export async function fetchTimeSeries({
     );
   }
 
+  const candles = parseTimeSeries(payload);
+  // A parsed, non-empty series is a real successful call. An empty series is a
+  // real "no bars here", not a success, so it does not stamp lastSuccessAt.
+  if (candles.length > 0) noteCreditSuccess();
+
   return {
-    candles: parseTimeSeries(payload),
+    candles,
     symbol: payload.meta?.symbol ?? symbol,
     interval: payload.meta?.interval ?? interval,
     instrumentType: payload.meta?.type,

@@ -23,6 +23,7 @@ import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
 import { TIMEFRAME_LABELS, TIMEFRAMES, type Timeframe } from '../core/types';
 import { probeFuturesProvider, providerConfiguredState } from '../core/providers';
+import { missingSourceMessage } from '../core/assetStatus';
 import { checkEntry, type EntryCompassInput, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import { ProvenancePopover } from '../components/compass/ProvenancePopover';
@@ -117,6 +118,25 @@ function provenanceDetails(
     isProxy: (resolved?.kind ?? (instrument.proxy ? 'proxy' : 'futures')) === 'proxy',
     description: resolved?.description,
   };
+}
+
+/**
+ * The precise reason an asset has no source, in the asset's own terms: its
+ * provider, its symbol, and exactly which credential variable is missing — by
+ * name, never by value. The message itself lives in one pure module so the hook
+ * and the card can never disagree.
+ */
+function sourceUnavailableMessage(
+  instrument: Instrument,
+  requirement: import('../core/providers/futures').AssetRequirementState | null,
+  reachable: boolean
+): string {
+  return missingSourceMessage(instrument, requirement ?? undefined, reachable);
+}
+
+/** The credential variable names an asset's provider needs, for the hint line. */
+function requiredEnvVars(requirement: import('../core/providers/futures').AssetRequirementState | null): string[] {
+  return requirement?.requiredEnvVars ?? [];
 }
 
 const Index: React.FC = () => {
@@ -317,27 +337,34 @@ const Index: React.FC = () => {
         {!feed.configured && !feed.isLoading && (
           <Section
             title={feed.sourceReachable ? ERROR_TITLES.NOT_CONFIGURED : UNREACHABLE_TITLE}
-            subtitle={instrument.id}
+            subtitle={instrument.name}
             dense
           >
             <div className="flex flex-col gap-2">
               <p className="text-body text-white/70">
-                {feed.unavailableReason ?? feed.error?.message ?? 'This instrument has no configured data source.'}
+                {sourceUnavailableMessage(instrument, feed.requirement, feed.sourceReachable)}
               </p>
               {feed.sourceReachable ? (
                 <p className="text-label text-white/45">
-                  FlowSense shows nothing rather than a fabricated number. Gold needs{' '}
-                  <span className="font-mono text-white/70">TWELVE_DATA_API_KEY</span>; the S&amp;P 500, Dow and
-                  Nasdaq assets need <span className="font-mono text-white/70">ALPACA_API_KEY</span> and{' '}
-                  <span className="font-mono text-white/70">ALPACA_API_SECRET</span> set in the deployment
-                  environment.
+                  FlowSense shows nothing rather than a fabricated number.
+                  {requiredEnvVars(feed.requirement).length > 0 && (
+                    <>
+                      {' '}This asset needs{' '}
+                      {requiredEnvVars(feed.requirement).map((name, index) => (
+                        <React.Fragment key={name}>
+                          {index > 0 && (index === requiredEnvVars(feed.requirement).length - 1 ? ' and ' : ', ')}
+                          <span className="font-mono text-white/70">{name}</span>
+                        </React.Fragment>
+                      ))}{' '}
+                      set in the deployment environment.
+                    </>
+                  )}
                 </p>
               ) : (
                 <p className="text-label text-white/45">
-                  The server route that holds the API key did not answer. On a local dev server the{' '}
-                  <span className="font-mono text-white/70">api/</span> functions are not running — use{' '}
-                  <span className="font-mono text-white/70">vercel dev</span>. In production this is a network or
-                  deployment problem, not a missing key.
+                  On a local dev server the <span className="font-mono text-white/70">api/</span> functions are not
+                  running — use <span className="font-mono text-white/70">vercel dev</span>. In production this is a
+                  network or deployment problem, not a missing key.
                 </p>
               )}
             </div>

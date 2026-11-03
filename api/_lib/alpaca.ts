@@ -27,6 +27,7 @@ import {
   alpacaMeter,
   markAlpacaExhausted,
   noteAlpacaCall,
+  noteAlpacaSuccess,
   recordAlpacaRequest,
   type MeterSnapshot,
 } from './alpacaMeter.js';
@@ -441,11 +442,20 @@ export async function fetchAlpacaBars({
 
     const pageBars = parseAlpacaBars(payload);
     const counts: Record<string, number> = {};
+    let pageHadBars = false;
     for (const symbol of symbols) {
       const list = pageBars[symbol];
-      if (list && list.length > 0) accumulated[symbol] = mergeCandles(accumulated[symbol], list, perSymbol);
+      if (list && list.length > 0) {
+        accumulated[symbol] = mergeCandles(accumulated[symbol], list, perSymbol);
+        pageHadBars = true;
+      }
       counts[symbol] = accumulated[symbol].length;
     }
+
+    // A page with at least one real bar is a successful call; a page that is
+    // empty for every symbol is a real "no bars here", not a failure, so it is
+    // NOT recorded as success.
+    if (pageHadBars) noteAlpacaSuccess();
 
     logAlpacaRequest({
       endpoint: 'stocks_bars',

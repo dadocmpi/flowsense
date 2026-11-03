@@ -6,6 +6,7 @@ export {
   setFuturesConfigured,
   resolvedSourceFor,
   providerForResolved,
+  requirementForResolved,
   futuresLiveStreamEnabled,
   futuresCreditState,
   alpacaCreditState,
@@ -15,7 +16,13 @@ export {
   pollCandles,
   loadAlpacaBatch,
 } from './futures';
-export type { CreditState, FuturesProbeResult, FuturesRouteResponse, FuturesBatchResponse } from './futures';
+export type {
+  CreditState,
+  FuturesProbeResult,
+  FuturesRouteResponse,
+  FuturesBatchResponse,
+  AssetRequirementState,
+} from './futures';
 export {
   POLL_INTERVAL_MS,
   SERVER_CACHE_TTL_MS,

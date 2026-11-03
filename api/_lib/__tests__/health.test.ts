@@ -34,20 +34,45 @@ function makeRes() {
 interface HealthBody {
   ok: boolean;
   providers: {
-    twelvedata: { configured: boolean; hasKey: boolean };
+    twelvedata: {
+      configured: boolean;
+      hasKey: boolean;
+      credentialsPresent: boolean;
+      missingEnvVars: string[];
+      lastSuccessfulCallAt: number | null;
+    };
     alpaca: {
       configured: boolean;
       hasKeyId: boolean;
       hasSecret: boolean;
+      credentialsPresent: boolean;
+      missingEnvVars: string[];
       requestsPerMinute: number;
       callsThisMinute: number;
       lastCallAt: number | null;
+      lastSuccessfulCallAt: number | null;
     };
   };
-  assets: Array<{ instrumentId: string; provider: string; symbol: string }>;
+  assets: Array<{
+    instrumentId: string;
+    name: string;
+    provider: string;
+    symbol: string;
+    credentialsPresent: boolean;
+    requiredEnvVars: string[];
+    missingEnvVars: string[];
+    lastSuccessfulCallAt: number | null;
+  }>;
 }
 
-const ENV_KEYS = ['TWELVE_DATA_API_KEY', 'FUTURES_API_KEY', 'ALPACA_API_KEY', 'ALPACA_API_SECRET'];
+const ENV_KEYS = [
+  'TWELVE_DATA_API_KEY',
+  'FUTURES_API_KEY',
+  'ALPACA_API_KEY',
+  'ALPACA_API_SECRET',
+  'ASSET_PROVIDER_NQ',
+  'ASSET_SYMBOL_NQ',
+];
 
 describe('GET /api/health', () => {
   beforeEach(() => {
@@ -118,5 +143,51 @@ describe('GET /api/health', () => {
     const assets = (captured.body as HealthBody).assets;
     expect(assets.find(a => a.instrumentId === 'GC')).toMatchObject({ provider: 'twelvedata', symbol: 'XAU/USD' });
     expect(assets.find(a => a.instrumentId === 'ES')).toMatchObject({ provider: 'alpaca', symbol: 'SPY' });
+    expect(assets.find(a => a.instrumentId === 'NQ')).toMatchObject({ provider: 'alpaca', symbol: 'QQQ' });
+  });
+
+  it('reports, per asset, provider, symbol, credentials present and last successful call', async () => {
+    const { res, captured } = makeRes();
+    handler({ method: 'GET', query: {} }, res);
+
+    const nasdaq = (captured.body as HealthBody).assets.find(a => a.instrumentId === 'NQ')!;
+    expect(nasdaq).toMatchObject({
+      name: 'Nasdaq',
+      provider: 'alpaca',
+      symbol: 'QQQ',
+      credentialsPresent: false,
+      requiredEnvVars: ['ALPACA_API_KEY', 'ALPACA_API_SECRET'],
+      missingEnvVars: ['ALPACA_API_KEY', 'ALPACA_API_SECRET'],
+      lastSuccessfulCallAt: null,
+    });
+
+    const gold = (captured.body as HealthBody).assets.find(a => a.instrumentId === 'GC')!;
+    expect(gold).toMatchObject({
+      name: 'Gold',
+      provider: 'twelvedata',
+      symbol: 'XAU/USD',
+      requiredEnvVars: ['TWELVE_DATA_API_KEY'],
+    });
+  });
+
+  it('reports Nasdaq credentials present once the Alpaca pair is set', async () => {
+    process.env.ALPACA_API_KEY = 'id';
+    process.env.ALPACA_API_SECRET = 'secret';
+    const { res, captured } = makeRes();
+    handler({ method: 'GET', query: {} }, res);
+
+    const nasdaq = (captured.body as HealthBody).assets.find(a => a.instrumentId === 'NQ')!;
+    expect(nasdaq.credentialsPresent).toBe(true);
+    expect(nasdaq.missingEnvVars).toEqual([]);
+  });
+
+  it('reports the last successful call time from the meters', async () => {
+    const { res, captured } = makeRes();
+    handler({ method: 'GET', query: {} }, res);
+
+    const body = captured.body as HealthBody;
+    // Nothing has been called yet, so both are null rather than a fabricated time.
+    expect(body.providers.alpaca.lastSuccessfulCallAt).toBeNull();
+    expect(body.providers.twelvedata.lastSuccessfulCallAt).toBeNull();
   });
 });

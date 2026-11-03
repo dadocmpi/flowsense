@@ -69,3 +69,9 @@ export const alpacaLastCallAt = alpacaMeter.lastCallAt;
 
 /** Test seam: forget everything the meter has learned. */
 export const resetAlpacaMeter = alpacaMeter.reset;
+
+/** Note that one Alpaca call came back with a usable answer. */
+export const noteAlpacaSuccess = alpacaMeter.noteSuccess;
+
+/** Epoch ms of the last successful Alpaca call, or null. */
+export const alpacaLastSuccessAt = alpacaMeter.lastSuccessAt;

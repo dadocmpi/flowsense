@@ -119,10 +119,20 @@ export interface RateMeter {
   reset(): void;
   /** Record that one outbound call was actually made, for the health route. */
   noteCall(now?: number): void;
+  /**
+   * Record that one call SUCCEEDED, for the health route.
+   *
+   * Distinct from `noteCall`: a call can be made and still fail (bad credentials,
+   * a symbol that does not exist). "Last successful call" must mean a real
+   * answer came back, so the two are tracked separately.
+   */
+  noteSuccess(now?: number): void;
   /** How many calls were made in the current wall-clock minute. */
   callsThisMinute(now?: number): number;
   /** Epoch ms of the last outbound call, or null. Survives the minute roll. */
   lastCallAt(): number | null;
+  /** Epoch ms of the last SUCCESSFUL call, or null. Survives the minute roll. */
+  lastSuccessAt(): number | null;
 }
 
 interface MeterState {
@@ -160,6 +170,7 @@ export function createRateMeter(options: MeterOptions): RateMeter {
     calls: 0,
   };
   let lastCall: number | null = null;
+  let lastSuccess: number | null = null;
 
   /** Drop the state whenever the wall-clock minute rolls over. */
   function roll(now: number): void {
@@ -271,6 +282,10 @@ export function createRateMeter(options: MeterOptions): RateMeter {
     lastCall = now;
   }
 
+  function noteSuccess(now: number = Date.now()): void {
+    lastSuccess = now;
+  }
+
   return {
     label,
     check,
@@ -289,12 +304,15 @@ export function createRateMeter(options: MeterOptions): RateMeter {
         calls: 0,
       };
       lastCall = null;
+      lastSuccess = null;
     },
     noteCall,
+    noteSuccess,
     callsThisMinute: (now: number = Date.now()) => {
       roll(now);
       return state.calls;
     },
     lastCallAt: () => lastCall,
+    lastSuccessAt: () => lastSuccess,
   };
 }

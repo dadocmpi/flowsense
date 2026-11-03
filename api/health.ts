@@ -5,14 +5,13 @@
 // environment configuration and the in-memory rate meters, and never fetches
 // from a vendor. That keeps a health check from being a hidden consumer.
 //
-// For each provider it reports:
-//   configured     whether the credentials the provider needs are present
-//   lastCallAt     epoch ms of the last outbound request, or null
-//   callsThisMinute how many requests were made in the current wall-clock minute
+// Per asset it reports the provider it RESOLVED to, the symbol that provider is
+// asked for, whether the credentials that provider needs are present (a boolean,
+// never a value), and the time of the last successful call. The same facts the
+// UI shows in its "no data source configured" card, so the two cannot disagree.
 //
-// It also reports each asset's provider and symbol, so a deployment can confirm
-// at a glance that Gold reads Twelve Data and the index assets read Alpaca.
-// Keys are never included.
+// Per provider it reports configured, which credential variables are missing (by
+// name), lastCallAt, lastSuccessAt and callsThisMinute. Keys are never included.
 
 import {
   alpacaConfigured,
@@ -24,11 +23,19 @@ import {
   type ApiRequest,
   type ApiResponse,
 } from './_lib/futuresShared.js';
-import { meterSnapshot } from './_lib/creditMeter.js';
-import { alpacaCallsThisMinute, alpacaLastCallAt, alpacaMeterSnapshot } from './_lib/alpacaMeter.js';
-import { assetProviderConfig, CONFIGURED_ASSET_IDS } from './_lib/assets.js';
-
-const NAMES: Record<string, string> = { GC: 'Gold', ES: 'S&P 500', YM: 'Dow Jones', NQ: 'Nasdaq' };
+import {
+  creditCallsThisMinute,
+  creditLastCallAt,
+  lastCreditSuccessAt,
+  meterSnapshot,
+} from './_lib/creditMeter.js';
+import {
+  alpacaCallsThisMinute,
+  alpacaLastCallAt,
+  alpacaLastSuccessAt,
+  alpacaMeterSnapshot,
+} from './_lib/alpacaMeter.js';
+import { assetRequirements, providerCredentials, type AssetProviderId } from './_lib/assets.js';
 
 export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const twelveKey = vendorApiKey();
@@ -37,16 +44,27 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const meter = meterSnapshot();
   const alpacaMeter = alpacaMeterSnapshot();
 
-  const assets = CONFIGURED_ASSET_IDS.map(instrumentId => {
-    const config = assetProviderConfig(instrumentId)!;
-    return {
-      instrumentId,
-      name: NAMES[instrumentId] ?? instrumentId,
-      provider: config.provider,
-      symbol: config.symbol,
-      proxy: config.provider === 'alpaca',
-    };
-  });
+  const twelveCreds = providerCredentials('twelvedata');
+  const alpacaCreds = providerCredentials('alpaca');
+
+  const lastSuccessByProvider: Record<AssetProviderId, number | null> = {
+    twelvedata: lastCreditSuccessAt(),
+    alpaca: alpacaLastSuccessAt(),
+  };
+
+  // One entry per asset: its resolved provider, symbol, whether the credentials
+  // that provider needs are present, and the last successful call time.
+  const assets = assetRequirements().map(requirement => ({
+    instrumentId: requirement.instrumentId,
+    name: requirement.name,
+    provider: requirement.provider,
+    symbol: requirement.symbol,
+    proxy: requirement.provider === 'alpaca',
+    credentialsPresent: requirement.credentialsPresent,
+    requiredEnvVars: requirement.requiredEnvVars,
+    missingEnvVars: requirement.missingEnvVars,
+    lastSuccessfulCallAt: lastSuccessByProvider[requirement.provider],
+  }));
 
   sendJson(res, 200, {
     ok: true,
@@ -55,16 +73,23 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
         configured: twelveConfigured,
         // Never the key itself — only whether each half is present.
         hasKey: twelveKey !== null,
+        credentialsPresent: twelveCreds.present,
+        missingEnvVars: twelveCreds.missing,
         creditsPerMinute: meter.limit,
         usedThisMinute: meter.used,
         remainingThisMinute: meter.remaining,
         exhausted: meter.exhausted,
         resetAt: meter.resetAt,
+        callsThisMinute: creditCallsThisMinute(),
+        lastCallAt: creditLastCallAt(),
+        lastSuccessfulCallAt: lastCreditSuccessAt(),
       },
       alpaca: {
         configured: alpaca,
         hasKeyId: alpacaKeyId() !== null,
         hasSecret: alpacaSecretKey() !== null,
+        credentialsPresent: alpacaCreds.present,
+        missingEnvVars: alpacaCreds.missing,
         requestsPerMinute: alpacaMeter.limit,
         callsThisMinute: alpacaCallsThisMinute(),
         remainingThisMinute: alpacaMeter.remaining,
@@ -72,6 +97,8 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
         resetAt: alpacaMeter.resetAt,
         /** Epoch ms of the last Alpaca request, or null if none yet. */
         lastCallAt: alpacaLastCallAt(),
+        /** Epoch ms of the last Alpaca call that returned real bars, or null. */
+        lastSuccessfulCallAt: alpacaLastSuccessAt(),
       },
     },
     assets,
