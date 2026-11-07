@@ -21,7 +21,7 @@ function compasses(technical: ScoreLabel | null, summary: ScoreLabel | null, ord
   return [
     { key: 'technical', label: 'Technical indicators', scoreLabel: technical },
     { key: 'summary', label: 'Summary', scoreLabel: summary },
-    { key: 'orderFlow', label: 'Order flow', scoreLabel: orderFlow },
+    { key: 'orderFlow', label: 'Order Book', scoreLabel: orderFlow },
   ];
 }
 

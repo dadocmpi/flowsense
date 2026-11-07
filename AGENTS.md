@@ -36,7 +36,8 @@ src/core/structure.ts          swing highs/lows, BOS, CHoCH, premium/discount
 src/core/session.ts            session open resolution (RTH/FULL), DST-safe
 src/core/metrics.ts            ATR, VWAP, session range, point of control
 src/core/candles.ts            bucketing, resampling, live-tail merge
-src/core/timeframeEngine.ts    ONE timeframe -> the three compasses + structure + metrics
+src/core/timeframeEngine.ts    ONE timeframe -> the compasses + structure + metrics
+src/core/orderbook.ts          resting-book pressure %, from a real book quote (pure)
 src/core/entryCheck.ts         do the selected timeframe's compasses agree with a long/short? (pure)
 src/core/marketHours.ts        is the market still producing bars? (pure)
 src/core/marketSessions.ts     per-provider market calendar (Alpaca = US equity session) (pure)
@@ -62,8 +63,8 @@ api/futures/candles.ts         server-side candle proxy (single asset, or one ba
 api/futures/status.ts          which providers are configured, what symbol is read, meter state
 api/health.ts                  provider credentials + last-call time + calls this minute
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
-api/orderflow/reading.ts       is an order-flow source configured, and its reading
-api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor
+api/orderflow/reading.ts       is an order-book source configured, and its real book
+api/_lib/orderflow.ts          the server-side book adapter (Alpaca snapshot by default)
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
@@ -179,32 +180,45 @@ daily bucket is usually only partly observed, and rebuilding it from that tail
 would report a high/low/volume for a day that has barely started. When the base
 window does not reach the bucket open, the natively fetched bar is kept.
 
-### Order flow is a separate provider, never derived from candles
+### The order book is a separate source, never derived from candles
 
-The RIGHT compass is order flow: delta/CVD, order-book imbalance, absorption.
-Twelve Data carries NO order-flow data — a candle has no aggressor side and no
-order book — so it is never computed from the candle feed. It comes from a
-provider behind `src/core/providers/orderflow.ts`, selected server-side by
-`ORDERFLOW_PROVIDER` / `ORDERFLOW_API_KEY` (see `api/_lib/orderflow.ts`).
+The RIGHT reading is the resting ORDER BOOK: the size bid against the size
+offered, plus the traded volume that corroborates it, turned into a pressure
+percentage. A candle carries no bid/ask and no book, so it is never computed from
+the candle feed. The book is served by the asset's OWN market-data provider when
+that provider publishes one:
 
-The shipped adapter is `none`: the card then reads "No order flow source
-configured" and draws NO gauge. It must never draw a neutral needle or a `0` in
-place of a missing reading — a neutral needle looks like a real "neutral market"
-read. With no source the Summary compass IS the technical reading rather than a
-blend against a stand-in zero.
+- ES / YM / NQ -> Alpaca `/v2/stocks/snapshots` (bid/ask price+size, session
+  volume), read server-side and batched per symbol.
+- GC -> Twelve Data, which publishes NO book, so Gold shows no book.
 
-Connecting a vendor means implementing `fetchOrderFlowReading` in
-`api/_lib/orderflow.ts` and setting the two environment variables. Nothing else
-changes: the client, the summary blend and the entry check already speak that
-shape. The key stays server-side; check `grep -c "apikey" dist/assets/*.js` is
-still 0 after adding one.
+The client asks our own server route (`/api/orderflow/reading`) for the raw
+quote; the pressure percentage is computed locally in `src/core/orderbook.ts`, so
+the number can never disagree with the book it came from. With no source the
+line reads "No order book source configured" and draws nothing — it must never
+draw a neutral `50%` or a `0` in place of a missing reading, because a
+balanced-looking bar reads as a real "balanced market" call. With no source the
+Summary compass IS the technical reading rather than a blend against a stand-in
+zero.
+
+Alpaca needs no extra key: the `ALPACA_API_KEY` / `ALPACA_API_SECRET` the index
+assets already use are enough, so the book is on by default. Set
+`ORDERFLOW_PROVIDER=none` to switch it off. Connecting a different vendor means
+implementing `fetchOrderFlowReading` in `api/_lib/orderflow.ts`; nothing else
+changes, because the client, the summary blend and the entry check already speak
+that shape. The key stays server-side; check `grep -c "apikey"
+dist/assets/*.js` is still 0 after adding one.
+
+Every book poll is ONE Alpaca request and goes through the Alpaca request meter,
+exactly like a bars call, so a poll can never reach the vendor uncounted.
 
 ## UI
 
 The main screen, top to bottom, and it fits 1920x1080 without scrolling: the top
-bar (price, feed state, provenance, asset tabs, timeframe buttons), three
-compasses in one row, then the merged technical table (two thirds) beside the
-entry check (one third).
+bar (price, feed state, provenance, asset tabs, timeframe buttons), two
+compasses in one row (Technical indicators, Summary), the real-time Order Book
+line, then the merged technical table (two thirds) beside the entry check (one
+third).
 
 The timeframe buttons carry the LABEL ONLY — M1 M5 M15 M30 1H 4H 1D. No score,
 no signal word, no colour that implies a signal; only the selected one is

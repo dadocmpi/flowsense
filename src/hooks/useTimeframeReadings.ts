@@ -18,6 +18,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Candle, Timeframe, TimeframeReading } from '../core/types';
 import { TIMEFRAMES } from '../core/types';
 import { computeTimeframeReading } from '../core/timeframeEngine';
+import { buildOrderBookReading } from '../core/orderbook';
+import { ORDER_BOOK_POLL_INTERVAL_MS } from '../core/providers/polling';
 import { DEFAULT_COMPASS_CONFIG, type CompassConfig } from '../config/compass';
 import {
   activeOrderFlowProvider,
@@ -43,8 +45,14 @@ export interface UseTimeframeReadingsResult {
   current: StoredReading | null;
   /** Every stored reading for the current asset, in timeframe order. */
   stored: StoredReading[];
-  /** Whether an order-flow source is configured, and what it is. */
+  /** Whether an order-book source is configured, and what it is. */
   orderFlow: OrderFlowProbeResult | null;
+  /**
+   * The resting book snapshot, re-read on its own real-time cadence. It is the
+   * same book for every timeframe — a book has no timeframe — so it is kept
+   * once, apart from the per-timeframe readings.
+   */
+  book: OrderFlowReading | null;
 }
 
 export function readingKey(instrumentId: string, timeframe: Timeframe): string {
@@ -60,10 +68,10 @@ export function useTimeframeReadings(
   config: CompassConfig = DEFAULT_COMPASS_CONFIG
 ): UseTimeframeReadingsResult {
   const stampsRef = useRef(new Map<string, Stamp>());
-  const [orderFlowByKey, setOrderFlowByKey] = useState<Record<string, OrderFlowReading | null>>({});
   const [orderFlow, setOrderFlow] = useState<OrderFlowProbeResult | null>(null);
+  const [book, setBook] = useState<OrderFlowReading | null>(null);
 
-  // Ask the server whether an order-flow source exists. A server-side fact, so
+  // Ask the server whether an order-book source exists. A server-side fact, so
   // it is asked once and cached; the route costs no vendor credits.
   useEffect(() => {
     let active = true;
@@ -79,31 +87,49 @@ export function useTimeframeReadings(
     };
   }, []);
 
-  // Fetch order flow for the selected timeframe only, when a source is
-  // configured. A source that answers null leaves the card with no reading
-  // rather than a placeholder.
+  // Read the resting book on its own real-time cadence, for the selected
+  // instrument. A book has no timeframe, so this is fetched once and shared by
+  // every timeframe's reading. A source that answers null leaves the card with
+  // no reading rather than a placeholder, and a silent poll keeps the last real
+  // book rather than blanking it.
   useEffect(() => {
-    if (!orderFlow?.configured) return;
+    if (!orderFlow?.configured) {
+      setBook(null);
+      return;
+    }
     const provider = activeOrderFlowProvider();
-    if (!provider.isConfigured()) return;
+    if (!provider.isConfigured()) {
+      setBook(null);
+      return;
+    }
 
     let active = true;
-    const controller = new AbortController();
-    provider
-      .getReading({ instrument: feed.instrument, timeframe: selectedTimeframe, signal: controller.signal })
-      .then(reading => {
-        if (!active) return;
-        setOrderFlowByKey(prev => ({ ...prev, [readingKey(feed.instrument.id, selectedTimeframe)]: reading }));
-      })
-      .catch(() => {
-        // A silent source is reported as no reading, never as a guess.
-      });
+    let controller = new AbortController();
+
+    const read = () => {
+      controller.abort();
+      controller = new AbortController();
+      provider
+        .getReading({ instrument: feed.instrument, timeframe: selectedTimeframe, signal: controller.signal })
+        .then(quote => {
+          if (!active) return;
+          setBook(quote ? buildOrderBookReading(quote, config) : null);
+        })
+        .catch(() => {
+          // A silent poll is not a reason to wipe the last real book; the next
+          // poll will refresh it. Nothing is invented in the meantime.
+        });
+    };
+
+    read();
+    const timer = window.setInterval(read, ORDER_BOOK_POLL_INTERVAL_MS);
 
     return () => {
       active = false;
       controller.abort();
+      window.clearInterval(timer);
     };
-  }, [feed.instrument, selectedTimeframe, orderFlow?.configured, feed.revision]);
+  }, [feed.instrument, selectedTimeframe, orderFlow?.configured, config]);
 
   const byKey = useMemo(() => {
     const map = new Map<string, StoredReading>();
@@ -125,15 +151,16 @@ export function useTimeframeReadings(
         key,
         instrumentId: feed.instrument.id,
         timeframe,
-        reading: computeTimeframeReading(timeframe, series, config, orderFlowByKey[key] ?? null),
+        reading: computeTimeframeReading(timeframe, series, config, book),
         updatedAt,
       });
     }
 
     return map;
     // feed.seriesByTimeframe carries a new identity whenever a timeframe's series
-    // actually changes, so it is the only series signal the recompute needs.
-  }, [feed.seriesByTimeframe, feed.instrument.id, config, orderFlowByKey]);
+    // actually changes, so it is the only series signal the recompute needs. The
+    // book is timeframe-independent, so one change re-blends every reading.
+  }, [feed.seriesByTimeframe, feed.instrument.id, config, book]);
 
   const current = byKey.get(readingKey(feed.instrument.id, selectedTimeframe)) ?? null;
 
@@ -142,7 +169,7 @@ export function useTimeframeReadings(
     [byKey, feed.instrument.id]
   );
 
-  return { current, stored, orderFlow };
+  return { current, stored, orderFlow, book };
 }
 
 /** Test seam: forget the order-flow probe result. */

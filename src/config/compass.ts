@@ -73,13 +73,23 @@ export interface CompassConfig {
   };
 
   /**
-   * Blend between the technical gauge and the order-flow gauge when forming the
-   * CENTER "Summary" gauge. Ignored when no order-flow source is configured,
+   * Blend between the technical gauge and the order-book gauge when forming the
+   * CENTER "Summary" gauge. Ignored when no order-book source is configured,
    * because the summary is then the technical reading itself.
    */
   orderFlowBlend: {
     technical: number;
     orderFlow: number;
+  };
+
+  /** Rules behind the order-book pressure reading. */
+  orderBook: {
+    /**
+     * Book imbalance (bid share minus ask share, -1..+1) inside which the book
+     * is Neutral rather than Buy/Sell. Below this the resting sizes are close
+     * enough to balanced that calling a side would be noise.
+     */
+    neutralBand: number;
   };
 
   /** Rules behind the LONG / SHORT entry check. */
@@ -152,10 +162,16 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     indicators: 1.0,
   },
 
-  // An even blend of the technical read and order flow, when flow exists.
+  // An even blend of the technical read and order book, when a book exists.
   orderFlowBlend: {
     technical: 1.0,
     orderFlow: 1.0,
+  },
+
+  // A resting book within +/-5% of balanced is Neutral: the two sides are close
+  // enough that naming a side would be reading noise, not pressure.
+  orderBook: {
+    neutralBand: 0.05,
   },
 
   entryCheck: {
@@ -207,6 +223,7 @@ export function mergeCompassConfig(
     indicatorWeights: { ...base.indicatorWeights, ...(override.indicatorWeights ?? {}) },
     technicalBlend: { ...base.technicalBlend, ...(override.technicalBlend ?? {}) },
     orderFlowBlend: { ...base.orderFlowBlend, ...(override.orderFlowBlend ?? {}) },
+    orderBook: { ...base.orderBook, ...(override.orderBook ?? {}) },
     entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
     session: { ...base.session, ...(override.session ?? {}) },

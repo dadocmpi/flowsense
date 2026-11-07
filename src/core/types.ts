@@ -113,23 +113,35 @@ export interface TechnicalMetrics {
 export type ChangeBasis = 'SESSION' | 'WINDOW';
 
 /**
- * The raw numbers behind the order-flow gauge, for that card's key figures.
+ * The raw numbers behind the order-book gauge, for that card's key figures.
  * Every field is nullable: a source that cannot supply one says so rather than
  * filling it with a zero.
  */
 export interface OrderFlowMetrics {
-  /** Net aggressive buy minus sell volume over the window. */
-  delta: number | null;
-  /** Cumulative volume delta over the window. */
-  cvd: number | null;
+  /** Best bid price. */
+  bid: number | null;
+  /** Best ask price. */
+  ask: number | null;
+  /** Resting size at the best bid. */
+  bidSize: number | null;
+  /** Resting size at the best ask. */
+  askSize: number | null;
+  /** (bid + ask) / 2. */
+  mid: number | null;
+  /** ask - bid, in price units. */
+  spread: number | null;
+  /** Spread as a percentage of the mid. */
+  spreadPercent: number | null;
+  /** Bid share of the two-sided book, 0..100. The pressure percentage shown. */
+  bidSharePercent: number | null;
   /** Resting book imbalance, -1 (all offers) .. +1 (all bids). */
   imbalance: number | null;
-  /** 0..1: how much aggressive flow was absorbed without moving price. */
-  absorption: number | null;
+  /** Traded volume over the vendor's reference window (the session). */
+  volume: number | null;
 }
 
 /**
- * A real order-flow reading, as returned by a configured source.
+ * A real order-book reading, as returned by a configured source.
  *
  * It is never derived from candles and never synthesised: with no source the
  * reading is null and the card says so.
@@ -139,6 +151,8 @@ export interface OrderFlowReading {
   metrics: OrderFlowMetrics;
   /** Vendor-reported source label, for the provenance line. */
   source: string;
+  /** Epoch ms the vendor stamped the quote with, or null. */
+  at?: number | null;
 }
 
 export interface TimeframeReading {
@@ -155,8 +169,9 @@ export interface TimeframeReading {
    */
   summary: GaugeReading;
   /**
-   * RIGHT compass: order flow (delta / CVD, book imbalance, absorption). Null
-   * when no order-flow source is configured — never a placeholder reading.
+   * RIGHT reading: the resting ORDER BOOK (size bid against size offered) and
+   * the pressure percentage it produces. Null when no book source is configured
+   * or the instrument's provider publishes no book — never a placeholder.
    */
   orderFlow: OrderFlowReading | null;
   structure: MarketStructure;

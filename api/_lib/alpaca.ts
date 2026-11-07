@@ -480,3 +480,194 @@ function mergeCandles(existing: Candle[], incoming: Candle[], keep: number): Can
   const merged = [...byTime.values()].sort((a, b) => a.datetime.localeCompare(b.datetime));
   return merged.length > keep ? merged.slice(merged.length - keep) : merged;
 }
+
+// ── Order book (snapshot) ────────────────────────────────────────────────────
+
+export interface AlpacaQuote {
+  /** Best bid price. */
+  bp?: number;
+  /** Best ask price. */
+  ap?: number;
+  /** Resting size at the best bid. */
+  bs?: number;
+  /** Resting size at the best ask. */
+  as?: number;
+  /** Quote timestamp, ISO 8601 with nanoseconds. */
+  t?: string;
+}
+
+export interface AlpacaSnapshot {
+  latestQuote?: AlpacaQuote | null;
+  dailyBar?: { v?: number } | null;
+  prevDailyBar?: { v?: number } | null;
+  latestTrade?: { p?: number; t?: string } | null;
+  message?: string;
+}
+
+/** One real book snapshot for a symbol, as the client consumes it. */
+export interface AlpacaBookQuote {
+  bid: number | null;
+  ask: number | null;
+  bidSize: number | null;
+  askSize: number | null;
+  /** Session traded volume, from the daily bar. */
+  volume: number | null;
+  /** Epoch ms the vendor stamped the quote with. */
+  at: number | null;
+}
+
+function positiveOrNull(value: unknown): number | null {
+  const parsed = typeof value === 'number' ? value : Number.parseFloat(String(value));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function epochOrNull(iso: unknown): number | null {
+  if (typeof iso !== 'string' || iso.length === 0) return null;
+  // Alpaca stamps nanoseconds; trim to milliseconds so every runtime parses it.
+  const trimmed = iso.replace(/\.(\d{3})\d+/, '.$1');
+  const ms = new Date(trimmed).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Turn one Alpaca snapshot into a book quote, or null when the book has no
+ * usable side.
+ *
+ * A quote is only a reading when BOTH the bid size and the ask size are present
+ * and positive: one side alone, or an empty book, carries no imbalance and must
+ * not be turned into a neutral zero.
+ */
+export function parseAlpacaBookQuote(snapshot: AlpacaSnapshot | null | undefined): AlpacaBookQuote | null {
+  const quote = snapshot?.latestQuote ?? null;
+  const bidSize = positiveOrNull(quote?.bs);
+  const askSize = positiveOrNull(quote?.as);
+  if (bidSize === null || askSize === null) return null;
+
+  return {
+    bid: positiveOrNull(quote?.bp),
+    ask: positiveOrNull(quote?.ap),
+    bidSize,
+    askSize,
+    volume: positiveOrNull(snapshot?.dailyBar?.v),
+    at: epochOrNull(quote?.t),
+  };
+}
+
+/** The snapshot URL for one symbol, always on the IEX feed the plan can read. */
+export function buildAlpacaSnapshotUrl(symbol: string, feed = 'iex'): string {
+  const search = new URLSearchParams({ symbols: symbol, feed });
+  return `https://data.alpaca.markets/v2/stocks/snapshots?${search.toString()}`;
+}
+
+export interface FetchAlpacaBookParams {
+  symbol: string;
+  keyId: string;
+  secretKey: string;
+  signal?: AbortSignal;
+  baseUrl?: string;
+}
+
+/**
+ * Read the resting book for one symbol.
+ *
+ * Goes through the Alpaca request meter exactly like the bars call, so a book
+ * poll can never reach the vendor without being counted. Returns null for a
+ * symbol the vendor has no quote for; throws an AlpacaError for a real failure.
+ */
+export async function fetchAlpacaBook({
+  symbol,
+  keyId,
+  secretKey,
+  signal,
+  baseUrl,
+}: FetchAlpacaBookParams): Promise<AlpacaBookQuote | null> {
+  try {
+    alpacaMeter.assert(1);
+  } catch (error) {
+    if (error instanceof CreditLimitError) {
+      logAlpacaRequest({
+        endpoint: 'stocks_snapshots',
+        symbols: [symbol],
+        status: 'BLOCKED',
+        meter: alpacaMeter.snapshot(),
+        note: error.message,
+      });
+      throw new AlpacaError('RATE_LIMIT', 'Alpaca rate limit reached', 429, Math.max(0, error.resetAt - Date.now()));
+    }
+    throw error;
+  }
+
+  const url = baseUrl
+    ? `${baseUrl}?${new URL(buildAlpacaSnapshotUrl(symbol)).searchParams.toString()}`
+    : buildAlpacaSnapshotUrl(symbol);
+
+  let response: Response;
+  try {
+    noteAlpacaCall();
+    response = await fetch(url, {
+      signal,
+      headers: {
+        Accept: 'application/json',
+        'APCA-API-KEY-ID': keyId,
+        'APCA-API-SECRET-KEY': secretKey,
+      },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    logAlpacaRequest({
+      endpoint: 'stocks_snapshots',
+      symbols: [symbol],
+      status: 'NETWORK',
+      meter: alpacaMeter.snapshot(),
+    });
+    throw new AlpacaError('NETWORK', 'Could not reach Alpaca');
+  }
+
+  const meter = recordAlpacaRequest(
+    { endpoint: 'stocks_snapshots', symbol, credits: 1 },
+    {},
+  );
+
+  let payload: Record<string, AlpacaSnapshot> & { message?: string };
+  try {
+    payload = (await response.json()) as Record<string, AlpacaSnapshot> & { message?: string };
+  } catch {
+    logAlpacaRequest({
+      endpoint: 'stocks_snapshots',
+      symbols: [symbol],
+      status: response.status,
+      meter,
+      note: 'unreadable body',
+      message: `HTTP ${response.status} returned an unreadable body`,
+    });
+    throw new AlpacaError('UPSTREAM', `Alpaca returned HTTP ${response.status} with an unreadable body`, response.status);
+  }
+
+  if (!response.ok) {
+    const message = payload.message ?? `Alpaca returned HTTP ${response.status}`;
+    const kind = classifyAlpacaError(message, response.status);
+    logAlpacaRequest({
+      endpoint: 'stocks_snapshots',
+      symbols: [symbol],
+      status: response.status,
+      meter,
+      note: kind,
+      message,
+    });
+    if (kind === 'RATE_LIMIT') {
+      const snapshot = markAlpacaExhausted();
+      throw new AlpacaError('RATE_LIMIT', 'Alpaca rate limit reached', response.status, Math.max(0, snapshot.resetAt - Date.now()));
+    }
+    throw new AlpacaError(kind, message, response.status);
+  }
+
+  const quote = parseAlpacaBookQuote(payload[symbol]);
+  logAlpacaRequest({
+    endpoint: 'stocks_snapshots',
+    symbols: [symbol],
+    status: response.status,
+    meter,
+    note: quote ? 'book' : 'no book',
+  });
+  return quote;
+}

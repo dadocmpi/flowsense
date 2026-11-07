@@ -17,9 +17,9 @@ import {
   noneOrderFlowProvider,
   orderFlowProviderFor,
   probeOrderFlowProvider,
+  type BookQuote,
 } from '../providers/orderflow';
 import { DEFAULT_INSTRUMENT_ID, findInstrument } from '../instruments';
-import type { OrderFlowReading } from '../types';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -123,30 +123,34 @@ describe('httpOrderFlowProvider', () => {
     await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toBeNull();
   });
 
-  it('returns the server reading once a source is configured', async () => {
-    const reading: OrderFlowReading = {
-      gauge: { score: 40, label: 'BUY', tally: { buy: 2, neutral: 1, sell: 0 }, details: [] },
-      metrics: { delta: 10, cvd: 30, imbalance: 0.2, absorption: 0.1 },
+  it('returns the server book once a source is configured', async () => {
+    const book: BookQuote = {
+      bid: 100.5,
+      ask: 100.6,
+      bidSize: 300,
+      askSize: 100,
+      volume: 1_000_000,
       source: 'MyFeed',
+      at: 1_700_000_000_000,
     };
 
     vi.stubGlobal('fetch', async (url: string) => {
       if (url.includes('/api/orderflow/reading') && !url.includes('instrument=')) {
         return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed' });
       }
-      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', reading });
+      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', book });
     });
 
     await probeOrderFlowProvider();
-    await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual(reading);
+    await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual(book);
   });
 
-  it('treats a null reading from the server as no reading, not as a zero', async () => {
+  it('treats a null book from the server as no reading, not as a zero', async () => {
     vi.stubGlobal('fetch', async (url: string) => {
       if (!url.includes('instrument=')) {
         return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed' });
       }
-      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', reading: null });
+      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', book: null });
     });
 
     await probeOrderFlowProvider();

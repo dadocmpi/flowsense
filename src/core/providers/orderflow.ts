@@ -1,36 +1,39 @@
 // ============================================
-// ORDER FLOW PROVIDER
+// ORDER BOOK PROVIDER
 // ============================================
-// The RIGHT compass reads order flow: aggressive buy/sell delta, cumulative
-// volume delta, order-book imbalance and absorption. That data does NOT exist in
-// the Twelve Data candle feed — a candle carries no aggressor side and no book —
-// so it is never derived from candles here. It comes from a provider, or the
-// card says there is none.
+// The RIGHT reading is the resting ORDER BOOK: the size bid against the size
+// offered, plus the traded volume that corroborates it. That data does NOT exist
+// in the Twelve Data candle feed — a candle carries no aggressor side and no book
+// — so it is never derived from candles here. It comes from a provider, or the
+// line says there is none.
 //
-// This module defines the provider seam and ships exactly ONE adapter: `none`.
-// With `none` the card shows "No order flow source configured" and draws no
-// gauge reading. Nothing is mocked and no number is invented.
+// This module defines the provider seam and ships the `none` adapter plus the
+// `http` adapter. `none` means no source: the line shows "No order book source
+// configured" and draws nothing. Nothing is mocked and no number is invented.
 //
-// HOW TO ADD A REAL SOURCE
+// HOW A REAL SOURCE IS WIRED
 // The browser never holds a vendor key, so every adapter talks to this app's own
-// server route (`/api/orderflow/reading`), which holds the key. Adding a source
-// is therefore a SERVER-SIDE change: implement the vendor call in the one file
+// server route (`/api/orderflow/reading`), which holds the key. The shipped
+// source is Alpaca's snapshot endpoint, read through that route and enabled by
+// the same ALPACA_API_KEY / ALPACA_API_SECRET the index assets already use. The
+// `http` adapter below returns the raw book quote; the pressure percentage is
+// computed locally in src/core/orderbook, so the number can never disagree with
+// the book it came from. A different vendor is a server-side change in
+// api/_lib/orderflow.ts, not a client one.
 //
-//     api/_lib/orderflow.ts
-//
-// and set ORDERFLOW_PROVIDER / ORDERFLOW_API_KEY in the deployment. The `http`
-// adapter below already speaks that route, so no client file needs to change.
 // The interface is deliberately narrow so a futures book feed (or any other
 // vendor) can be dropped in behind it without touching the scoring or the UI.
 
 import type { Instrument } from '../instruments';
-import type { OrderFlowReading, Timeframe } from '../types';
+import type { BookQuote } from '../orderbook';
+import type { Timeframe } from '../types';
 
 // The reading shape lives in core/types so the engine can carry it without a
 // dependency on this module; re-exported here for the provider surface.
 export type { OrderFlowReading, OrderFlowMetrics } from '../types';
+export type { BookQuote } from '../orderbook';
 
-/** Which order-flow adapter is in use. `none` means "no source configured". */
+/** Which order-book adapter is in use. `none` means "no source configured". */
 export type OrderFlowProviderId = 'none' | 'http';
 
 export interface OrderFlowContext {
@@ -45,15 +48,17 @@ export interface OrderFlowProvider {
   /** True when the source has everything it needs to answer. */
   isConfigured(): boolean;
   /**
-   * A real reading, or null when there is nothing to read.
+   * A real book snapshot, or null when there is nothing to read.
    *
    * Returning null is the honest answer for an unconfigured or silent source;
-   * an adapter must never substitute a placeholder.
+   * an adapter must never substitute a placeholder. The raw quote is returned
+   * unscored: the pressure percentage is computed locally from this book, so the
+   * number can never disagree with it.
    */
-  getReading(context: OrderFlowContext): Promise<OrderFlowReading | null>;
+  getReading(context: OrderFlowContext): Promise<BookQuote | null>;
 }
 
-/** The shipped adapter: no order-flow source, so no reading. */
+/** The shipped adapter: no order-book source, so no reading. */
 export const noneOrderFlowProvider: OrderFlowProvider = {
   id: 'none',
   label: 'None',
@@ -70,7 +75,7 @@ export const noneOrderFlowProvider: OrderFlowProvider = {
  */
 export const httpOrderFlowProvider: OrderFlowProvider = {
   id: 'http',
-  label: 'Server order flow',
+  label: 'Server order book',
   isConfigured: () => configuredOrderFlow,
   async getReading({ instrument, timeframe, signal }) {
     if (!configuredOrderFlow) return null;
@@ -87,16 +92,16 @@ export const httpOrderFlowProvider: OrderFlowProvider = {
       return null;
     }
 
-    let payload: { reading?: OrderFlowReading | null } | null = null;
+    let payload: { book?: BookQuote | null } | null = null;
     try {
-      payload = (await response.json()) as { reading?: OrderFlowReading | null };
+      payload = (await response.json()) as { book?: BookQuote | null };
     } catch {
       return null;
     }
 
     // A source that has nothing to report says so with null; we do not turn that
     // into a reading.
-    return payload?.reading ?? null;
+    return payload?.book ?? null;
   },
 };
 
