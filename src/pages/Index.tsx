@@ -3,9 +3,10 @@
 // ============================================
 // Layout, top to bottom, and it fits 1920x1080 without scrolling:
 //   1. the top bar: price, feed state, provenance, asset tabs, timeframe buttons
-//   2. three compasses in one row — Technical indicators, Summary, Order flow
-//   3. one merged "Technical indicators" table (moving averages + oscillators)
-//   4. the LONG / SHORT entry check for the selected timeframe
+//   2. two compasses in one row — Technical indicators, Summary
+//   3. the real-time Order Book line (resting book + pressure percentage)
+//   4. one merged "Technical indicators" table (moving averages + oscillators)
+//   5. the LONG / SHORT entry check for the selected timeframe
 //
 // There is no multi-timeframe confluence grid, no timeframe-detail panel and no
 // separate technical-metrics panel any more. Nothing is collapsible: everything
@@ -17,6 +18,7 @@ import { useTimeframeReadings } from '../hooks/useTimeframeReadings';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { TimeframeButtons } from '../components/compass/TimeframeButtons';
 import { CompassCard } from '../components/compass/CompassCard';
+import { OrderBookLine } from '../components/compass/OrderBookLine';
 import { TechnicalTable } from '../components/compass/TechnicalTable';
 import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
@@ -98,7 +100,7 @@ const Index: React.FC = () => {
   );
 
   const feed = useInstrumentFeed(instrument, selectedTimeframe);
-  const { current, stored, orderFlow } = useTimeframeReadings(feed, selectedTimeframe);
+  const { current, stored, orderFlow, book } = useTimeframeReadings(feed, selectedTimeframe);
 
   // Ages are shown live ("updated 42s ago"), so a one-second tick drives them.
   const [now, setNow] = useState(() => Date.now());
@@ -153,10 +155,10 @@ const Index: React.FC = () => {
     const compasses: EntryCompassInput[] = [
       { key: 'technical', label: 'Technical indicators', scoreLabel: frame.available ? frame.technical.label : null },
       { key: 'summary', label: 'Summary', scoreLabel: frame.available ? frame.summary.label : null },
-      { key: 'orderFlow', label: 'Order flow', scoreLabel: frame.orderFlow?.gauge.label ?? null },
+      { key: 'orderFlow', label: 'Order Book', scoreLabel: book?.gauge.label ?? null },
     ];
     return checkEntry(entryDirection, compasses, DEFAULT_COMPASS_CONFIG);
-  }, [frame, entryDirection]);
+  }, [frame, entryDirection, book]);
 
   // The chip row is filled from timeframes the store has loaded. An unloaded
   // timeframe is reported as not loaded and is never fetched here. A timeframe
@@ -194,7 +196,7 @@ const Index: React.FC = () => {
           : 'text-white/70';
   const changeLabel = frame?.changeBasis === 'SESSION' ? 'Session' : 'Window';
 
-  const orderFlowMetrics = frame?.orderFlow?.metrics ?? null;
+  const bookMetrics = book?.metrics ?? null;
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-[#050608] font-sans text-white selection:bg-amber-500/30">
@@ -294,8 +296,8 @@ const Index: React.FC = () => {
           </Section>
         )}
 
-        {/* ── Three compasses in one row ───────────────────────────────── */}
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        {/* ── Two compasses in one row ─────────────────────────────────── */}
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <CompassCard
             title="Technical indicators"
             subtitle={timeframeLabel}
@@ -344,40 +346,25 @@ const Index: React.FC = () => {
               },
               { label: 'Updated', value: formatAge(current?.updatedAt ?? null, now) },
               { label: 'Candles', value: frame ? `${frame.candleCount}` : '--' },
-              { label: 'Order flow', value: orderFlow?.configured ? 'included' : 'none' },
+              { label: 'Order Book', value: bookMetrics ? 'included' : 'none' },
             ]}
             unavailableText={frame ? 'Not enough candles' : feed.isLoading ? 'Loading candles…' : 'No data'}
           />
-
-          <CompassCard
-            title="Order flow"
-            subtitle={orderFlow?.configured ? orderFlow.label : 'none'}
-            gauge={frame?.orderFlow?.gauge ?? null}
-            figures={[
-              {
-                label: 'Delta',
-                value: orderFlowMetrics?.delta != null ? formatNumber(orderFlowMetrics.delta, 0) : '--',
-              },
-              {
-                label: 'CVD',
-                value: orderFlowMetrics?.cvd != null ? formatNumber(orderFlowMetrics.cvd, 0) : '--',
-              },
-              {
-                label: 'Imbalance',
-                value: orderFlowMetrics?.imbalance != null ? orderFlowMetrics.imbalance.toFixed(2) : '--',
-              },
-              {
-                label: 'Absorption',
-                value:
-                  orderFlowMetrics?.absorption != null
-                    ? `${Math.round(orderFlowMetrics.absorption * 100)}%`
-                    : '--',
-              },
-            ]}
-            unavailableText="No order flow source configured"
-            unavailableHint="Twelve Data has no order-flow data. Set ORDERFLOW_PROVIDER and ORDERFLOW_API_KEY to add one."
-          />
         </div>
+
+        {/* ── The real-time Order Book line ───────────────────────────────
+            The RIGHT reading: the resting book (size bid vs size offered) and
+            the pressure percentage it produces, re-read on its own cadence. It
+            is a line rather than a third compass so it fits without scrolling,
+            and it still feeds the Summary blend and the entry check. */}
+        <OrderBookLine
+          reading={book}
+          configured={Boolean(orderFlow?.configured)}
+          source={book?.source ?? (orderFlow?.label ?? null)}
+          updatedAt={book?.at ?? null}
+          precision={pricePrecision}
+          now={now}
+        />
 
         {/* ── Below the compasses: the merged table and the entry check ──
             The table takes two thirds and the entry check one third. They sit

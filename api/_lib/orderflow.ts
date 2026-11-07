@@ -1,93 +1,115 @@
 // ============================================
-// ORDER FLOW ADAPTER (server-side)
+// ORDER BOOK ADAPTER (server-side)
 // ============================================
-// THE ONE FILE TO EDIT TO CONNECT A REAL ORDER-FLOW PROVIDER.
+// The RIGHT reading is the resting ORDER BOOK. The browser never holds a
+// vendor key, so the book is read through this server module and returned as a
+// raw quote; the pressure percentage is computed client-side (src/core/orderbook)
+// from that quote, so the number can never disagree with the book.
 //
-// The browser never holds a vendor key, so the right-hand "Order flow" compass
-// reads order flow through this server module. The client already speaks the
-// shape below (see src/core/providers/orderflow.ts); connecting a vendor means
-// implementing `fetchOrderFlowReading` here and setting the two environment
-// variables in the deployment:
+// WHERE THE BOOK COMES FROM
+// The book is served by the asset's OWN market-data provider when that provider
+// publishes one:
 //
-//   ORDERFLOW_PROVIDER=your-provider     (anything other than "none")
-//   ORDERFLOW_API_KEY=...                (read only here, never in the bundle)
+//   ES / YM / NQ -> Alpaca   /v2/stocks/snapshots (bid/ask price+size, volume)
+//   GC           -> Twelve Data, which publishes NO book, so GC has none
 //
-// Twelve Data has NO order-flow data. A candle carries no aggressor side and no
-// order book, so order flow can never be derived from the candle feed — this
-// adapter deliberately returns null rather than inventing a delta.
+// Alpaca is therefore the only book source in this build, and it needs no extra
+// key: the ALPACA_API_KEY / ALPACA_API_SECRET the index assets already use are
+// enough. It is on by default; set ORDERFLOW_PROVIDER=none to switch the book off.
 //
 // CONTRACT
-//   return a reading  -> the card renders the gauge and the key numbers
-//   return null       -> the card shows "No order flow source configured"
+//   return a quote -> the card renders the book and its pressure percentage
+//   return null    -> the card shows "No order book source configured"
 //
-// `OrderFlowReading` is the exact shape the client expects:
-//   { gauge: { score, label, tally, details }, metrics: { delta, cvd,
-//     imbalance, absorption }, source: 'vendor name' }
-// The score is on the same -100..+100 scale as the other two compasses, and the
-// label must come from labelFromScore so it can never disagree with the score.
+// The key stays server-side: this module reads it, and the browser only ever
+// receives the numbers.
 
-import type { GaugeReading } from '../../src/core/types.js';
+import { fetchAlpacaBook } from './alpaca.js';
+import { alpacaConfigured, alpacaKeyId, alpacaSecretKey } from './futuresShared.js';
+import { assetProvider, assetProviderConfig } from './assets.js';
 
-export interface OrderFlowMetrics {
-  delta: number | null;
-  cvd: number | null;
-  imbalance: number | null;
-  absorption: number | null;
-}
-
-export interface OrderFlowReading {
-  gauge: GaugeReading;
-  metrics: OrderFlowMetrics;
+/** A raw book snapshot, exactly the shape the client builds its reading from. */
+export interface BookQuote {
+  bid: number | null;
+  ask: number | null;
+  bidSize: number | null;
+  askSize: number | null;
+  /** Traded volume over the vendor's reference window (the session). */
+  volume: number | null;
+  /** Vendor-reported source label, for the provenance line. */
   source: string;
+  /** Epoch ms the vendor stamped the quote with. */
+  at: number | null;
 }
 
-export type OrderFlowVendor = 'none' | 'custom';
+export type OrderFlowVendor = 'none' | 'alpaca';
 
-/** Which adapter this deployment is configured to use. */
+/**
+ * Which adapter this deployment is configured to use.
+ *
+ * Alpaca is the default whenever its credentials are present, because it is the
+ * book source for the index assets the app already reads through it; nothing
+ * extra has to be configured. `ORDERFLOW_PROVIDER=none` disables the book.
+ */
 export function resolveOrderFlowVendor(): OrderFlowVendor {
   const raw = (process.env.ORDERFLOW_PROVIDER ?? '').trim().toLowerCase();
-  if (raw === '' || raw === 'none') return 'none';
-  return 'custom';
+  if (raw === 'none') return 'none';
+  if (raw === '' || raw === 'alpaca') return alpacaConfigured() ? 'alpaca' : 'none';
+  // Any other named provider is not wired up in this build; say so rather than
+  // pretending a source exists.
+  return 'none';
 }
 
 /** The vendor key. Read only on the server; never returned to the client. */
 export function orderFlowApiKey(): string | null {
-  const key = (process.env.ORDERFLOW_API_KEY ?? '').trim();
-  return key.length > 0 ? key : null;
+  return alpacaSecretKey();
 }
 
 /**
- * True when a source is configured AND has everything it needs.
+ * True when a book source is configured AND has everything it needs.
  *
- * `custom` without a key is not configured: saying so is more useful than
- * failing later with a vendor error the user cannot act on.
+ * Alpaca without both credentials is not configured: saying so is more useful
+ * than failing later with a vendor error the user cannot act on.
  */
 export function orderFlowConfigured(): boolean {
-  return resolveOrderFlowVendor() === 'custom' && orderFlowApiKey() !== null;
+  return resolveOrderFlowVendor() === 'alpaca';
 }
 
 /** A human label for the configured source, for the provenance line. */
 export function orderFlowLabel(): string {
-  if (!orderFlowConfigured()) return 'None';
-  return (process.env.ORDERFLOW_PROVIDER ?? 'custom').trim();
+  return orderFlowConfigured() ? 'Alpaca (IEX)' : 'None';
 }
 
 /**
- * Fetch a real order-flow reading for one instrument and timeframe.
+ * Read the resting book for one instrument.
  *
- * ── EDIT HERE to connect a vendor ────────────────────────────────────────────
- * Replace the `return null` below with the vendor call and map the response onto
- * `OrderFlowReading`. Return null whenever the vendor has nothing to report; do
- * not synthesise a value. The key is in `orderFlowApiKey()`.
- * ─────────────────────────────────────────────────────────────────────────────
+ * Returns null — never a fabricated quote — when the instrument's provider has no
+ * book (Gold), when the book has no two-sided quote, or when the source is not
+ * configured. The key is in `orderFlowApiKey()`.
  */
-export async function fetchOrderFlowReading(_params: {
+export async function fetchOrderFlowReading(params: {
   instrumentId: string;
   timeframe: string;
   apiKey: string;
   signal?: AbortSignal;
-}): Promise<OrderFlowReading | null> {
-  // No order-flow vendor is wired up in this build. Returning null is the honest
-  // answer: the card says "No order flow source configured" and draws no gauge.
-  return null;
+}): Promise<BookQuote | null> {
+  // Only the asset's own provider can supply its book. Gold reads Twelve Data,
+  // which publishes no book, so it has none — the card says so.
+  if (assetProvider(params.instrumentId) !== 'alpaca') return null;
+
+  const config = assetProviderConfig(params.instrumentId);
+  if (!config) return null;
+
+  const keyId = alpacaKeyId();
+  if (!keyId || !params.apiKey) return null;
+
+  const book = await fetchAlpacaBook({
+    symbol: config.symbol,
+    keyId,
+    secretKey: params.apiKey,
+    signal: params.signal,
+  });
+  if (!book) return null;
+
+  return { ...book, source: `Alpaca (${config.symbol}, IEX)` };
 }

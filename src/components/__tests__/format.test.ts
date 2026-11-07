@@ -5,7 +5,7 @@
 // reader how current a number is, so the wording is pinned down here.
 
 import { describe, expect, it } from 'vitest';
-import { formatAge, formatSigned, formatSignedPercent } from '../compass/format';
+import { formatAge, formatCompact, formatSigned, formatSignedPercent } from '../compass/format';
 
 const NOW = Date.parse('2024-06-10T12:00:00Z');
 
@@ -44,5 +44,13 @@ describe('formatSignedPercent', () => {
     expect(formatSignedPercent(0.42)).toBe('+0.42%');
     expect(formatSignedPercent(-1.5)).toBe('-1.50%');
     expect(formatSignedPercent(0)).toBe('0.00%');
+  });
+});
+
+describe('formatCompact', () => {
+  it('shortens large counts so a volume figure stays readable', () => {
+    expect(formatCompact(1_000)).toBe('1K');
+    expect(formatCompact(12_300_000)).toBe('12.3M');
+    expect(formatCompact(0)).toBe('0');
   });
 });

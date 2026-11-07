@@ -99,6 +99,18 @@ export function cacheTtlForProvider(provider: 'twelvedata' | 'alpaca', timeframe
  */
 export const PRICE_POLL_INTERVAL_MS = 30_000;
 
+/**
+ * How often the resting ORDER BOOK is re-read (ms).
+ *
+ * A book is a snapshot, not a candle, so it has no bar to wait for: this is the
+ * only real-time cadence in the app and it is deliberately the shortest. Each
+ * poll is ONE Alpaca request for one symbol, counted by the Alpaca request meter,
+ * so the number stays modest on purpose — often enough that the pressure
+ * percentage tracks the market, not so often that it eats the request budget the
+ * candles share.
+ */
+export const ORDER_BOOK_POLL_INTERVAL_MS = 5_000;
+
 export function pollIntervalFor(timeframe: Timeframe): number {
   return POLL_INTERVAL_MS[timeframe] ?? 60_000;
 }

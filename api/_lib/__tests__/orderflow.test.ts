@@ -1,11 +1,15 @@
 // ============================================
-// SERVER ORDER FLOW ADAPTER TESTS
+// SERVER ORDER BOOK ADAPTER TESTS
 // ============================================
-// The shipped adapter has no vendor, so its only correct answers are "not
-// configured" and "no reading". These tests lock that in, and check that the
-// configuration is read from the environment the deployment sets.
+// The shipped adapter reads the resting book from Alpaca's snapshot endpoint,
+// because that is the asset's own provider and the only one in this build that
+// publishes a bid/ask book. These tests lock in the honest behaviours:
+//
+//   * no Alpaca credentials -> not configured -> no book
+//   * an instrument whose provider has no book (Gold) -> null, never a fake one
+//   * a configured Alpaca -> the real book, read through the request meter
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchOrderFlowReading,
   orderFlowApiKey,
@@ -13,8 +17,20 @@ import {
   orderFlowLabel,
   resolveOrderFlowVendor,
 } from '../orderflow';
+import { alpacaCallsThisMinute, resetAlpacaMeter } from '../alpacaMeter';
 
-const ENV_KEYS = ['ORDERFLOW_PROVIDER', 'ORDERFLOW_API_KEY'];
+const ENV_KEYS = ['ORDERFLOW_PROVIDER', 'ALPACA_API_KEY', 'ALPACA_API_SECRET'];
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+const SPY_SNAPSHOT = {
+  SPY: {
+    latestQuote: { bp: 512.34, ap: 512.36, bs: 800, as: 200, t: '2024-01-02T15:00:00.123456789Z' },
+    dailyBar: { v: 42_000_000 },
+  },
+};
 
 describe('resolveOrderFlowVendor', () => {
   beforeEach(() => {
@@ -28,14 +44,17 @@ describe('resolveOrderFlowVendor', () => {
     expect(resolveOrderFlowVendor()).toBe('none');
   });
 
-  it('is none when explicitly set to none', () => {
-    process.env.ORDERFLOW_PROVIDER = 'none';
-    expect(resolveOrderFlowVendor()).toBe('none');
+  it('is alpaca by default once Alpaca is configured', () => {
+    process.env.ALPACA_API_KEY = 'key';
+    process.env.ALPACA_API_SECRET = 'secret';
+    expect(resolveOrderFlowVendor()).toBe('alpaca');
   });
 
-  it('is custom for any named provider', () => {
-    process.env.ORDERFLOW_PROVIDER = 'MyFeed';
-    expect(resolveOrderFlowVendor()).toBe('custom');
+  it('is none when explicitly switched off, even with credentials', () => {
+    process.env.ALPACA_API_KEY = 'key';
+    process.env.ALPACA_API_SECRET = 'secret';
+    process.env.ORDERFLOW_PROVIDER = 'none';
+    expect(resolveOrderFlowVendor()).toBe('none');
   });
 });
 
@@ -47,31 +66,82 @@ describe('orderFlowConfigured', () => {
     for (const key of ENV_KEYS) delete process.env[key];
   });
 
-  it('is false with no provider, and false with a provider but no key', () => {
+  it('is false with no credentials', () => {
     expect(orderFlowConfigured()).toBe(false);
-    process.env.ORDERFLOW_PROVIDER = 'MyFeed';
-    expect(orderFlowConfigured()).toBe(false);
+    expect(orderFlowLabel()).toBe('None');
+    expect(orderFlowApiKey()).toBeNull();
   });
 
-  it('is true only with both a provider and a key', () => {
-    process.env.ORDERFLOW_PROVIDER = 'MyFeed';
-    process.env.ORDERFLOW_API_KEY = 'secret';
+  it('is true only with both Alpaca credentials', () => {
+    process.env.ALPACA_API_KEY = 'key';
+    expect(orderFlowConfigured()).toBe(false);
+    process.env.ALPACA_API_SECRET = 'secret';
     expect(orderFlowConfigured()).toBe(true);
     expect(orderFlowApiKey()).toBe('secret');
-    expect(orderFlowLabel()).toBe('MyFeed');
-  });
-
-  it('reports the label as None when nothing is configured', () => {
-    expect(orderFlowLabel()).toBe('None');
+    expect(orderFlowLabel()).toBe('Alpaca (IEX)');
   });
 });
 
 describe('fetchOrderFlowReading', () => {
-  it('returns no reading, because no order-flow vendor is wired up', async () => {
-    // This is the honest answer, not a placeholder. Twelve Data carries no
-    // order-flow data, so a candle-derived delta would be a fabrication.
-    await expect(
-      fetchOrderFlowReading({ instrumentId: 'GC', timeframe: '15m', apiKey: 'secret' })
-    ).resolves.toBeNull();
+  beforeEach(() => {
+    resetAlpacaMeter();
+    vi.restoreAllMocks();
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetAlpacaMeter();
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+
+  it('reads the real book for an Alpaca-backed instrument', async () => {
+    process.env.ALPACA_API_KEY = 'key';
+    process.env.ALPACA_API_SECRET = 'secret';
+    vi.stubGlobal('fetch', async () => jsonResponse(SPY_SNAPSHOT));
+
+    const book = await fetchOrderFlowReading({ instrumentId: 'ES', timeframe: '15m', apiKey: 'secret' });
+
+    expect(book).not.toBeNull();
+    expect(book).toMatchObject({
+      bid: 512.34,
+      ask: 512.36,
+      bidSize: 800,
+      askSize: 200,
+      volume: 42_000_000,
+    });
+    expect(book?.at).toBe(Date.parse('2024-01-02T15:00:00.123Z'));
+    expect(book?.source).toContain('SPY');
+  });
+
+  it('returns no book for Gold, whose provider publishes no book', async () => {
+    process.env.ALPACA_API_KEY = 'key';
+    process.env.ALPACA_API_SECRET = 'secret';
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchOrderFlowReading({ instrumentId: 'GC', timeframe: '15m', apiKey: 'secret' })).resolves.toBeNull();
+    // No vendor call is made for an instrument with no book source.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns no book for a one-sided or empty quote rather than a zero', async () => {
+    process.env.ALPACA_API_KEY = 'key';
+    process.env.ALPACA_API_SECRET = 'secret';
+    vi.stubGlobal('fetch', async () =>
+      jsonResponse({ SPY: { latestQuote: { bp: 512.34, bs: 800, t: '2024-01-02T15:00:00Z' } } })
+    );
+
+    await expect(fetchOrderFlowReading({ instrumentId: 'ES', timeframe: '15m', apiKey: 'secret' })).resolves.toBeNull();
+  });
+
+  it('counts the snapshot call against the Alpaca request meter', async () => {
+    process.env.ALPACA_API_KEY = 'key';
+    process.env.ALPACA_API_SECRET = 'secret';
+    vi.stubGlobal('fetch', async () => jsonResponse(SPY_SNAPSHOT));
+
+    await fetchOrderFlowReading({ instrumentId: 'ES', timeframe: '15m', apiKey: 'secret' });
+
+    // The meter is shared with the candle calls; one snapshot is one request.
+    expect(alpacaCallsThisMinute()).toBe(1);
   });
 });

@@ -21,6 +21,7 @@ export {
   SERVER_CACHE_TTL_MS,
   ALPACA_SERVER_CACHE_TTL_MS,
   PRICE_POLL_INTERVAL_MS,
+  ORDER_BOOK_POLL_INTERVAL_MS,
   pollIntervalFor,
   cacheTtlFor,
   cacheTtlForProvider,

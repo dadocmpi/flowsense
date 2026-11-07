@@ -268,7 +268,7 @@ describe('buildSummaryGauge', () => {
     expect(summary.score).toBe(64);
   });
 
-  it('blends the technical read with order flow when a source is present', () => {
+  it('blends the technical read with the order book when a source is present', () => {
     const summary = buildSummaryGauge(gauge(100), gauge(0), DEFAULT_COMPASS_CONFIG);
     expect(summary.score).toBe(50);
     expect(summary.label).toBe('BUY');

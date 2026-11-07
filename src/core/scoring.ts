@@ -150,9 +150,9 @@ export function buildTechnicalGauge(
 }
 
 /**
- * The CENTER "Summary" gauge: the technical reading blended with order flow.
+ * The CENTER "Summary" gauge: the technical reading blended with the order book.
  *
- * With no order-flow source configured there is nothing to blend, so the summary
+ * With no order-book source configured there is nothing to blend, so the summary
  * is the technical gauge itself — never a zero-filled stand-in. The UI labels
  * that case rather than pretending a second input exists.
  */

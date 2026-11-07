@@ -112,3 +112,8 @@ export function formatSigned(value: number, precision: number): string {
 export function formatSignedPercent(value: number, precision = 2): string {
   return `${value > 0 ? '+' : ''}${value.toFixed(precision)}%`;
 }
+
+/** A large count in compact form, e.g. 12.3M. Used for traded volume. */
+export function formatCompact(value: number): string {
+  return value.toLocaleString(undefined, { notation: 'compact', maximumFractionDigits: 1 });
+}

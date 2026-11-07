@@ -57,7 +57,18 @@ function orderFlow(score: number): OrderFlowReading {
       tally: { buy: 1, neutral: 0, sell: 0 },
       details: [],
     },
-    metrics: { delta: 120, cvd: 480, imbalance: 0.3, absorption: 0.25 },
+    metrics: {
+      bid: 2400,
+      ask: 2400.5,
+      bidSize: 120,
+      askSize: 80,
+      mid: 2400.25,
+      spread: 0.5,
+      spreadPercent: 0.02,
+      bidSharePercent: 60,
+      imbalance: 0.3,
+      volume: 480_000,
+    },
     source: 'test',
   };
 }
