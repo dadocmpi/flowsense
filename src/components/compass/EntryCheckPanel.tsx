@@ -20,7 +20,7 @@ import type { EntryCheckResult, EntryDirection } from '../../core/entryCheck';
 import { verdictWord } from '../../core/entryCheck';
 import type { ScoreLabel, Timeframe } from '../../core/types';
 import { TIMEFRAME_LABELS } from '../../core/types';
-import { formatAge, labelShort } from './format';
+import { labelShort } from './format';
 import { cn } from '@/lib/utils';
 
 /** One timeframe's stored summary reading, or null when it is not loaded. */
@@ -39,8 +39,6 @@ interface EntryCheckPanelProps {
   direction: EntryDirection;
   onDirectionChange: (direction: EntryDirection) => void;
   chips: EntryChip[];
-  /** Epoch ms, for the chip ages. */
-  now: number;
   /** Name of the timeframe the verdict was computed for. */
   timeframeLabel: string;
 }
@@ -79,7 +77,6 @@ export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({
   direction,
   onDirectionChange,
   chips,
-  now,
   timeframeLabel,
 }) => {
   const style = VERDICT_STYLE[result.verdict];
@@ -167,9 +164,6 @@ export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({
               >
                 <span className="text-label font-bold text-amber-300/90">{label}</span>
                 <span className="text-micro text-amber-300/70">Market closed</span>
-                <span className="text-[0.5625rem] uppercase tracking-wide text-white/35">
-                  {formatAge(chip.updatedAt, now)}
-                </span>
               </div>
             );
           }
@@ -196,9 +190,6 @@ export const EntryCheckPanel: React.FC<EntryCheckPanelProps> = ({
               <span className="text-label font-bold">{label}</span>
               <span className="text-micro">
                 {labelShort(chip.scoreLabel)} · {STANCE_WORD[stance]}
-              </span>
-              <span className="text-[0.5625rem] uppercase tracking-wide text-white/35">
-                {formatAge(chip.updatedAt, now)}
               </span>
             </div>
           );
