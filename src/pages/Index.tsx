@@ -304,18 +304,19 @@ const Index: React.FC = () => {
   const changeLabel = frame?.changeBasis === 'SESSION' ? 'Session' : 'Window';
 
   const flowProvenance = useMemo(() => {
+    const venueName = (venue: string) =>
+      venue === 'alpaca' ? 'Alpaca' : venue === 'binance' ? 'Binance' : venue === 'none' ? 'Off' : venue;
     const reading = orderFlow.reading;
-    if (!reading) return orderFlow.probe?.label ?? 'Order flow';
-    const venueName =
-      reading.provider === 'alpaca'
-        ? 'Alpaca'
-        : reading.provider === 'binance'
-          ? 'Binance'
-          : orderFlow.probe?.label ?? reading.provider ?? '';
-    const parts = [reading.instrument ?? instrument.providerSymbol, venueName];
+    if (!reading) {
+      // No reading yet: name the venue that WOULD serve this asset, not the
+      // build's overall label, so the header never implies the wrong source.
+      const venue = orderFlow.venue;
+      return venue && venue !== 'none' ? venueName(venue) : orderFlow.probe?.label ?? 'Order flow';
+    }
+    const parts = [reading.instrument ?? instrument.providerSymbol, venueName(reading.provider)];
     if (reading.feed) parts.push(reading.feed.toUpperCase());
     return parts.filter(Boolean).join(' · ');
-  }, [orderFlow.reading, orderFlow.probe, instrument.providerSymbol]);
+  }, [orderFlow.reading, orderFlow.venue, orderFlow.probe, instrument.providerSymbol]);
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-app font-sans text-ink">
