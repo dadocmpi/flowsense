@@ -1,17 +1,17 @@
 // ============================================
 // TECHNICAL TABLE (merged)
 // ============================================
-// ONE table holding the moving averages and the oscillators: name, value and
-// state. There is no second table, and the two blocks are laid out side by side
-// so the whole read fits without scrolling.
+// ONE table holding the moving averages and the oscillators: name, value, state.
+// The state word comes from the same Vote the score used, so the table and the
+// compass above it cannot disagree.
 //
-// The state word is derived from the same Vote the score used, so the table and
-// the compass above it cannot disagree.
+// VISIBILITY IS COSMETIC. Rows whose id is hidden in src/config/indicators.ts
+// are not rendered — but the indicator still votes and still feeds the Compass
+// and the Summary. The hidden rows are listed in the "Compass inputs" drawer.
 
 import React from 'react';
 import type { VoteDetail } from '../../core/types';
-import { voteTextColor, voteWord } from './format';
-import { cn } from '@/lib/utils';
+import { voteColor, voteWord } from './format';
 
 interface TechnicalTableProps {
   details: VoteDetail[];
@@ -22,24 +22,23 @@ function Rows({ rows }: { rows: VoteDetail[] }) {
   if (rows.length === 0) {
     return (
       <tr>
-        <td colSpan={3} className="py-2 text-label italic text-white/35">
+        <td colSpan={3} className="py-2 text-label text-ink-subtle">
           No data
         </td>
       </tr>
     );
   }
-
   return (
     <>
       {rows.map(detail => (
-        <tr key={detail.name} className="border-b border-white/[0.04] last:border-0">
-          <td className="py-[2px] pr-2 text-micro text-white/75">
+        <tr key={detail.name} className="border-b border-line/50 last:border-0">
+          <td className="py-[2px] pr-2 text-micro text-ink-muted">
             <span className="block truncate" title={detail.note ?? detail.name}>
               {detail.name}
             </span>
           </td>
-          <td className="py-[2px] px-2 text-right font-mono text-micro text-white/90">{detail.display}</td>
-          <td className={cn('py-[2px] pl-2 text-right text-micro font-bold', voteTextColor(detail.vote))}>
+          <td className="px-2 py-[2px] text-right font-mono text-micro tabular text-ink">{detail.display}</td>
+          <td className="py-[2px] pl-2 text-right text-micro font-medium" style={{ color: voteColor(detail.vote) }}>
             {voteWord(detail.vote)}
           </td>
         </tr>
@@ -48,47 +47,38 @@ function Rows({ rows }: { rows: VoteDetail[] }) {
   );
 }
 
+function Block({ title, rows }: { title: string; rows: VoteDetail[] }) {
+  return (
+    <div>
+      <h4 className="mb-0.5 text-micro font-semibold uppercase tracking-[0.08em] text-ink-subtle">{title}</h4>
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-line text-left text-micro uppercase tracking-[0.06em] text-ink-subtle">
+            <th className="py-0.5 pr-2 font-medium">Indicator</th>
+            <th className="px-2 py-0.5 text-right font-medium">Value</th>
+            <th className="py-0.5 pl-2 text-right font-medium">State</th>
+          </tr>
+        </thead>
+        <tbody>
+          <Rows rows={rows} />
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export const TechnicalTable: React.FC<TechnicalTableProps> = ({ details, emptyText = 'No data' }) => {
   if (details.length === 0) {
-    return <p className="py-3 text-label italic text-white/40">{emptyText}</p>;
+    return <p className="py-3 text-label text-ink-subtle">{emptyText}</p>;
   }
 
   const movingAverages = details.filter(detail => detail.group === 'MA');
-  const oscillators = details.filter(detail => detail.group !== 'MA');
+  const oscillators = details.filter(detail => detail.group !== 'MA' && detail.group !== 'ORDER_FLOW');
 
   return (
     <div className="grid grid-cols-1 gap-x-8 gap-y-2 md:grid-cols-2">
-      <div>
-        <h4 className="text-micro font-semibold uppercase tracking-wider text-white/40">Moving averages</h4>
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-white/[0.08] text-left text-micro uppercase tracking-wider text-white/35">
-              <th className="py-0.5 pr-2 font-semibold">Indicator</th>
-              <th className="py-0.5 px-2 text-right font-semibold">Value</th>
-              <th className="py-0.5 pl-2 text-right font-semibold">State</th>
-            </tr>
-          </thead>
-          <tbody>
-            <Rows rows={movingAverages} />
-          </tbody>
-        </table>
-      </div>
-
-      <div>
-        <h4 className="text-micro font-semibold uppercase tracking-wider text-white/40">Oscillators</h4>
-        <table className="w-full border-collapse">
-          <thead>
-            <tr className="border-b border-white/[0.08] text-left text-micro uppercase tracking-wider text-white/35">
-              <th className="py-0.5 pr-2 font-semibold">Indicator</th>
-              <th className="py-0.5 px-2 text-right font-semibold">Value</th>
-              <th className="py-0.5 pl-2 text-right font-semibold">State</th>
-            </tr>
-          </thead>
-          <tbody>
-            <Rows rows={oscillators} />
-          </tbody>
-        </table>
-      </div>
+      <Block title="Moving averages" rows={movingAverages} />
+      <Block title="Oscillators" rows={oscillators} />
     </div>
   );
 };

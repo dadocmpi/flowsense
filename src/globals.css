@@ -99,3 +99,59 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ── Institutional terminal base ───────────────────────────────────────────
+   A dense, sober base for a risk/trading terminal: near-black graphite, hairline
+   borders, tabular numerals everywhere numbers appear. */
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-base-0 text-ink antialiased;
+    font-feature-settings: 'cv05' 1, 'ss01' 1;
+  }
+
+  /* Every number in the app aligns: fixed-width digits, no jitter on tick. */
+  .font-mono,
+  table,
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Keyboard focus is always visible, and never a default glow. */
+  :focus-visible {
+    outline: 1px solid #5b8def;
+    outline-offset: 1px;
+  }
+}
+
+/* Consistent, quiet scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2e35 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a2e35;
+  border-radius: 2px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Motion is a refinement, never a requirement. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

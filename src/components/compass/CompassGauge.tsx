@@ -1,110 +1,90 @@
 // ============================================
-// COMPASS GAUGE
+// COMPASS GAUGE (flat, restrained)
 // ============================================
-// A half-circle needle gauge on the signed -100..+100 scale.
-//
-// The needle angle, the colour it points into and the label all come from the
-// same score through the same functions in core/scoring, so the label can
-// never disagree with the needle.
+// A thin half-arc on the signed -100..+100 scale with a numeric readout. No
+// needle flourish, no glow: a hairline track, a single directional marker, and
+// the score in mono. The label always comes from the same score, so they cannot
+// disagree.
 
-import React, { useId } from 'react';
+import React from 'react';
 import type { GaugeReading } from '../../core/types';
-import { labelShort, labelTextColor, scoreColor } from './format';
-import { cn } from '@/lib/utils';
+import { labelShort, labelColor } from './format';
+import { scoreColor, PALETTE } from '../common/palette';
 
 interface CompassGaugeProps {
-  /** Heading above the gauge. Omitted when the surrounding card already titles it. */
-  title?: string;
   gauge: GaugeReading;
-  /** Rendered smaller for the compact matrix. */
-  size?: 'sm' | 'md' | 'lg';
   /** Show the Buy / Neutral / Sell vote counts under the gauge. */
   showTally?: boolean;
+  /** Compact mode for the tighter cards. */
+  compact?: boolean;
 }
 
-const SIZES = {
-  sm: { width: 128, arc: 84, stroke: 9, needle: 62, font: 'text-label', tally: 'text-micro', render: 132 },
-  md: { width: 176, arc: 112, stroke: 11, needle: 82, font: 'text-title', tally: 'text-label', render: 170 },
-  lg: { width: 224, arc: 142, stroke: 13, needle: 104, font: 'text-title', tally: 'text-label', render: 224 },
-};
+const W = 168;
+const H = 96;
+const CX = W / 2;
+const CY = 84;
+const R = 66;
 
-export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size = 'md', showTally = true }) => {
-  const heading = title ?? '';
-  // Unique per instance: the three compasses share one page, and a duplicated
-  // gradient id would make them all reference whichever painted last.
-  const gradientId = `gaugeArc-${useId().replace(/:/g, '')}`;
-  const dims = SIZES[size];
+/** Point on the arc for a score in -100..+100 (left .. right). */
+function arcPoint(score: number, radius: number): { x: number; y: number } {
+  const angle = Math.PI * (1 - (Math.max(-100, Math.min(100, score)) + 100) / 200);
+  return { x: CX + radius * Math.cos(angle), y: CY - radius * Math.sin(angle) };
+}
+
+function arcPath(radius: number, from: number, to: number): string {
+  const a = arcPoint(from, radius);
+  const b = arcPoint(to, radius);
+  return `M ${a.x.toFixed(2)} ${a.y.toFixed(2)} A ${radius} ${radius} 0 0 1 ${b.x.toFixed(2)} ${b.y.toFixed(2)}`;
+}
+
+export const CompassGauge: React.FC<CompassGaugeProps> = ({ gauge, showTally = true, compact = false }) => {
   const score = Math.max(-100, Math.min(100, gauge.score));
-  const angle = (score / 100) * 90; // -90..+90 degrees
+  const marker = arcPoint(score, R);
   const color = scoreColor(score);
-  const width = dims.width;
-  const height = width / 2 + 18;
-  const cx = width / 2;
-  const cy = width / 2;
-  const r = dims.arc / 2;
-
-  // Arc from 180deg to 0deg (left to right).
-  const describeArc = (radius: number) => `M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${cx + radius} ${cy}`;
 
   return (
     <div className="flex flex-col items-center">
-      {heading && (
-        <span className="text-micro font-semibold uppercase tracking-wider text-white/40">{heading}</span>
-      )}
-
       <svg
-        viewBox={`0 0 ${width} ${height}`}
-        style={{ maxWidth: dims.render }}
-        className="w-full"
+        viewBox={`0 0 ${W} ${H}`}
+        className={compact ? 'w-[132px]' : 'w-[168px]'}
         role="img"
-        aria-label={`${heading || 'Compass'}: ${labelShort(gauge.label)} (score ${Math.round(score)})`}
+        aria-label={`Compass: ${labelShort(gauge.label)} (score ${Math.round(score)})`}
       >
-        <defs>
-          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#ef5350" />
-            <stop offset="25%" stopColor="#e57373" />
-            <stop offset="50%" stopColor="#f59e0b" />
-            <stop offset="75%" stopColor="#4db6ac" />
-            <stop offset="100%" stopColor="#26a69a" />
-          </linearGradient>
-        </defs>
-
-        <path d={describeArc(r)} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={dims.stroke} strokeLinecap="round" />
-        <path
-          d={describeArc(r)}
-          fill="none"
-          stroke={`url(#${gradientId})`}
-          strokeWidth={dims.stroke}
-          strokeLinecap="round"
-          opacity="0.9"
-        />
-
-        {/* Needle */}
-        <g
-          style={{
-            transform: `rotate(${angle}deg)`,
-            transformOrigin: `${cx}px ${cy}px`,
-            transformBox: 'view-box',
-            transition: 'transform 700ms cubic-bezier(0.22, 1, 0.36, 1)',
-          }}
+        {/* Track, then the coloured arc up to the score. */}
+        <path d={arcPath(R, -100, 100)} fill="none" stroke={PALETTE.line} strokeWidth="6" strokeLinecap="butt" />
+        <path d={arcPath(R, -100, score)} fill="none" stroke={color} strokeWidth="6" strokeLinecap="butt" />
+        {/* Scale ticks at -100, 0, +100. */}
+        {[-100, 0, 100].map(t => {
+          const p = arcPoint(t, R - 8);
+          return <circle key={t} cx={p.x} cy={p.y} r="1.4" fill={PALETTE.inkSubtle} />;
+        })}
+        {/* The score marker. */}
+        <circle cx={marker.x} cy={marker.y} r="3.4" fill={color} />
+        <circle cx={marker.x} cy={marker.y} r="1.2" fill={PALETTE.base1} />
+        <text
+          x={CX}
+          y={CY - 6}
+          textAnchor="middle"
+          className="font-mono"
+          fontSize="22"
+          fontWeight="600"
+          fill={color}
         >
-          <polygon
-            points={`${cx},${cy - dims.needle} ${cx + 4},${cy} ${cx - 4},${cy}`}
-            fill={color}
-          />
-        </g>
-        <circle cx={cx} cy={cy} r="5" fill="#07080a" stroke={color} strokeWidth="2" />
+          {score >= 0 ? '+' : ''}
+          {Math.round(score)}
+        </text>
+        <text x={CX} y={CY + 10} textAnchor="middle" fontSize="9.5" letterSpacing="0.08em" fill={PALETTE.inkSubtle}>
+          {labelShort(gauge.label).toUpperCase()}
+        </text>
       </svg>
 
-      <span className={cn('mt-1 font-bold', dims.font, labelTextColor(gauge.label))}>{labelShort(gauge.label)}</span>
-
       {showTally && (
-        <div className={cn('mt-1 flex items-center gap-2 font-mono', dims.tally)}>
-          <span className="text-[#4db6ac]">B {gauge.tally.buy}</span>
-          <span className="text-white/35">·</span>
-          <span className="text-amber-400">N {gauge.tally.neutral}</span>
-          <span className="text-white/35">·</span>
-          <span className="text-[#e57373]">S {gauge.tally.sell}</span>
+        <div className="mt-0.5 flex items-center gap-2 font-mono text-micro">
+          <span style={{ color: PALETTE.pos }}>B {gauge.tally.buy}</span>
+          <span className="text-ink-subtle">·</span>
+          <span className="text-ink-muted">N {gauge.tally.neutral}</span>
+          <span className="text-ink-subtle">·</span>
+          <span style={{ color: PALETTE.neg }}>S {gauge.tally.sell}</span>
         </div>
       )}
     </div>
