@@ -1,46 +1,47 @@
 // ============================================
-// ORDER-FLOW PROVIDER CAPABILITIES
+// ORDER-FLOW CAPABILITIES
 // ============================================
-// A provider does not only differ in WHERE it gets candles; it differs in what it
-// can honestly supply for the order-flow panel. Twelve Data publishes no resting
-// bid/ask book and often no usable volume for XAU/USD; Alpaca carries real traded
-// volume. Encoding that as a capability lets the UI decide what to enable without
-// a per-vendor branch:
+// The order-flow panel offers two modes: Order Flow (the tape: aggressor delta
+// and CVD) and Book Flow (the resting bid/ask book). Whether Book Flow can be
+// offered is a fact about the VENUE, not a guess: a venue that publishes a
+// resting book can, and one that does not cannot.
 //
-//   hasOrderBook  true  -> the Book Flow mode can be offered
-//                 false -> Book Flow is disabled with a hint, never an error
-//   hasVolume     true  -> the estimate's activity weight can use candle volume
-//                 false -> the estimate falls back to a range-based proxy
+// Encoding that as a capability lets the UI decide whether to render the toggle
+// without a per-vendor branch, and never hardcodes it:
 //
-// The estimate auto-detects the proxy from the candles themselves, so `hasVolume`
-// is a declared hint rather than a hard switch; `hasOrderBook` is what gates the
-// Book Flow mode. A future provider with a real book sets `hasOrderBook: true`
-// and Book Flow lights up with no UI change.
+//   hasOrderBook  true  -> the Book Flow toggle is rendered and functional
+//                 false -> no toggle at all (not a disabled one)
+//   hasVolume     true  -> the venue's tape carries real traded quantity
+//                 false -> no volume on this venue
+//
+// The venue is reported by the server (the order-flow probe), so adding a venue
+// with a real book is a capabilities entry plus a server adapter, with no UI
+// change.
 
-import type { Instrument, ProviderId } from '../instruments';
+/** The order-flow venues this build understands. */
+export type OrderFlowVenue = 'none' | 'binance' | 'custom';
 
 export interface OrderFlowCapabilities {
-  /** The provider publishes a real resting bid/ask book. */
+  /** The venue publishes a real resting bid/ask book. */
   hasOrderBook: boolean;
-  /** The provider's candles carry a usable traded volume. */
+  /** The venue's tape carries a usable traded quantity. */
   hasVolume: boolean;
 }
 
-/** What each vendor can honestly supply. */
-export const VENDOR_ORDER_FLOW_CAPABILITIES: Record<ProviderId, OrderFlowCapabilities> = {
-  // Twelve Data: no order book, and often empty/zero volume for XAU/USD.
-  twelvedata: { hasOrderBook: false, hasVolume: false },
-  // Alpaca: real traded volume. This build wires no book route, so a book is not
-  // offered yet; a future adapter sets this true and Book Flow appears.
-  alpaca: { hasOrderBook: false, hasVolume: true },
+/** What each venue can honestly supply. */
+export const VENUE_ORDER_FLOW_CAPABILITIES: Record<OrderFlowVenue, OrderFlowCapabilities> = {
+  // No source at all: no tape and no book.
+  none: { hasOrderBook: false, hasVolume: false },
+  // Binance publishes a real depth book and a tape with the aggressor side.
+  binance: { hasOrderBook: true, hasVolume: true },
+  // A named vendor we have not implemented: assume the honest minimum.
+  custom: { hasOrderBook: false, hasVolume: false },
 };
 
-/** Capabilities for a provider id, defaulting to the honest minimum. */
-export function orderFlowCapabilitiesForProvider(providerId: ProviderId): OrderFlowCapabilities {
-  return VENDOR_ORDER_FLOW_CAPABILITIES[providerId] ?? { hasOrderBook: false, hasVolume: false };
-}
-
-/** Capabilities for an instrument, from the provider that serves it. */
-export function orderFlowCapabilitiesFor(instrument: Instrument): OrderFlowCapabilities {
-  return orderFlowCapabilitiesForProvider(instrument.providerId);
+/** Capabilities for a venue id, defaulting to the honest minimum. */
+export function orderFlowCapabilitiesForVenue(venue: string | null | undefined): OrderFlowCapabilities {
+  if (venue === 'binance' || venue === 'none' || venue === 'custom') {
+    return VENUE_ORDER_FLOW_CAPABILITIES[venue];
+  }
+  return { hasOrderBook: false, hasVolume: false };
 }

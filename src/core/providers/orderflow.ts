@@ -39,6 +39,18 @@ export interface OrderFlowContext {
   signal?: AbortSignal;
 }
 
+/**
+ * The outcome of asking a venue for a reading.
+ *
+ * `reading` is null when there is nothing real to show; `note` then carries the
+ * venue's own reason (e.g. "No Binance market for ES."), so the card can say why
+ * instead of a generic message. A note is never a substitute for a reading.
+ */
+export interface OrderFlowResult {
+  reading: OrderFlowReading | null;
+  note: string | null;
+}
+
 export interface OrderFlowProvider {
   readonly id: OrderFlowProviderId;
   readonly label: string;
@@ -50,7 +62,7 @@ export interface OrderFlowProvider {
    * Returning null is the honest answer for an unconfigured or silent source;
    * an adapter must never substitute a placeholder.
    */
-  getReading(context: OrderFlowContext): Promise<OrderFlowReading | null>;
+  getReading(context: OrderFlowContext): Promise<OrderFlowResult>;
 }
 
 /** The shipped adapter: no order-flow source, so no reading. */
@@ -58,7 +70,7 @@ export const noneOrderFlowProvider: OrderFlowProvider = {
   id: 'none',
   label: 'None',
   isConfigured: () => false,
-  getReading: async () => null,
+  getReading: async () => ({ reading: null, note: null }),
 };
 
 /**
@@ -73,7 +85,7 @@ export const httpOrderFlowProvider: OrderFlowProvider = {
   label: 'Server order flow',
   isConfigured: () => configuredOrderFlow,
   async getReading({ instrument, timeframe, signal }) {
-    if (!configuredOrderFlow) return null;
+    if (!configuredOrderFlow) return { reading: null, note: null };
 
     const params = new URLSearchParams({ instrument: instrument.id, timeframe });
     let response: Response;
@@ -84,19 +96,19 @@ export const httpOrderFlowProvider: OrderFlowProvider = {
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      return null;
+      return { reading: null, note: 'Could not reach the order flow route.' };
     }
 
-    let payload: { reading?: OrderFlowReading | null } | null = null;
+    let payload: { reading?: OrderFlowReading | null; note?: string | null } | null = null;
     try {
-      payload = (await response.json()) as { reading?: OrderFlowReading | null };
+      payload = (await response.json()) as { reading?: OrderFlowReading | null; note?: string | null };
     } catch {
-      return null;
+      return { reading: null, note: 'The order flow route returned an unreadable body.' };
     }
 
     // A source that has nothing to report says so with null; we do not turn that
-    // into a reading.
-    return payload?.reading ?? null;
+    // into a reading, but we do keep its reason.
+    return { reading: payload?.reading ?? null, note: payload?.note ?? null };
   },
 };
 
@@ -133,6 +145,8 @@ export interface OrderFlowProbeResult {
   configured: boolean;
   provider: OrderFlowProviderId;
   label: string;
+  /** The configured venue id, e.g. "binance" or "none". */
+  venue: string;
   /** Why it is unavailable, when it is. */
   note: string | null;
   /** False when the route could not be reached at all. */
@@ -171,12 +185,13 @@ async function runOrderFlowProbe(): Promise<OrderFlowProbeResult> {
   try {
     const response = await fetch('/api/orderflow/reading', { headers: { Accept: 'application/json' } });
     if (!response.ok) {
-      return { configured: false, provider: 'none', label: 'None', note: `Order flow route returned HTTP ${response.status}`, reachable: false };
+      return { configured: false, provider: 'none', label: 'None', venue: 'none', note: `Order flow route returned HTTP ${response.status}`, reachable: false };
     }
     const payload = (await response.json()) as {
       configured?: boolean;
       provider?: string;
       label?: string;
+      venue?: string;
       note?: string;
     };
     const provider: OrderFlowProviderId = payload.provider === 'http' ? 'http' : 'none';
@@ -184,11 +199,12 @@ async function runOrderFlowProbe(): Promise<OrderFlowProbeResult> {
       configured: payload.configured === true,
       provider,
       label: payload.label ?? 'None',
+      venue: payload.venue ?? 'none',
       note: payload.note ?? null,
       reachable: true,
     };
   } catch {
-    return { configured: false, provider: 'none', label: 'None', note: 'Could not reach the order flow route', reachable: false };
+    return { configured: false, provider: 'none', label: 'None', venue: 'none', note: 'Could not reach the order flow route', reachable: false };
   }
 }
 

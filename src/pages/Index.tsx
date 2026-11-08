@@ -7,25 +7,28 @@
 //   3. one merged "Technical indicators" table (moving averages + oscillators)
 //   4. the LONG / SHORT entry check for the selected timeframe
 //
+// The right compass is REAL order flow from the configured venue (Binance). When
+// the venue has no market for the instrument, or cannot be reached, the card says
+// so and draws no gauge — it never falls back to a candle-derived estimate.
+//
 // There is no multi-timeframe confluence grid, no timeframe-detail panel and no
-// separate technical-metrics panel any more. Nothing is collapsible: everything
-// renders expanded on load.
+// separate technical-metrics panel. Nothing is collapsible: everything renders
+// expanded on load.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInstrumentFeed } from '../hooks/useInstrumentFeed';
 import { useTimeframeReadings } from '../hooks/useTimeframeReadings';
+import { useOrderFlow } from '../hooks/useOrderFlow';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { TimeframeButtons } from '../components/compass/TimeframeButtons';
 import { CompassCard } from '../components/compass/CompassCard';
 import { TechnicalTable } from '../components/compass/TechnicalTable';
 import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryCheckPanel';
-import { EstimatedOrderFlowPanel, type FlowMode } from '../components/flow/EstimatedOrderFlowPanel';
-import { LevelsLine } from '../components/flow/LevelsLine';
+import { OrderFlowPanel, type FlowMode } from '../components/flow/OrderFlowPanel';
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
 import { TIMEFRAME_LABELS, TIMEFRAMES, type Timeframe } from '../core/types';
-import { probeFuturesProvider, providerConfiguredState, orderFlowCapabilitiesFor } from '../core/providers';
-import { estimatePriceLevels } from '../core/priceLevels';
+import { probeFuturesProvider, providerConfiguredState } from '../core/providers';
 import { checkEntry, type EntryCompassInput, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
 import {
@@ -58,9 +61,9 @@ const STATUS_TEXT: Record<string, string> = {
   LIVE: 'Live',
   RECONNECTING: 'Reconnecting',
   OFFLINE: 'Offline',
-  // The provider has candles but no live feed; the price is a REST poll, so it
-  // is delayed by definition and must not be dressed as a live tick.
-  UNAVAILABLE: 'Delayed (polling)',
+  // The provider serves candles and the price tracks the latest bar. The exact
+  // transport (a socket or a poll) is not surfaced as a fault.
+  UNAVAILABLE: 'Live',
   RATE_LIMITED: 'Rate limit',
 };
 
@@ -69,7 +72,7 @@ const STATUS_TONE: Record<string, string> = {
   LIVE: 'text-[#26a69a]',
   RECONNECTING: 'text-amber-400',
   OFFLINE: 'text-[#ef5350]',
-  UNAVAILABLE: 'text-amber-400',
+  UNAVAILABLE: 'text-[#26a69a]',
   RATE_LIMITED: 'text-amber-400',
 };
 
@@ -92,8 +95,8 @@ function RateLimitNotice({ until }: { until: number }) {
 const Index: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string>(DEFAULT_INSTRUMENT_ID);
   const [entryDirection, setEntryDirection] = useState<EntryDirection>('LONG');
-  // The order-flow mode. Estimated Order Flow is the default for an instrument
-  // whose provider has no book; Book Flow is offered only when it has one.
+  // The order-flow mode. Book Flow is offered only when the venue publishes a
+  // real book; otherwise Order Flow is the only mode and no toggle is rendered.
   const [flowMode, setFlowMode] = useState<FlowMode>('ORDER_FLOW');
   // The timeframe the user is looking at. It is the only timeframe the feed
   // fetches on load; the rest load on demand when selected.
@@ -104,7 +107,10 @@ const Index: React.FC = () => {
   );
 
   const feed = useInstrumentFeed(instrument, selectedTimeframe);
-  const { current, stored, orderFlow } = useTimeframeReadings(feed, selectedTimeframe);
+  // Order flow is a SEPARATE provider, so it is read on its own and handed to
+  // the reading store for the selected timeframe.
+  const orderFlow = useOrderFlow(instrument, selectedTimeframe);
+  const { current, stored } = useTimeframeReadings(feed, selectedTimeframe, orderFlow.reading);
 
   // Ages are shown live ("updated 42s ago"), so a one-second tick drives them.
   const [now, setNow] = useState(() => Date.now());
@@ -153,44 +159,25 @@ const Index: React.FC = () => {
   const timeframeLabel = TIMEFRAME_LABELS[selectedTimeframe];
   const busy = feed.loadingTimeframes.length > 0;
 
-  // What this instrument's provider can honestly supply for the flow panel.
-  const flowCapabilities = useMemo(() => orderFlowCapabilitiesFor(instrument), [instrument]);
-  // The estimated order flow for the selected timeframe, and the price levels
-  // derived from the same series. Both are null until the candles arrive.
-  const estimatedFlow = frame?.estimatedFlow ?? null;
-  const levels = useMemo(
-    () => estimatePriceLevels(feed.seriesByTimeframe[selectedTimeframe] ?? []),
-    [feed.seriesByTimeframe, selectedTimeframe]
-  );
-  // The selected timeframe's closed candle count, for the collecting state.
-  const timeframeCandles = feed.seriesByTimeframe[selectedTimeframe] ?? [];
-  const estimatedNeeded = DEFAULT_COMPASS_CONFIG.estimatedOrderFlow.cvdWindow;
-
-  // Say once which activity proxy the estimate is using, so a fall back from
-  // volume to the candle range is visible in the console rather than silent.
-  const loggedProxy = React.useRef<string | null>(null);
+  // What the configured order-flow venue can supply FOR THIS INSTRUMENT, as
+  // resolved by the hook (venue capability AND a live reading). The venue is a
+  // server-side fact, so it is never a hardcoded vendor.
+  const flowCapabilities = orderFlow.capabilities;
+  // A venue change that removes the book must not leave Book Flow selected.
   useEffect(() => {
-    const proxy = estimatedFlow?.estimate.proxy;
-    if (!proxy || loggedProxy.current === proxy) return;
-    loggedProxy.current = proxy;
-    console.info(
-      `[orderflow] estimated activity proxy: ${proxy}` +
-        (proxy === 'volume' ? '' : ' (volume missing/zero for this instrument — using candle range)')
-    );
-  }, [estimatedFlow?.estimate.proxy]);
+    if (!flowCapabilities.hasOrderBook && flowMode === 'BOOK_FLOW') setFlowMode('ORDER_FLOW');
+  }, [flowCapabilities.hasOrderBook, flowMode]);
 
   // The entry check reads the three compasses of the SELECTED timeframe only.
-  // The order-flow compass is the real reading when there is one, else the
-  // ESTIMATED reading — which is why its label is badged as an estimate in the
-  // panel, even though the entry check consumes it like any other compass.
+  // The order-flow compass is the real venue reading, or absent when the venue
+  // has nothing for this instrument — it is never an estimate.
   const entryCheck = useMemo(() => {
     if (!frame) return null;
-    const flowLabel = frame.orderFlow?.gauge.label ?? frame.estimatedFlow?.gauge.label ?? null;
-    const flowName = frame.orderFlow ? 'Order flow' : 'Order flow (est.)';
+    const flowLabel = frame.orderFlow?.gauge.label ?? null;
     const compasses: EntryCompassInput[] = [
       { key: 'technical', label: 'Technical indicators', scoreLabel: frame.available ? frame.technical.label : null },
       { key: 'summary', label: 'Summary', scoreLabel: frame.available ? frame.summary.label : null },
-      { key: 'orderFlow', label: flowName, scoreLabel: frame.available ? flowLabel : null },
+      { key: 'orderFlow', label: 'Order flow', scoreLabel: frame.available ? flowLabel : null },
     ];
     return checkEntry(entryDirection, compasses, DEFAULT_COMPASS_CONFIG);
   }, [frame, entryDirection]);
@@ -231,8 +218,6 @@ const Index: React.FC = () => {
           : 'text-white/70';
   const changeLabel = frame?.changeBasis === 'SESSION' ? 'Session' : 'Window';
 
-  const orderFlowMetrics = frame?.orderFlow?.metrics ?? null;
-
   return (
     <div className="flex min-h-screen w-full flex-col bg-[#050608] font-sans text-white selection:bg-amber-500/30">
       {/* ── Top bar: price, feed state, provenance, tabs, timeframes ────── */}
@@ -257,7 +242,7 @@ const Index: React.FC = () => {
                 ) : feed.market.state === 'CLOSED' ? (
                   // A closed market is the plain truth, not a feed fault: the
                   // reading below is the last real close, and it must not read as
-                  // "Delayed (polling)" or as an error.
+                  // an error.
                   <span className="font-bold text-amber-400" title={feed.market.reason}>
                     ● Market closed
                   </span>
@@ -332,9 +317,9 @@ const Index: React.FC = () => {
         )}
 
         {/* ── The three compasses in one row ──────────────────────────────
-            The right slot is the real Order Flow card when a source is
-            configured, else the ESTIMATED Order Flow panel for an instrument
-            whose provider publishes no book or tape. */}
+            The right slot is the real Order Flow card, driven by the configured
+            venue. With no venue, or none with a market for this instrument, the
+            card says so and draws no gauge. */}
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
           <CompassCard
             title="Technical indicators"
@@ -386,61 +371,37 @@ const Index: React.FC = () => {
               { label: 'Candles', value: frame ? `${frame.candleCount}` : '--' },
               {
                 label: 'Order flow',
-                value: orderFlow?.configured
-                  ? 'real'
-                  : frame?.estimatedFlow
-                    ? 'estimated'
-                    : 'none',
+                value: orderFlow.reading ? 'real' : 'none',
+                tone: orderFlow.reading ? undefined : 'text-white/40',
               },
             ]}
             unavailableText={frame ? 'Not enough candles' : feed.isLoading ? 'Loading candles…' : 'No data'}
           />
 
-          {orderFlow?.configured ? (
-            <CompassCard
-              title="Order flow"
-              subtitle={orderFlow.label}
-              gauge={frame?.orderFlow?.gauge ?? null}
-              figures={[
-                {
-                  label: 'Delta',
-                  value: orderFlowMetrics?.delta != null ? formatNumber(orderFlowMetrics.delta, 0) : '--',
-                },
-                {
-                  label: 'CVD',
-                  value: orderFlowMetrics?.cvd != null ? formatNumber(orderFlowMetrics.cvd, 0) : '--',
-                },
-                {
-                  label: 'Imbalance',
-                  value: orderFlowMetrics?.imbalance != null ? orderFlowMetrics.imbalance.toFixed(2) : '--',
-                },
-                {
-                  label: 'Absorption',
-                  value:
-                    orderFlowMetrics?.absorption != null
-                      ? `${Math.round(orderFlowMetrics.absorption * 100)}%`
-                      : '--',
-                },
-              ]}
-              unavailableText="No order flow reading for this timeframe"
-              unavailableHint="The configured source returned nothing for this instrument and timeframe."
-            />
-          ) : (
-            <EstimatedOrderFlowPanel
-              reading={estimatedFlow}
-              capabilities={flowCapabilities}
-              mode={flowMode}
-              onModeChange={setFlowMode}
-              candleCount={timeframeCandles.length}
-              needed={estimatedNeeded}
-              precision={pricePrecision}
-            />
-          )}
+          <OrderFlowPanel
+            reading={orderFlow.reading}
+            capabilities={flowCapabilities}
+            mode={flowMode}
+            onModeChange={setFlowMode}
+            venueLabel={orderFlow.probe?.label ?? 'Order flow'}
+            unavailableText={
+              orderFlow.probe?.configured
+                ? 'Feed unavailable'
+                : orderFlow.state === 'LOADING'
+                  ? 'Loading order flow…'
+                  : 'No order flow source'
+            }
+            unavailableHint={
+              orderFlow.reading
+                ? undefined
+                : orderFlow.note ??
+                  (orderFlow.probe && !orderFlow.probe.configured
+                    ? 'Set ORDERFLOW_PROVIDER=binance to enable order flow.'
+                    : undefined)
+            }
+            precision={pricePrecision}
+          />
         </div>
-
-        {/* ── The levels line: the estimated price zones for an instrument
-            with no real book, drawn from the same candles as the estimate. */}
-        <LevelsLine levels={levels} precision={pricePrecision} />
 
         {/* ── Below the compasses: the merged table and the entry check ──
             The table takes two thirds and the entry check one third. They sit
