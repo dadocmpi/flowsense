@@ -457,6 +457,7 @@ export async function buildAlpacaOrderFlowReading(
 
   const metrics = summarizeTape(classified, anchor, params.windowMs);
   const book = bookFromQuote(latestQuote(quotes));
+  const samples = cvdSamples(classified);
 
   const snapshot = {
     buyVolume: metrics.buyVolume,
@@ -494,7 +495,7 @@ export async function buildAlpacaOrderFlowReading(
       imbalance: metrics.imbalance,
       buyShare: metrics.buyShare,
       cvd: metrics.cvd,
-      cvdSlope: cvdSlope(cvdSamples(classified)),
+      cvdSlope: cvdSlope(samples),
       windowMs: params.windowMs,
       tradeCount: metrics.tradeCount,
     },
@@ -502,6 +503,7 @@ export async function buildAlpacaOrderFlowReading(
     sessionClosed: !sessionOpen,
     lastTradeAt,
     computedAt: now,
+    cvdSeries: samples,
   };
 
   return reading;

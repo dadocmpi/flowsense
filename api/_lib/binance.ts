@@ -24,6 +24,7 @@
 
 import type { GaugeReading, OrderFlowBook, Vote, VoteDetail } from '../../src/core/types.js';
 import { DEFAULT_COMPASS_CONFIG } from '../../src/config/compass.js';
+import { cvdSlope } from '../../src/core/orderflow.js';
 import { assertBinanceRequest, binanceMeterSnapshot, markBinanceExhausted, recordBinanceRequest } from './binanceMeter.js';
 import { CreditLimitError } from './rateMeter.js';
 import type { OrderFlowReading } from './orderflow.js';
@@ -376,6 +377,7 @@ export async function fetchBinanceOrderFlowReading(
   const gauge = buildBinanceGauge(metrics, totalTradeVolume(trades));
   const totalVolume = metrics.buyVolume + metrics.sellVolume;
   const windowMs = trades.length >= 2 ? (metrics.lastTradeAt ?? 0) - firstTradeTime(trades) : 0;
+  const cvdSeries = binanceCvdSeries(trades);
 
   return {
     gauge,
@@ -396,7 +398,7 @@ export async function fetchBinanceOrderFlowReading(
       imbalance: totalVolume > 0 ? metrics.delta / totalVolume : 0,
       buyShare: totalVolume > 0 ? metrics.buyVolume / totalVolume : 0.5,
       cvd: metrics.cvd,
-      cvdSlope: null,
+      cvdSlope: cvdSlope(binanceCvdSeries(trades)),
       windowMs: Math.max(0, windowMs),
       tradeCount: metrics.tradeCount,
     },
@@ -404,7 +406,35 @@ export async function fetchBinanceOrderFlowReading(
     sessionClosed: false,
     lastTradeAt: metrics.lastTradeAt,
     computedAt: Date.now(),
+    cvdSeries,
   };
+}
+
+/** Bucketed cumulative volume delta over the tape, oldest first. */
+function binanceCvdSeries(trades: AggTrade[], buckets = 24): Array<{ timestamp: number; cvd: number }> {
+  const withTime = trades
+    .map(trade => ({ trade, ms: typeof trade.T === 'number' ? trade.T : NaN }))
+    .filter(entry => Number.isFinite(entry.ms))
+    .sort((a, b) => a.ms - b.ms);
+  if (withTime.length < 2) return [];
+
+  const first = withTime[0].ms;
+  const last = withTime[withTime.length - 1].ms;
+  const step = Math.max(1, (last - first) / buckets);
+  const samples: Array<{ timestamp: number; cvd: number }> = [];
+  let running = 0;
+  let bucketEnd = first + step;
+  for (const { trade, ms } of withTime) {
+    const qty = Number.parseFloat(trade.q);
+    if (!Number.isFinite(qty)) continue;
+    running += trade.m ? -qty : qty;
+    while (ms >= bucketEnd) {
+      samples.push({ timestamp: bucketEnd, cvd: running });
+      bucketEnd += step;
+    }
+  }
+  samples.push({ timestamp: last, cvd: running });
+  return samples;
 }
 
 /** The oldest trade time in the window, for a window span. */

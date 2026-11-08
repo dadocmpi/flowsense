@@ -161,6 +161,8 @@ export interface OrderFlowReading {
   lastTradeAt?: number | null;
   /** Epoch ms the reading was computed. */
   computedAt?: number;
+  /** Bucketed session CVD, oldest first, for the sparkline. */
+  cvdSeries?: Array<{ timestamp: number; cvd: number }>;
 }
 
 /** One resting book level. */

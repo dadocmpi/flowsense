@@ -1,9 +1,10 @@
 // ============================================
 // COMPASS CARD
 // ============================================
-// One card holding a compass: the gauge centered and larger at the top, and that
-// compass's own key numbers in a compact two-column grid below it that fills the
-// card width. The three top cards share this rhythm, so they read as one row.
+// One card holding a compass: the gauge centered at the top and that compass's
+// own key numbers in a compact two-column grid below it that fills the card
+// width. The three top cards share this rhythm, so they read as one row and end
+// at the same pixel.
 //
 // A card with no reading draws no needle and says why. It never renders a
 // placeholder number or a gauge at neutral, because a neutral needle looks like a
@@ -12,6 +13,7 @@
 import React from 'react';
 import type { GaugeReading } from '../../core/types';
 import { CompassGauge } from './CompassGauge';
+import { Panel } from '../common/Panel';
 import { cn } from '@/lib/utils';
 
 export interface CompassFigure {
@@ -23,7 +25,9 @@ export interface CompassFigure {
 
 interface CompassCardProps {
   title: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
+  /** Right-aligned header content, e.g. a status pill. */
+  headerActions?: React.ReactNode;
   gauge: GaugeReading | null;
   figures: CompassFigure[];
   /** Shown instead of the gauge when there is no reading. */
@@ -35,39 +39,37 @@ interface CompassCardProps {
 export const CompassCard: React.FC<CompassCardProps> = ({
   title,
   subtitle,
+  headerActions,
   gauge,
   figures,
   unavailableText,
   unavailableHint,
 }) => {
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.08] bg-[#0b0c10] p-4">
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="text-title font-bold text-white">{title}</h3>
-        {subtitle && <span className="text-micro uppercase tracking-wider text-white/40">{subtitle}</span>}
-      </div>
+    <Panel title={title} subtitle={subtitle} actions={headerActions}>
+      <div className="flex h-full flex-col">
+        {/* The gauge: centered, at the top of the card. */}
+        <div className="flex flex-1 flex-col items-center justify-center">
+          {gauge ? (
+            <CompassGauge title="" gauge={gauge} size="lg" />
+          ) : (
+            <div className="flex min-h-[150px] flex-col items-center justify-center gap-1 text-center">
+              <span className="text-label font-semibold text-ink-secondary">{unavailableText}</span>
+              {unavailableHint && <span className="max-w-[34ch] text-micro text-ink-muted">{unavailableHint}</span>}
+            </div>
+          )}
+        </div>
 
-      {/* The gauge: centered and larger, at the top of the card. */}
-      <div className="mt-2 flex flex-1 flex-col items-center justify-center">
-        {gauge ? (
-          <CompassGauge title="" gauge={gauge} size="lg" />
-        ) : (
-          <div className="flex min-h-[140px] flex-col items-center justify-center gap-1 text-center">
-            <span className="text-label font-semibold text-white/45">{unavailableText}</span>
-            {unavailableHint && <span className="text-micro text-white/30">{unavailableHint}</span>}
-          </div>
-        )}
+        {/* The stats: a compact two-column grid that fills the card width. */}
+        <dl className="grid w-full grid-cols-2 gap-x-5 gap-y-1.5 border-t border-hairline pt-3">
+          {figures.map(figure => (
+            <div key={figure.label} className="flex items-baseline justify-between gap-2">
+              <dt className="truncate text-micro uppercase tracking-[0.08em] text-ink-muted">{figure.label}</dt>
+              <dd className={cn('font-mono text-label font-medium text-ink', figure.tone)}>{figure.value}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
-
-      {/* The stats: a compact two-column grid that fills the card width. */}
-      <dl className="mt-3 grid w-full grid-cols-2 gap-x-5 gap-y-1.5 border-t border-white/[0.06] pt-3">
-        {figures.map(figure => (
-          <div key={figure.label} className="flex items-baseline justify-between gap-2">
-            <dt className="truncate text-micro uppercase tracking-wider text-white/35">{figure.label}</dt>
-            <dd className={cn('font-mono text-label font-semibold text-white/90', figure.tone)}>{figure.value}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
+    </Panel>
   );
 };
