@@ -11,6 +11,10 @@ by Alpaca, read through the liquid ETF proxies SPY/DIA/QQQ. Which provider serve
 an asset is a per-asset configuration fact (`api/_lib/assets.ts`), overridable by
 env, and switching one needs only a config change.
 
+Order flow is separate and real: it comes from the venue's own public market
+streams (Binance USDT-M `XAUUSDT`), not from the candles. See "Order flow is
+REAL" below.
+
 ## Hard rules
 
 - **Never fabricate market data.** No random walks, no synthetic values, no
@@ -19,6 +23,10 @@ env, and switching one needs only a config change.
 - **Only ship markets we can source honestly.** Futures come from a configured
   provider. An instrument with no configured source shows "no data source
   configured" and no numbers at all — never a placeholder that looks real.
+- **Order flow is real or it is absent.** The flow panel reads the venue's public
+  streams. It is never estimated from candles and never carries an ESTIMATED
+  badge. A down, stale or geo-blocked feed shows "Feed unavailable" with the
+  reason — never a stand-in zero and never a neutral needle.
 - **Keys stay server-side.** Each provider's key is read only by the functions
   under `api/` and must never reach the browser. Verify the bundle stays
   credential-free: `grep -c "apikey" dist/assets/*.js` → must be 0. (An
@@ -44,14 +52,23 @@ src/core/instruments.ts        the asset catalog + which provider serves each
 src/core/providers/            MarketDataProvider interface + the server-proxied provider
 src/core/providers/polling.ts  per-provider poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
-src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
-src/core/orderFlowEstimator.ts      ESTIMATED order flow from candles (no book/tape): CLV, delta, CVD, hysteresis (pure)
-src/core/priceLevels.ts             ESTIMATED price levels from candles: busiest zones + swing high/low (pure)
-src/core/providers/capabilities.ts  what each vendor can supply for the flow panel (hasOrderBook, hasVolume)
+src/core/providers/binanceFlow.ts   the REAL venue flow feed: socket, reconnect, health, probe
+src/core/orderflow/parse.ts         pure parsing of the venue streams (the `m` flag -> aggressor side)
+src/core/orderflow/aggregate.ts     minute buckets, per-candle delta, CVD, book imbalance (pure)
+src/core/orderflow/reading.ts       closed-candle flow reading: EMA smoothing + hysteresis (pure)
+src/core/orderflow/histogram.ts     bounded volume-at-price histogram (pure)
+src/core/orderflow/health.ts        pure feed-health state machine (stale watchdog, backoff)
+src/core/orderflow/ring.ts          fixed-size ring buffer (bounded memory)
+src/core/volumeProfile.ts           POC / VAH / VAL from prints or the live histogram (pure)
+src/core/risk.ts                    position size, loss/drawdown buffer, session clock (pure)
 src/config/compass.ts          every weight, tolerance and session setting
+src/config/indicators.ts       one row per indicator: { id, label, group, showInTable }
+src/config/risk.ts             default contract multiplier and risk limits
 src/hooks/marketDataStore.ts         one store of series keyed asset:timeframe, loaded once on open
 src/hooks/useInstrumentFeed.ts        a per-instrument view over the store
 src/hooks/useTimeframeReadings.ts     one reading per (asset, timeframe), kept apart
+src/hooks/orderFlowStore.ts           one module-level venue feed, coalesced ~4 UI commits/s
+src/hooks/useOrderFlowFeed.ts         a per-timeframe view over the venue feed
 api/_lib/assets.ts             THE per-asset provider + symbol mapping (env-overridable)
 api/_lib/rateMeter.ts          the shared per-minute meter implementation
 api/_lib/creditMeter.ts        the Twelve Data meter instance (credits)
@@ -65,8 +82,7 @@ api/futures/candles.ts         server-side candle proxy (single asset, or one ba
 api/futures/status.ts          which providers are configured, what symbol is read, meter state
 api/health.ts                  provider credentials + last-call time + calls this minute
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
-api/orderflow/reading.ts       is an order-flow source configured, and its reading
-api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor
+api/orderflow/binance-config.ts flow config + server-side REST reachability probe (geo-block vs fault)
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
@@ -182,73 +198,98 @@ daily bucket is usually only partly observed, and rebuilding it from that tail
 would report a high/low/volume for a day that has barely started. When the base
 window does not reach the bucket open, the natively fetched bar is kept.
 
-### Order flow is a separate provider, never derived from candles
+### Order flow is REAL, from a public venue feed — never derived from candles
 
-The RIGHT compass is order flow: delta/CVD, order-book imbalance, absorption.
+The RIGHT compass is order flow: delta / CVD, order-book imbalance, absorption.
 Twelve Data carries NO order-flow data — a candle has no aggressor side and no
-order book — so it is never computed from the candle feed. It comes from a
-provider behind `src/core/providers/orderflow.ts`, selected server-side by
-`ORDERFLOW_PROVIDER` / `ORDERFLOW_API_KEY` (see `api/_lib/orderflow.ts`).
+order book — so it is never computed from the candle feed. It comes from the
+venue's own public market streams.
 
-The shipped adapter is `none`: no real source is configured, so the Summary
-compass blends in no real flow. It must never draw a neutral needle or a `0` in
-place of a missing real reading — a neutral needle looks like a real "neutral
-market" read. When no real source exists, the RIGHT panel falls back to the
-clearly-labelled ESTIMATED order flow described below (and, with the estimate
-switched off, the Summary IS the technical reading rather than a blend against a
-stand-in zero).
+The source is Binance USDT-M futures, symbol `XAUUSDT` (perpetual), no
+authentication and no API key. Three public streams are combined by
+`src/core/providers/binanceFlow.ts`:
 
-Connecting a vendor means implementing `fetchOrderFlowReading` in
-`api/_lib/orderflow.ts` and setting the two environment variables. Nothing else
-changes: the client, the summary blend and the entry check already speak that
-shape. The key stays server-side; check `grep -c "apikey" dist/assets/*.js` is
-still 0 after adding one.
+- `<symbol>@trade` — aggressive prints, carrying the `m` (isBuyerMaker) flag
+- `<symbol>@depth20@100ms` — partial book, top 20 levels, every 100 ms
+- `<symbol>@bookTicker` — best bid/ask with sizes
 
-### With no source, the RIGHT panel shows an ESTIMATED order flow
+THE `m` FLAG. `m = true` means the BUYER was resting, so the AGGRESSOR was the
+SELLER; `m = false` means the aggressor was the BUYER. `tradeSide()` in
+`src/core/orderflow/parse.ts` is the ONE place that mapping lives; nothing
+downstream re-derives it.
 
-An instrument whose provider publishes no book and no tape (Twelve Data /
-XAU-USD) still gets a RIGHT panel, but it is an ESTIMATE derived from the closed
-candles, and it is always badged ESTIMATED with a tooltip saying exactly what it
-is. This is the ONE place candles feed the flow panel, and it is clearly labelled
-as an estimate rather than passed off as a real reading:
+This feed is client-side and needs no server proxy — the venue publishes these
+streams to any client. The only server route involved is
+`api/orderflow/binance-config.ts`, which costs nothing and exists to probe
+reachability: a browser WebSocket reports no HTTP status, so a socket that closes
+at once is either a network fault or the venue refusing this region, and only a
+REST call can tell them apart (the venue answers HTTP 451 to a restricted
+location). No key is involved and nothing is metered — this is not the metered
+candle feed.
 
-- `src/core/orderFlowEstimator.ts` is pure. Per closed candle it computes
-  CLV = ((close - low) - (high - close)) / (high - low), guarded to 0 when
-  high == low. The weight is the candle volume when present and non-zero,
-  otherwise the candle range, or a live tick count when a stream supplies one;
-  the proxy is auto-detected and the chosen one is logged once. delta = CLV *
-  weight, CVD is its running sum, and the window imbalance is the activity-
-  weighted mean CLV on the shared -100..+100 scale.
-- MAIN values are computed on CLOSED candles only. The newest candle of a live
-  series is the forming bar: it is peeled off and shown as a separate
-  "provisional" number that never touches the gauge, the Summary or the Compass.
-  So the main numbers move on candle close, not on every tick. The imbalance is
-  smoothed with a short EMA, and the Buying / Selling / Neutral word uses a
-  neutral zone plus hysteresis (the threshold must hold for N candles).
-- The panel (`src/components/flow/EstimatedOrderFlowPanel.tsx`) keeps the
-  ORDER FLOW / BOOK FLOW toggle. Book Flow is DISABLED with the hint "Unavailable
-  for this provider" when the provider has no book, never an error. With too few
-  candles it says "Collecting data… X/20" rather than drawing a neutral needle.
-- The levels line (`src/components/flow/LevelsLine.tsx`, `src/core/priceLevels.ts`)
-  is the candle-only stand-in for a book map: the busiest estimated price zones
-  plus the recent swing high / low, labelled ESTIMATED. It is where trading
-  already happened, never a resting order.
-- `src/core/providers/capabilities.ts` is the per-vendor switch
-  (`hasOrderBook`, `hasVolume`). Twelve Data: no book, no usable volume. A future
-  provider with a real book sets `hasOrderBook: true` and Book Flow lights up
-  with no UI change.
-- The estimate is an OPTIONAL, low-weight input to the Summary blend
-  (`estimatedOrderFlow.weight` in `src/config/compass.ts`), and it can be
-  switched off entirely (`estimatedOrderFlow.enabled`). It is used only when
-  there is no REAL source; a real reading always wins and is never mixed with an
-  estimate.
+What the RIGHT panel shows, all from real data:
+
+- Net delta per candle and cumulative delta from the aggTrade aggressor side,
+  aggregated to the active timeframe. CVD resets at 00:00 UTC and the reset time
+  is shown in the UI.
+- Book Flow: a 20-level DOM ladder with size, cumulative size and depth bars, and
+  the resting-book imbalance `(bid - ask) / (bid + ask)` over the top N levels
+  (`orderFlow.imbalanceLevels`, default 10). The Book Flow toggle is ENABLED.
+- A trade tape of the last ~30 prints with side and size.
+- A basis line: the venue's last price minus the Twelve Data XAU/USD price.
+
+Honesty rules, kept true:
+
+- The venue is labelled factually: `Binance USDT-M XAUUSDT PERP`. It is NOT
+  called institutional unless it is a real institutional feed.
+- Nothing is fabricated. If the stream is down, stale (no message for more than
+  `STALE_AFTER_MS`, 5 s) or geo-blocked (HTTP 451), the panel shows "Feed
+  unavailable" with the reason and the real last-update time. No stale figure is
+  left looking current.
+- The Compass never reads a live-ticking value. The flow reading is built from
+  CLOSED candles only (`candleDeltas` drops the forming bucket), smoothed with a
+  short EMA, and the Buying / Selling / Neutral word uses a neutral zone plus
+  hysteresis. The DOM ladder and the tape are live by nature and are shown live —
+  they are never fed into a gauge.
+- There is no "estimated" order flow anywhere. The old candle-derived estimate,
+  its `none` vendor seam, its `capabilities` switch and its levels line were all
+  deleted. Do not reintroduce them.
+
+Robustness: reconnect with exponential backoff and jitter, a forced reconnect
+before the venue's 24 h connection limit, a stale watchdog, a feed-health
+indicator (connected / latency / last message), and the server reachability probe
+that distinguishes a geo-block from a fault. The health state machine is pure
+(`src/core/orderflow/health.ts`) so the stale and reconnect behaviour is unit
+tested without a network.
+
+Performance: every message is ingested but the UI commits at most ~4 times a
+second (a coalesced `setTimeout` in `src/hooks/orderFlowStore.ts`), prints live in
+a fixed-size ring, and raw prints fold into 1-minute buckets with two days of
+retention, so nothing grows unbounded.
+
+PLUGGING IN ANOTHER FEED. The provider seam is a small adapter shape
+(`hasOrderBook`, `hasTrades`, `hasVolume` on the message union in
+`src/core/orderflow/types.ts`). A venue that publishes the same three facts —
+aggressive prints with a side, a resting book, and a price — drops in behind the
+same store and UI without a component change. Keep the venue label factual.
+
+### Volume profile is real, from the venue tape
+
+`src/core/volumeProfile.ts` folds the real aggressive prints into volume-at-price
+bins sized by the instrument tick (`orderFlow.tickSize`, configurable in
+`src/config/compass.ts`) and reports the point of control (POC) and the 70% value
+area (VAH / VAL). The panel shows the current UTC session and the previous one,
+plus the session high/low from the candle series. The value-area maths is shared
+between the print path and the live histogram path, so both agree exactly.
 
 ## UI
 
-The main screen, top to bottom, and it fits 1920x1080 without scrolling: the top
-bar (price, feed state, provenance, asset tabs, timeframe buttons), three
-compasses in one row, then the merged technical table (two thirds) beside the
-entry check (one third).
+A sober, dense risk/trading terminal. The main screen, top to bottom, fits
+1920x1080 without scrolling: the top bar (instrument and venue, UTC clock, market
+status, per-stream source and data age, feed latency, asset tabs, timeframe
+buttons), three compasses in one row, then the merged technical table (two
+thirds) beside the entry check (one third), then the Order flow panel beside the
+Volume profile panel, then the compact Risk panel.
 
 The timeframe buttons carry the LABEL ONLY — M1 M5 M15 M30 1H 4H 1D. No score,
 no signal word, no colour that implies a signal; only the selected one is
@@ -258,27 +299,78 @@ There is no multi-timeframe confluence grid, no "Timeframe detail" panel and no
 separate "Technical metrics" panel. Do not re-add them. There is exactly ONE
 technical table, holding both the moving averages and the oscillators.
 
-The top bar holds the price and the asset tabs only. The removed "DATA: LIVE",
-"CANDLES IN" countdown and REFRESH button were obsolete once the feed became
-continuous — do not re-add them. Debug-style internals (raw data-quality
-percentages, last-bar timestamps, candle counts) belong in a secondary section
-below the primary view, not in the primary view.
+The top bar holds the instrument, venue, price and the asset tabs. The removed
+"DATA: LIVE", "CANDLES IN" countdown and REFRESH button were obsolete once the
+feed became continuous — do not re-add them. Debug-style internals (raw
+data-quality percentages, last-bar timestamps, candle counts) belong in a
+secondary section below the primary view, not in the primary view.
 
 Every panel is permanently expanded. Do not add collapsible/show-hide controls,
 accordions or any other click-to-reveal wrapper: all data must be visible on
-page load. Put secondary or debug content in its own always-visible section
-instead of hiding it.
+page load. The ONE deliberate exception is the "Compass inputs" drawer — a
+native `<details>` under the Compass, collapsed by default, that lists every
+input feeding the Compass with its state and weight so the signal is auditable
+for a reviewer. It is an audit disclosure, not a data panel: it hides nothing
+that the table shows.
 
-The header states the feed's real condition: a rate-limited feed shows our own
-"Rate limit — retrying in Xs" countdown and a Stale badge on the last series; an
-asset outside its market's hours shows "Market closed" with the real last-candle
-age and no Stale badge. Never render the vendor's raw error text, and never leave
-stale numbers looking current.
+The header states the feed's real condition: a rate-limited candle feed shows our
+own "Rate limit — retrying in Xs" countdown and a Stale badge on the last series;
+an asset outside its market's hours shows "Market closed" with the real
+last-candle age and no Stale badge. The order-flow panel shows the venue's own
+condition (Live / Stale / Down) with latency and last-message age. Never render
+the vendor's raw error text, and never leave stale numbers looking current.
 
 The provenance popover on an asset states the provider, the symbol, the feed
 (`IEX`) and that the volume is partial market volume — IEX volume is one
 exchange's, never consolidated volume — and keeps the PROXY marker. An index asset
 read through an ETF is always called a proxy, never the index itself.
+
+### Design system
+
+Palette: three graphite surfaces (`#0a0b0d` / `#101215` / `#16181c`) plus a
+raised tone, 1px hairline borders, muted green/red used ONLY for direction and
+state, amber ONLY for warnings, and one restrained accent (a desaturated blue)
+for selection and focus. No neon, no glows, no gradients, no heavy shadows, no
+glassmorphism, no decorative icons or emoji. Keep the palette; refine within it.
+
+Typography: Inter for text and IBM Plex Mono for numbers, both free and loaded
+from Google Fonts with system fallbacks. Tabular numerals everywhere,
+right-aligned numeric columns, fixed decimals per instrument.
+
+Structure: a consistent 4/8px spacing grid, section headers in small uppercase
+with letter-spacing, panels with a quiet header bar (title left; source /
+timeframe / timestamp right), a 2-4px corner radius, and dense aligned tables
+with subtle row separators and no zebra striping. The shared `Panel` chrome and
+the primitives in `src/components/common/ui.tsx` keep this from drifting.
+
+Gauges: flat and restrained, thin arcs, a clear numeric readout, no flashy
+needle effects. The label still comes from `labelFromScore`, so it can never
+disagree with the score.
+
+States: designed empty, loading and error states for every panel, with no raw
+errors and no layout shift. Subtle transitions only, and `prefers-reduced-motion`
+is respected. Contrast targets WCAG AA and keyboard focus is always visible.
+
+### Indicator visibility (display only)
+
+`src/config/indicators.ts` is one entry per indicator:
+`{ id, label, group, showInTable }`. Setting `showInTable: false` hides the row
+from the technical table and NOTHING ELSE — the indicator is still computed and
+still feeds the Confluence Compass and the Summary. The Compass result is
+identical whether a row is shown or hidden; `src/core/__tests__/indicatorVisibility.test.ts`
+proves it. Default-hidden (redundant with an SMC + confluence read): Williams %R,
+Ultimate Oscillator, Bull/Bear Power, ROC, Highs/Lows. Edit the config to change.
+
+### Risk panel (client-side only)
+
+The Risk panel (`src/components/risk/RiskPanel.tsx`, maths in `src/core/risk.ts`)
+is fully client-side with manual inputs and no external data: a position-size
+calculator (balance, risk %, stop in points, configurable contract multiplier —
+default 100 oz per 1.00 lot for XAUUSD), a daily-loss / max-drawdown buffer
+tracker, and a session clock (Asia / London / New York, in UTC). It must NEVER be
+read by the Compass, the Summary or the Entry check. No trading firm's rules are
+hardcoded and nothing is presented as an official limit — every limit is
+user-editable.
 
 ## Score and labels
 
@@ -294,6 +386,7 @@ Sell. Every weight, tolerance and session setting lives in
 npm run dev        # :8080
 npm run build
 npm test           # vitest
+npm run knip       # dead-code / unused-dependency report
 npm run check:symbols   # out-of-band symbol discovery (needs a key)
 npx tsc -p tsconfig.app.json --noEmit 2>&1 | grep -v "^src/components/ui/"
 ```

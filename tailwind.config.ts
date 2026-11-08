@@ -50,7 +50,33 @@ export default {
         block: '1.5rem',
         field: '0.5rem',
       },
+      fontFamily: {
+        // Inter for text, IBM Plex Mono for every number. Both are free and
+        // loaded from Google Fonts; the system stacks are the fallback.
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+      },
       colors: {
+        // ── Institutional terminal palette ────────────────────────────────
+        // Three graphite surfaces, one hairline, muted direction colours. No
+        // neon, no gradients. Green/red carry direction ONLY; amber is warning
+        // ONLY; `accent` is the single restrained highlight (selection, focus).
+        base: {
+          0: '#0a0b0d', // page
+          1: '#101215', // panel
+          2: '#16181c', // raised / inset
+          3: '#1d2025', // hover
+        },
+        line: '#23262c', // 1px hairline borders
+        ink: {
+          DEFAULT: '#e7e9ee',
+          muted: '#9aa2ae',
+          subtle: '#697180',
+        },
+        pos: { DEFAULT: '#3fb950', muted: '#2ea043' },
+        neg: { DEFAULT: '#f85149', muted: '#da3633' },
+        warn: { DEFAULT: '#d29922', muted: '#bb8009' },
+        accent: { DEFAULT: '#5b8def', muted: '#3f6fd8' },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
