@@ -248,15 +248,79 @@ request and the field names differ.
 Keep the key server-side — the browser must never see it. The client provider in
 `src/core/providers/futures.ts` only ever calls your own `/api/*` routes.
 
+## Order flow
+
+The RIGHT compass is order flow — aggressor delta, cumulative volume delta and
+resting book pressure. It is a **separate provider** from the candles and is
+never derived from them: a candle has no aggressor side and no order book. When
+there is no real reading the card says so and draws no bar.
+
+The venue is chosen **per asset** (`api/_lib/orderflow.ts`), because one venue
+does not have every market:
+
+| Asset | Order-flow venue | Instrument | Why |
+| --- | --- | --- | --- |
+| Gold (GC) | Binance | `PAXGUSDT` | PAX Gold is a real gold market with a live depth book. |
+| S&P 500 (ES) | Alpaca | `SPY` | The ETF proxy; real tape and top-of-book quote. |
+| Dow (YM) | Alpaca | `DIA` | The ETF proxy. |
+| Nasdaq (NQ) | Alpaca | `QQQ` | The ETF proxy. |
+
+Binance has no market for the equity indices, which is why the index assets read
+Alpaca. The panel header shows the instrument actually used (e.g.
+`QQQ · Alpaca · IEX`) so a proxy is never mistaken for the index itself.
+
+Each trade is classified with the quote at the time of the trade (price ≥ ask →
+buy aggressor, price ≤ bid → sell aggressor) and the tick rule inside the spread.
+Buy and sell volume accumulate in a rolling window (1m / 5m / 15m, default 5m);
+`delta = buyVol − sellVol` and `imbalance = delta / (buyVol + sellVol)`. The
+strength bar shows the split, the state word and an intensity tier; a CVD
+sparkline and a "flow turning" alert complete the picture. The classification and
+imbalance math is pure and lives in `src/core/orderflow.ts`, unit-tested in
+`src/core/__tests__/orderflow.test.ts`.
+
+### Alpaca configuration
+
+The index assets need an Alpaca key for both candles and order flow. Get free
+keys from <https://app.alpaca.markets/signup> (a paper account is enough); the
+free `iex` feed needs no paid subscription.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `ALPACA_API_KEY_ID` | yes (indices) | — | Server-side key id. `ALPACA_API_KEY` is an accepted legacy alias. |
+| `ALPACA_API_SECRET_KEY` | yes (indices) | — | Server-side secret. `ALPACA_API_SECRET` is an accepted legacy alias. |
+| `ALPACA_FEED` | no | `iex` | `iex` (free, one exchange's volume) or `sip` (consolidated, paid). |
+| `ALPACA_REQUESTS_PER_MINUTE` | no | `200` | Per-minute request ceiling the meter enforces. |
+| `ORDERFLOW_PROVIDER` | no | `binance` | The default order-flow venue. `none` switches the card off. |
+| `ORDERFLOW_PROVIDER_<ID>` | no | — | Per-asset venue override, e.g. `ORDERFLOW_PROVIDER_NQ=alpaca`. |
+| `ORDERFLOW_SYMBOL_<ID>` | no | ETF proxies | The Alpaca symbol an asset's order flow is read from. |
+| `BINANCE_SYMBOL_GC` | no | `PAXGUSDT` | The Binance symbol Gold reads. |
+
+Both keys are read **only** under `api/`. Verify the bundle stays credential-free
+after a change:
+
+```
+npm run build && grep -c "apikey" dist/assets/*.js   # must be 0
+```
+
+### Session closed vs unavailable
+
+When a venue's market is closed the adapter keeps returning the **last session's**
+reading, and the panel labels it `Session closed · last reading HH:MM` — never
+`Feed unavailable`. A venue that genuinely has no market for the instrument, or
+cannot be reached, returns no reading and the card says so.
+
 ## Setup
 
 ```
 npm install && npm run dev   # → http://localhost:8080/
 ```
 
-Futures need `TWELVE_DATA_API_KEY`. Locally, the `api/` functions run under
-`vercel dev`; `npm run dev` serves the front end only, so the futures tabs will
-report no configured source unless you use `vercel dev`.
+Gold needs `TWELVE_DATA_API_KEY`; the S&P 500, Dow and Nasdaq assets need
+`ALPACA_API_KEY_ID` and `ALPACA_API_SECRET_KEY`. Locally, the `api/` functions
+run under `vercel dev`; `npm run dev` serves the front end only, so the assets
+will report no configured source unless you use `vercel dev`. Order flow for Gold
+works out of the box (Binance, no key); order flow for the index assets reuses the
+Alpaca keys.
 
 ## Layout
 

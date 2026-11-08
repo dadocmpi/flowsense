@@ -75,7 +75,7 @@ describe('computeBinanceFlowMetrics', () => {
 describe('buildBinanceGauge', () => {
   it('blends the tape delta and the book into the -100..+100 scale', () => {
     const gauge = buildBinanceGauge(
-      { delta: 2, cvd: 2, imbalance: 0.5, absorption: 1, tradeCount: 2 },
+      { delta: 2, cvd: 2, imbalance: 0.5, absorption: 1, tradeCount: 2, buyVolume: 3, sellVolume: 1, lastTradeAt: null },
       4
     );
     // 100 * (0.6 * 0.5 + 0.4 * 0.5) = 50
@@ -85,7 +85,7 @@ describe('buildBinanceGauge', () => {
 
   it('never lets a label disagree with its score', () => {
     const bearish = buildBinanceGauge(
-      { delta: -4, cvd: -4, imbalance: -1, absorption: 0, tradeCount: 3 },
+      { delta: -4, cvd: -4, imbalance: -1, absorption: 0, tradeCount: 3, buyVolume: 0, sellVolume: 4, lastTradeAt: null },
       4
     );
     expect(bearish.score).toBeCloseTo(-100, 6);

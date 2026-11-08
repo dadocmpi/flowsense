@@ -1,78 +1,87 @@
 // ============================================
 // INSTITUTIONAL ORDER FLOW
 // ============================================
-// The RIGHT compass: real order flow from the configured venue (Binance). It
-// draws the gauge, the tape numbers (aggressor delta, CVD) and the resting book
-// imbalance, all from the venue's own payloads.
+// The RIGHT compass: real order flow from the configured venue for THIS asset.
+// The venue is chosen per asset server-side — Gold reads Binance PAXG/USDT (a
+// real gold market with a depth book), the equity indices read Alpaca through
+// their ETF proxies (SPY/DIA/QQQ). The card never derives flow from candles.
 //
-// The panel offers two modes:
+// The panel is a strength bar, not a wall of numbers: who is stronger right
+// now, and by how much, in one glance. Everything it draws comes from the venue's
+// real tape and quote.
 //
-//   ORDER FLOW  the tape: aggressor delta and cumulative volume delta
-//   BOOK FLOW   the resting bid/ask book
+//   FLOW   buyer vs seller strength from the real tape (quote rule + tick rule)
+//   BOOK   resting bid vs ask pressure, only when the venue publishes a book
 //
-// The ORDER FLOW / BOOK FLOW toggle is rendered ONLY when the venue publishes a
-// real book (a capability, never hardcoded). With no book there is no toggle at
-// all — not a disabled one — and Order Flow is the only mode.
+// The FLOW / BOOK toggle is a capability, never hardcoded: with no real book the
+// toggle is removed for that asset (not shown disabled), and Flow is the only
+// mode.
 //
-// With no reading the panel says so and draws no gauge: a neutral needle would
-// look like a real "neutral market" read.
+// With no reading the panel says so and draws no bar: a 50/50 bar would look
+// like a real balanced market. A closed market shows the LAST session's reading
+// with a "Session closed" label, not "Feed unavailable".
 
 import React from 'react';
 import type { OrderFlowReading } from '../../core/types';
 import type { OrderFlowCapabilities } from '../../core/providers/capabilities';
-import { CompassGauge } from '../compass/CompassGauge';
+import type { FlowWindow } from '../../core/providers/orderflow';
+import type { FlowStateResult } from '../../core/orderflow';
+import { Panel } from '../common/Panel';
+import { Pill } from '../common/Pill';
+import { SegmentedControl } from '../common/SegmentedControl';
+import { FlowStrengthBar } from './FlowStrengthBar';
+import { CvdSparkline } from './CvdSparkline';
 import { formatNumber } from '../compass/format';
 import { cn } from '@/lib/utils';
 
 /** Which flow mode the panel is in. */
-export type FlowMode = 'ORDER_FLOW' | 'BOOK_FLOW';
+export type FlowMode = 'FLOW' | 'BOOK';
 
 interface OrderFlowPanelProps {
-  /** The venue's real reading for the selected timeframe, or null. */
+  /** The venue's real reading for the selected window, or null. */
   reading: OrderFlowReading | null;
-  /** What the venue can supply. Drives the toggle visibility. */
+  /** What the venue can supply FOR THIS INSTRUMENT. Drives the toggle visibility. */
   capabilities: OrderFlowCapabilities;
   mode: FlowMode;
   onModeChange: (mode: FlowMode) => void;
-  /** Venue name for the provenance line, e.g. "Binance". */
-  venueLabel: string;
+  /** The rolling window the tape is measured over. */
+  window: FlowWindow;
+  onWindowChange: (window: FlowWindow) => void;
+  /** Buyer/seller dominance and intensity, from the same thresholds as the gauge. */
+  state: FlowStateResult | null;
+  /** True when dominance flipped sign and has held — e.g. "Flow turning to buyers". */
+  shiftAlert: string | null;
+  /** Provenance label for the header, e.g. "QQQ · Alpaca IEX". */
+  provenance: string;
   /** Why there is no reading, when there is none. */
   unavailableText: string;
   unavailableHint?: string;
   /** Price precision for the volume figures. */
   precision: number;
+  /** Round-trip time of the last venue read, ms. */
+  latencyMs: number | null;
+  /** Epoch ms the reading was last refreshed. */
+  updatedAt: number | null;
 }
 
-/** A buy/sell split bar, from a 0..100 buy share. */
-function SplitBar({ buyShare, leftLabel, rightLabel }: { buyShare: number; leftLabel: string; rightLabel: string }) {
-  const clamped = Math.max(0, Math.min(100, buyShare));
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between font-mono text-micro uppercase tracking-wider">
-        <span className="text-[#e57373]">{leftLabel}</span>
-        <span className="text-[#4db6ac]">{rightLabel}</span>
-      </div>
-      <div className="relative h-3 w-full overflow-hidden rounded-full border border-white/[0.08]">
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'linear-gradient(90deg, #ef5350 0%, #e57373 30%, #f59e0b 50%, #4db6ac 70%, #26a69a 100%)',
-          }}
-        />
-        <div
-          className="absolute top-1/2 h-5 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.8)]"
-          style={{ left: `${clamped}%`, transition: 'left 600ms cubic-bezier(0.22, 1, 0.36, 1)' }}
-        />
-      </div>
-    </div>
-  );
+const WINDOW_OPTIONS: { value: FlowWindow; label: string }[] = [
+  { value: '1m', label: '1M' },
+  { value: '5m', label: '5M' },
+  { value: '15m', label: '15M' },
+];
+
+/** HH:MM:SS in the viewer's local timezone. */
+function clock(ms: number | null): string {
+  if (!ms) return '--';
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+/** One small labelled figure in the footer strip. */
+function Figure({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-2">
-      <span className="truncate text-micro uppercase tracking-wider text-white/35">{label}</span>
-      <span className={cn('font-mono text-label font-semibold text-white/90', tone)}>{value}</span>
+      <dt className="text-micro uppercase tracking-[0.08em] text-ink-muted">{label}</dt>
+      <dd className={cn('font-mono text-label text-ink-secondary', tone)}>{value}</dd>
     </div>
   );
 }
@@ -82,114 +91,157 @@ export const OrderFlowPanel: React.FC<OrderFlowPanelProps> = ({
   capabilities,
   mode,
   onModeChange,
-  venueLabel,
+  window,
+  onWindowChange,
+  state,
+  shiftAlert,
+  provenance,
   unavailableText,
   unavailableHint,
   precision,
+  latencyMs,
+  updatedAt,
 }) => {
-  const metrics = reading?.metrics ?? null;
-  const score = reading?.gauge.score ?? 0;
-  const buyShare = (Math.max(-100, Math.min(100, score)) + 100) / 2;
-  const bookBuyShare = metrics?.imbalance != null ? (metrics.imbalance + 1) * 50 : 50;
+  const session = reading?.session ?? null;
+  const book = reading?.book ?? null;
+  const sessionClosed = reading?.sessionClosed === true;
+
+  // The Book Flow figures: real resting size from the venue book.
+  const bookBuyShare = book ? (book.imbalance + 1) / 2 : 0.5;
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/[0.08] bg-[#0b0c10] p-4">
-      <div className="flex items-baseline justify-between gap-2">
-        <h3 className="text-title font-bold text-white">Institutional Order Flow</h3>
-        <span className="text-micro uppercase tracking-wider text-white/40">{venueLabel}</span>
-      </div>
-
-      {/* The toggle is a capability, never hardcoded: with no real book there is
-          no toggle at all, and Order Flow is the only mode. */}
-      {capabilities.hasOrderBook && (
-        <div className="mt-2 inline-flex self-center overflow-hidden rounded-lg border border-white/[0.08]">
-          {(['ORDER_FLOW', 'BOOK_FLOW'] as FlowMode[]).map(option => (
-            <button
-              key={option}
-              type="button"
-              aria-pressed={mode === option}
-              onClick={() => onModeChange(option)}
-              className={cn(
-                'px-3 py-1 font-mono text-micro font-bold tracking-wide transition-colors',
-                mode === option ? 'bg-amber-400/15 text-amber-300' : 'bg-white/[0.02] text-white/55 hover:text-white'
-              )}
-            >
-              {option === 'ORDER_FLOW' ? 'ORDER FLOW' : 'BOOK FLOW'}
-            </button>
-          ))}
-        </div>
-      )}
-
+    <Panel
+      title="Institutional Order Flow"
+      subtitle={provenance}
+      actions={
+        capabilities.hasOrderBook ? (
+          <SegmentedControl
+            ariaLabel="Order flow mode"
+            size="sm"
+            value={mode}
+            onChange={value => onModeChange(value as FlowMode)}
+            options={[
+              { value: 'FLOW', label: 'Flow' },
+              { value: 'BOOK', label: 'Book' },
+            ]}
+          />
+        ) : undefined
+      }
+    >
       {!reading ? (
-        <div className="mt-3 flex flex-1 flex-col items-center justify-center gap-1 text-center">
-          <span className="text-label font-semibold text-white/45">{unavailableText}</span>
-          {unavailableHint && <span className="text-micro text-white/30">{unavailableHint}</span>}
+        <div className="flex h-full flex-col items-center justify-center gap-1.5 text-center">
+          <span className="text-label font-semibold text-ink-secondary">{unavailableText}</span>
+          {unavailableHint && <span className="max-w-[36ch] text-micro text-ink-muted">{unavailableHint}</span>}
         </div>
       ) : (
-        <div className="mt-2 flex flex-1 flex-col items-center">
-          <CompassGauge title="" gauge={reading.gauge} size="md" />
-
-          <div className="mt-2 w-full">
-            <SplitBar
-              buyShare={mode === 'BOOK_FLOW' ? bookBuyShare : buyShare}
-              leftLabel={mode === 'BOOK_FLOW' ? 'ASKS' : 'SELL'}
-              rightLabel={mode === 'BOOK_FLOW' ? 'BIDS' : 'BUY'}
+        <div className="flex h-full flex-col gap-3">
+          {/* Status row: session state, the shift alert, and the window control. */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {sessionClosed ? (
+                <Pill tone="warn" glyph="●" title="The venue's market is closed; this is the last session's reading.">
+                  Session closed · last reading {clock(reading.lastTradeAt ?? reading.computedAt ?? null)}
+                </Pill>
+              ) : (
+                <Pill tone="accent" glyph="●">Live tape</Pill>
+              )}
+              {shiftAlert && (
+                <Pill tone={state?.state === 'BUYERS' ? 'buy' : 'sell'} glyph="⇄">
+                  {shiftAlert}
+                </Pill>
+              )}
+            </div>
+            <SegmentedControl
+              ariaLabel="Order flow window"
+              size="sm"
+              value={window}
+              onChange={value => onWindowChange(value as FlowWindow)}
+              options={WINDOW_OPTIONS}
             />
           </div>
 
-          <dl className="mt-2 grid w-full grid-cols-2 gap-x-4 gap-y-1">
-            {mode === 'BOOK_FLOW' ? (
-              <>
-                <Stat
-                  label="Imbalance"
-                  value={metrics?.imbalance != null ? metrics.imbalance.toFixed(2) : '--'}
-                  tone={
-                    metrics?.imbalance == null
-                      ? undefined
-                      : metrics.imbalance >= 0
-                        ? 'text-[#4db6ac]'
-                        : 'text-[#e57373]'
-                  }
-                />
-                <Stat
-                  label="Absorption"
-                  value={metrics?.absorption != null ? `${Math.round(metrics.absorption * 100)}%` : '--'}
-                />
-                <Stat label="Venue" value={venueLabel} />
-                <Stat label="Book" value="Depth" />
-              </>
-            ) : (
-              <>
-                <Stat
-                  label="Delta"
-                  value={metrics?.delta != null ? formatNumber(metrics.delta, Math.min(2, precision)) : '--'}
-                  tone={
-                    metrics?.delta == null ? undefined : metrics.delta >= 0 ? 'text-[#4db6ac]' : 'text-[#e57373]'
-                  }
-                />
-                <Stat
-                  label="CVD"
-                  value={metrics?.cvd != null ? formatNumber(metrics.cvd, Math.min(2, precision)) : '--'}
-                  tone={metrics?.cvd == null ? undefined : metrics.cvd >= 0 ? 'text-[#4db6ac]' : 'text-[#e57373]'}
-                />
-                <Stat
-                  label="Imbalance"
-                  value={metrics?.imbalance != null ? metrics.imbalance.toFixed(2) : '--'}
-                />
-                <Stat
-                  label="Absorption"
-                  value={metrics?.absorption != null ? `${Math.round(metrics.absorption * 100)}%` : '--'}
-                />
-              </>
-            )}
-          </dl>
+          {mode === 'BOOK' ? (
+            <div className="flex flex-1 flex-col justify-center gap-3">
+              {book ? (
+                <>
+                  <FlowStrengthBar
+                    buyShare={bookBuyShare}
+                    state={
+                      state ?? { state: 'BALANCED', intensity: 'BALANCED', label: 'Balanced', intensityLabel: 'Balanced' }
+                    }
+                    compact
+                  />
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 border-t border-hairline pt-3">
+                    <Figure
+                      label="Bid size"
+                      value={book.bidSize > 0 ? formatNumber(book.bidSize, 0) : '--'}
+                      tone="text-buy"
+                    />
+                    <Figure
+                      label="Ask size"
+                      value={book.askSize > 0 ? formatNumber(book.askSize, 0) : '--'}
+                      tone="text-sell"
+                    />
+                    <Figure
+                      label="Book imbalance"
+                      value={book.imbalance.toFixed(2)}
+                      tone={book.imbalance >= 0 ? 'text-buy' : 'text-sell'}
+                    />
+                    <Figure label="Levels" value={`${book.bids.length} / ${book.asks.length}`} />
+                  </div>
+                </>
+              ) : (
+                <p className="text-center text-label italic text-ink-muted">No resting book for this instrument.</p>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col justify-center gap-3">
+              <FlowStrengthBar buyShare={session?.buyShare ?? 0.5} state={state ?? {
+                state: 'BALANCED',
+                intensity: 'BALANCED',
+                label: 'Balanced',
+                intensityLabel: 'Balanced',
+              }} />
 
-          <div className="mt-auto w-full pt-2 text-micro text-white/35">
-            Real order flow from {venueLabel}: aggressor delta and cumulative volume delta from the venue tape, plus
-            the resting bid/ask imbalance from the venue depth.
+              {/* The session CVD sparkline: the direction of the net flow. */}
+              <div className="flex flex-col gap-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-micro uppercase tracking-[0.1em] text-ink-muted">Session CVD</span>
+                  <span
+                    className={cn(
+                      'font-mono text-label font-semibold',
+                      (session?.cvd ?? 0) >= 0 ? 'text-buy' : 'text-sell'
+                    )}
+                  >
+                    {session?.cvd != null ? formatNumber(session.cvd, Math.min(2, precision)) : '--'}
+                  </span>
+                </div>
+                <CvdSparkline
+                  series={reading.cvdSeries ?? []}
+                  ariaLabel={`Session cumulative volume delta: ${
+                    session?.cvd != null ? formatNumber(session.cvd, 2) : 'unavailable'
+                  }`}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Data-quality footer: what the numbers are, and how fresh. */}
+          <div className="mt-auto grid grid-cols-2 gap-x-6 gap-y-1 border-t border-hairline pt-3">
+            <Figure label="Window" value={WINDOW_OPTIONS.find(o => o.value === window)?.label ?? window} />
+            <Figure label="Trades" value={session ? formatNumber(session.tradeCount, 0) : '--'} />
+            <Figure label="Delta" value={session ? formatNumber(session.delta, Math.min(2, precision)) : '--'} tone={
+              session ? (session.delta >= 0 ? 'text-buy' : 'text-sell') : undefined
+            } />
+            <Figure label="Latency" value={latencyMs != null ? `${latencyMs} ms` : '--'} />
+            <Figure label="Updated" value={clock(updatedAt)} />
+            <Figure
+              label="Absorption"
+              value={reading.metrics.absorption != null ? `${Math.round(reading.metrics.absorption * 100)}%` : '--'}
+            />
           </div>
         </div>
       )}
-    </div>
+    </Panel>
   );
 };

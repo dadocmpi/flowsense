@@ -16,7 +16,22 @@ describe('order-flow capabilities', () => {
   it('enables Book Flow for Binance, which publishes a real depth book', () => {
     expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasOrderBook).toBe(true);
     expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasVolume).toBe(true);
-    expect(orderFlowCapabilitiesForVenue('binance')).toEqual({ hasOrderBook: true, hasVolume: true });
+    expect(orderFlowCapabilitiesForVenue('binance')).toEqual({
+      hasOrderBook: true,
+      hasVolume: true,
+      hasQuotes: true,
+    });
+  });
+
+  it('gives Alpaca a real tape and quote but no depth book', () => {
+    // Alpaca publishes a real tape and a real top-of-book quote, so the tape and
+    // the quote bar work; it publishes no depth ladder, so Book Flow (a depth
+    // mode) stays off and is not rendered for an Alpaca asset.
+    expect(orderFlowCapabilitiesForVenue('alpaca')).toEqual({
+      hasOrderBook: false,
+      hasVolume: true,
+      hasQuotes: true,
+    });
   });
 
   it('does not enable Book Flow with no source', () => {
@@ -24,8 +39,9 @@ describe('order-flow capabilities', () => {
   });
 
   it('falls back to the honest minimum for an unknown venue', () => {
-    expect(orderFlowCapabilitiesForVenue('mystery')).toEqual({ hasOrderBook: false, hasVolume: false });
-    expect(orderFlowCapabilitiesForVenue(null)).toEqual({ hasOrderBook: false, hasVolume: false });
-    expect(orderFlowCapabilitiesForVenue(undefined)).toEqual({ hasOrderBook: false, hasVolume: false });
+    const minimum = { hasOrderBook: false, hasVolume: false, hasQuotes: false };
+    expect(orderFlowCapabilitiesForVenue('mystery')).toEqual(minimum);
+    expect(orderFlowCapabilitiesForVenue(null)).toEqual(minimum);
+    expect(orderFlowCapabilitiesForVenue(undefined)).toEqual(minimum);
   });
 });

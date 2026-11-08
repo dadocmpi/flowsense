@@ -19,29 +19,41 @@
 // change.
 
 /** The order-flow venues this build understands. */
-export type OrderFlowVenue = 'none' | 'binance' | 'custom';
+export type OrderFlowVenue = 'none' | 'binance' | 'alpaca' | 'custom';
 
 export interface OrderFlowCapabilities {
-  /** The venue publishes a real resting bid/ask book. */
+  /**
+   * The venue publishes a real resting bid/ask book (depth, not just top of
+   * book). This gates the Book Flow mode.
+   */
   hasOrderBook: boolean;
   /** The venue's tape carries a usable traded quantity. */
   hasVolume: boolean;
+  /**
+   * The venue publishes a real top-of-book quote (best bid/offer). Alpaca's IEX
+   * feed does, from which a two-sided pressure bar can be built; it is a quote,
+   * not a depth book, so it is a separate flag.
+   */
+  hasQuotes: boolean;
 }
 
 /** What each venue can honestly supply. */
 export const VENUE_ORDER_FLOW_CAPABILITIES: Record<OrderFlowVenue, OrderFlowCapabilities> = {
-  // No source at all: no tape and no book.
-  none: { hasOrderBook: false, hasVolume: false },
+  // No source at all: no tape, no book and no quote.
+  none: { hasOrderBook: false, hasVolume: false, hasQuotes: false },
   // Binance publishes a real depth book and a tape with the aggressor side.
-  binance: { hasOrderBook: true, hasVolume: true },
+  binance: { hasOrderBook: true, hasVolume: true, hasQuotes: true },
+  // Alpaca (IEX) publishes a real tape with volume and a real top-of-book quote,
+  // but no depth book: Book Flow is a two-sided quote bar, not a depth ladder.
+  alpaca: { hasOrderBook: false, hasVolume: true, hasQuotes: true },
   // A named vendor we have not implemented: assume the honest minimum.
-  custom: { hasOrderBook: false, hasVolume: false },
+  custom: { hasOrderBook: false, hasVolume: false, hasQuotes: false },
 };
 
 /** Capabilities for a venue id, defaulting to the honest minimum. */
 export function orderFlowCapabilitiesForVenue(venue: string | null | undefined): OrderFlowCapabilities {
-  if (venue === 'binance' || venue === 'none' || venue === 'custom') {
+  if (venue === 'binance' || venue === 'alpaca' || venue === 'none' || venue === 'custom') {
     return VENUE_ORDER_FLOW_CAPABILITIES[venue];
   }
-  return { hasOrderBook: false, hasVolume: false };
+  return { hasOrderBook: false, hasVolume: false, hasQuotes: false };
 }

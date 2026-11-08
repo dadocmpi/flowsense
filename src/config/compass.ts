@@ -50,6 +50,26 @@ export interface EntryCheckConfig {
   againstShare: number;
 }
 
+export interface FlowConfig {
+  /**
+   * Imbalance magnitude below which the tape reads Balanced, and the tiers above
+   * it. |imbalance| is a 0..1 share (delta / total volume). These are the
+   * "intensity" thresholds the strength bar uses; change them here, not inline.
+   */
+  balanced: number;
+  moderate: number;
+  strong: number;
+  /**
+   * How long a side must hold before a "flow turning" alert is raised (ms). A
+   * one-tick flip is noise, so the badge waits for a real, sustained move.
+   */
+  shiftHoldMs: number;
+  /** The rolling windows the strength bar can be measured over, in ms. */
+  windows: Record<'1m' | '5m' | '15m', number>;
+  /** The default rolling window. */
+  defaultWindow: '1m' | '5m' | '15m';
+}
+
 export interface CompassConfig {
   /**
    * Tolerance band, as a percentage of price, inside which a price-vs-level
@@ -104,6 +124,9 @@ export interface CompassConfig {
 
   /** Session definition used by VWAP and the volume point of control. */
   session: SessionConfig;
+
+  /** Order-flow strength-bar thresholds, windows and shift-hold timing. */
+  flow: FlowConfig;
 }
 
 export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
@@ -190,6 +213,22 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     rthCloseMinutes: 16 * 60, // 16:00
     fullOpenMinutes: 18 * 60, // 18:00 previous day
   },
+
+  flow: {
+    // A 55/45 split is noise on a liquid tape, so it reads Balanced. Only a real
+    // one-sided tape earns Moderate or Strong.
+    balanced: 0.06,
+    moderate: 0.15,
+    strong: 0.3,
+    // A side must hold for five seconds before it is announced as a shift.
+    shiftHoldMs: 5_000,
+    windows: {
+      '1m': 60_000,
+      '5m': 5 * 60_000,
+      '15m': 15 * 60_000,
+    },
+    defaultWindow: '5m',
+  },
 };
 
 /**
@@ -210,5 +249,10 @@ export function mergeCompassConfig(
     entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
     session: { ...base.session, ...(override.session ?? {}) },
+    flow: {
+      ...base.flow,
+      ...(override.flow ?? {}),
+      windows: { ...base.flow.windows, ...(override.flow?.windows ?? {}) },
+    },
   };
 }

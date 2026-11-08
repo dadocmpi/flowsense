@@ -3,14 +3,19 @@
 // ============================================
 
 import type { ScoreLabel, Vote } from '../../core/types';
+import { palette } from '../../theme/tokens';
 
-/** Colour for a signed score, interpolated across the five label bands. */
+/**
+ * Colour for a signed score, interpolated across the five label bands. The
+ * greens and reds are the desaturated buy/sell tokens; Neutral is a muted
+ * graphite rather than a loud amber, so it never reads as a signal.
+ */
 export function scoreColor(score: number): string {
-  if (score >= 60) return '#26a69a';
-  if (score >= 20) return '#4db6ac';
-  if (score <= -60) return '#ef5350';
-  if (score <= -20) return '#e57373';
-  return '#f59e0b';
+  if (score >= 60) return palette.buy;
+  if (score >= 20) return palette.buy;
+  if (score <= -60) return palette.sell;
+  if (score <= -20) return palette.sell;
+  return palette.neutral;
 }
 
 const LABEL_TEXT: Record<ScoreLabel, string> = {
@@ -40,37 +45,44 @@ export function labelShort(label: ScoreLabel): string {
 export function labelTextColor(label: ScoreLabel): string {
   switch (label) {
     case 'STRONG_BUY':
-      return 'text-[#26a69a]';
+      return 'text-buy';
     case 'BUY':
-      return 'text-[#4db6ac]';
+      return 'text-buy';
     case 'SELL':
-      return 'text-[#e57373]';
+      return 'text-sell';
     case 'STRONG_SELL':
-      return 'text-[#ef5350]';
+      return 'text-sell';
     default:
-      return 'text-amber-400';
+      return 'text-ink-secondary';
   }
 }
 
 export function labelBgColor(label: ScoreLabel): string {
   switch (label) {
     case 'STRONG_BUY':
-      return 'bg-[#26a69a]/15 border-[#26a69a]/40';
+      return 'bg-buy-soft border-buy-border';
     case 'BUY':
-      return 'bg-[#4db6ac]/12 border-[#4db6ac]/35';
+      return 'bg-buy-soft border-buy-border';
     case 'SELL':
-      return 'bg-[#e57373]/12 border-[#e57373]/35';
+      return 'bg-sell-soft border-sell-border';
     case 'STRONG_SELL':
-      return 'bg-[#ef5350]/15 border-[#ef5350]/40';
+      return 'bg-sell-soft border-sell-border';
     default:
-      return 'bg-amber-500/10 border-amber-500/30';
+      return 'bg-flat-soft border-hairline';
   }
 }
 
 export function voteTextColor(vote: Vote): string {
-  if (vote === 'BUY') return 'text-[#4db6ac]';
-  if (vote === 'SELL') return 'text-[#e57373]';
-  return 'text-amber-400';
+  if (vote === 'BUY') return 'text-buy';
+  if (vote === 'SELL') return 'text-sell';
+  return 'text-ink-muted';
+}
+
+/** The tone class for a score, from the same bands as scoreColor. */
+export function scoreTextColor(score: number): string {
+  if (score >= 20) return 'text-buy';
+  if (score <= -20) return 'text-sell';
+  return 'text-ink-secondary';
 }
 
 export function voteWord(vote: Vote): string {
@@ -90,6 +102,12 @@ export function formatNumber(value: number, precision: number): string {
 export function formatClock(ms: number | null): string {
   if (!ms) return '--';
   return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+/** HH:MM in the viewer's local timezone. */
+export function formatTime(ms: number | null): string {
+  if (!ms) return '--';
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 /** "42s ago", "2 min ago", "1h 5m ago" — how old a reading is. */
@@ -112,3 +130,12 @@ export function formatSigned(value: number, precision: number): string {
 export function formatSignedPercent(value: number, precision = 2): string {
   return `${value > 0 ? '+' : ''}${value.toFixed(precision)}%`;
 }
+
+/** A ▲ / ▼ / — glyph for a signed value, so colour is never the only cue. */
+export function changeGlyph(value: number | null): string {
+  if (value === null) return '';
+  if (value > 0) return '▲';
+  if (value < 0) return '▼';
+  return '—';
+}
+

@@ -133,12 +133,76 @@ export interface OrderFlowMetrics {
  *
  * It is never derived from candles and never synthesised: with no source the
  * reading is null and the card says so.
+ *
+ * The optional fields carry the richer "buyers vs sellers" detail the strength
+ * bar and the data-quality footer need. They are optional so a lean adapter can
+ * still answer with the core shape alone.
  */
 export interface OrderFlowReading {
   gauge: GaugeReading;
   metrics: OrderFlowMetrics;
   /** Vendor-reported source label, for the provenance line. */
   source: string;
+  /** The instrument the venue actually read, e.g. "QQQ" — a proxy for the index. */
+  instrument?: string;
+  /** Which provider served it, e.g. "alpaca" or "binance". */
+  provider?: string;
+  /** The market-data feed, e.g. "iex". Alpaca only. */
+  feed?: string;
+  /** True when the instrument is a proxy for the asset the user selected. */
+  proxy?: boolean;
+  /** The rolling window the session figures were measured over. */
+  session?: OrderFlowSession | null;
+  /** The resting book, when the venue publishes one. */
+  book?: OrderFlowBook | null;
+  /** True when the market is closed and this is the last session's reading. */
+  sessionClosed?: boolean;
+  /** Epoch ms of the last trade behind the reading, or null. */
+  lastTradeAt?: number | null;
+  /** Epoch ms the reading was computed. */
+  computedAt?: number;
+  /** Bucketed session CVD, oldest first, for the sparkline. */
+  cvdSeries?: Array<{ timestamp: number; cvd: number }>;
+}
+
+/** One resting book level. */
+export interface OrderFlowBookLevel {
+  price: number;
+  size: number;
+}
+
+/** A resting bid/ask book, and the pressure it implies. */
+export interface OrderFlowBook {
+  bids: OrderFlowBookLevel[];
+  asks: OrderFlowBookLevel[];
+  /** Total resting bid size across the levels carried. */
+  bidSize: number;
+  /** Total resting ask size across the levels carried. */
+  askSize: number;
+  /** -1 (all offers) .. +1 (all bids). */
+  imbalance: number;
+}
+
+/** The rolling-window tape figures behind the strength bar. */
+export interface OrderFlowSession {
+  /** Buyer-aggressed size in the window. */
+  buyVolume: number;
+  /** Seller-aggressed size in the window. */
+  sellVolume: number;
+  /** buyVolume - sellVolume. */
+  delta: number;
+  /** delta / (buyVolume + sellVolume), -1..+1. */
+  imbalance: number;
+  /** buyVolume / (buyVolume + sellVolume), 0..1. 0.5 when empty. */
+  buyShare: number;
+  /** Session cumulative volume delta. */
+  cvd: number;
+  /** CVD slope over the session, in CVD units per second, or null. */
+  cvdSlope: number | null;
+  /** The window these figures cover, ms. */
+  windowMs: number;
+  /** Classified trades counted in the window. */
+  tradeCount: number;
 }
 
 export interface TimeframeReading {

@@ -1,15 +1,18 @@
 // ============================================
 // INSTRUMENT SELECTOR
 // ============================================
-// Gold (Twelve Data) and the S&P 500 / Dow / Nasdaq index assets (Alpaca).
+// Gold (Twelve Data) and the S&P 500 / Dow / Nasdaq index assets (Alpaca), as a
+// clean segmented control. Selection is a subtle accent fill, never a loud
+// highlight.
 //
 // An instrument whose provider is not configured is still selectable — it is
 // better to show an explicit "no data source configured" state than to hide the
-// instrument the user actually trades — but it is marked as such.
+// instrument the user actually trades — but it is marked with a small dot and a
+// tooltip.
 
 import React from 'react';
 import { ALL_INSTRUMENTS } from '../../core/instruments';
-import { cn } from '@/lib/utils';
+import { SegmentedControl } from '../common/SegmentedControl';
 
 interface InstrumentSelectorProps {
   selectedId: string;
@@ -22,45 +25,27 @@ interface InstrumentSelectorProps {
 }
 
 export const InstrumentSelector: React.FC<InstrumentSelectorProps> = ({ selectedId, onSelect, availability }) => {
+  const options = ALL_INSTRUMENTS.map(instrument => {
+    const known = availability[instrument.id];
+    const unavailable = known === false;
+    return {
+      value: instrument.id,
+      label: unavailable ? `${instrument.shortLabel} •` : instrument.shortLabel,
+      title: unavailable ? `${instrument.name} — no data source configured` : instrument.name,
+    };
+  });
+
   return (
-    <div className="flex items-center gap-2">
-      <span className="hidden text-micro font-semibold uppercase tracking-wider text-white/30 sm:inline">
+    <div className="flex items-center gap-2.5">
+      <span className="hidden text-micro font-semibold uppercase tracking-[0.12em] text-ink-muted sm:inline">
         Assets
       </span>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {ALL_INSTRUMENTS.map(instrument => {
-          const isSelected = selectedId === instrument.id;
-          const known = availability[instrument.id];
-          // Only a confirmed `false` earns the unavailable marker. An
-          // unknown state shows nothing rather than a warning we cannot back.
-          const isUnavailable = known === false;
-          const title = isUnavailable ? `${instrument.name} — no data source configured` : instrument.name;
-
-          return (
-            <button
-              key={instrument.id}
-              type="button"
-              onClick={() => onSelect(instrument.id)}
-              title={title}
-              aria-pressed={isSelected}
-              className={cn(
-                'flex items-center gap-1 rounded-lg px-2.5 py-1 text-label font-bold transition-all',
-                isSelected
-                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-black shadow-[0_4px_20px_rgba(245,158,11,0.4)]'
-                  : 'border border-white/[0.04] bg-white/[0.02] text-white/60 hover:bg-white/[0.04] hover:text-white'
-              )}
-            >
-              <span className="font-mono">{instrument.shortLabel}</span>
-              {isUnavailable && (
-                <span
-                  className={cn('h-1.5 w-1.5 rounded-full', isSelected ? 'bg-black/50' : 'bg-amber-500/70')}
-                  aria-hidden
-                />
-              )}
-            </button>
-          );
-        })}
-      </div>
+      <SegmentedControl
+        ariaLabel="Asset"
+        value={selectedId}
+        onChange={onSelect}
+        options={options}
+      />
     </div>
   );
 };

@@ -1,15 +1,19 @@
 // ============================================
 // COMPASS GAUGE
 // ============================================
-// A half-circle needle gauge on the signed -100..+100 scale.
+// A half-circle needle gauge on the signed -100..+100 scale, refined for the
+// institutional theme: a thinner arc, a muted gradient (no neon), a clear
+// needle and a LARGE verdict word beneath it with the Buy / Neutral / Sell
+// counts under that. Gauge on top, numbers below, no empty gaps.
 //
-// The needle angle, the colour it points into and the label all come from the
-// same score through the same functions in core/scoring, so the label can
-// never disagree with the needle.
+// The needle angle, the colour it points into and the verdict all come from the
+// same score through the same functions in core/scoring and ./format, so the
+// word can never disagree with the needle. The compass LOGIC is unchanged.
 
 import React, { useId } from 'react';
 import type { GaugeReading } from '../../core/types';
 import { labelShort, labelTextColor, scoreColor } from './format';
+import { gaugeArcStops } from '../../theme/tokens';
 import { cn } from '@/lib/utils';
 
 interface CompassGaugeProps {
@@ -23,9 +27,9 @@ interface CompassGaugeProps {
 }
 
 const SIZES = {
-  sm: { width: 128, arc: 84, stroke: 9, needle: 62, font: 'text-label', tally: 'text-micro', render: 132 },
-  md: { width: 176, arc: 112, stroke: 11, needle: 82, font: 'text-title', tally: 'text-label', render: 170 },
-  lg: { width: 224, arc: 142, stroke: 13, needle: 104, font: 'text-title', tally: 'text-label', render: 224 },
+  sm: { width: 128, arc: 92, stroke: 6, needle: 64, render: 132, verdict: 'text-title', tally: 'text-micro' },
+  md: { width: 176, arc: 124, stroke: 7, needle: 88, render: 176, verdict: 'text-headline', tally: 'text-label' },
+  lg: { width: 224, arc: 160, stroke: 8, needle: 114, render: 224, verdict: 'text-headline', tally: 'text-label' },
 };
 
 export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size = 'md', showTally = true }) => {
@@ -38,7 +42,7 @@ export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size =
   const angle = (score / 100) * 90; // -90..+90 degrees
   const color = scoreColor(score);
   const width = dims.width;
-  const height = width / 2 + 18;
+  const height = width / 2 + 14;
   const cx = width / 2;
   const cy = width / 2;
   const r = dims.arc / 2;
@@ -49,7 +53,7 @@ export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size =
   return (
     <div className="flex flex-col items-center">
       {heading && (
-        <span className="text-micro font-semibold uppercase tracking-wider text-white/40">{heading}</span>
+        <span className="text-micro font-semibold uppercase tracking-[0.12em] text-ink-muted">{heading}</span>
       )}
 
       <svg
@@ -61,50 +65,56 @@ export const CompassGauge: React.FC<CompassGaugeProps> = ({ title, gauge, size =
       >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#ef5350" />
-            <stop offset="25%" stopColor="#e57373" />
-            <stop offset="50%" stopColor="#f59e0b" />
-            <stop offset="75%" stopColor="#4db6ac" />
-            <stop offset="100%" stopColor="#26a69a" />
+            {gaugeArcStops.map(stop => (
+              <stop key={stop.offset} offset={stop.offset} stopColor={stop.color} />
+            ))}
           </linearGradient>
         </defs>
 
-        <path d={describeArc(r)} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={dims.stroke} strokeLinecap="round" />
+        {/* The track, then the muted gradient arc over it. */}
+        <path
+          d={describeArc(r)}
+          fill="none"
+          stroke="var(--bg-elevated)"
+          strokeWidth={dims.stroke}
+          strokeLinecap="round"
+        />
         <path
           d={describeArc(r)}
           fill="none"
           stroke={`url(#${gradientId})`}
           strokeWidth={dims.stroke}
           strokeLinecap="round"
-          opacity="0.9"
+          opacity="0.75"
         />
 
-        {/* Needle */}
+        {/* Needle: a thin line with a small counterweight, so it reads as an
+            instrument, not a blob. */}
         <g
           style={{
             transform: `rotate(${angle}deg)`,
             transformOrigin: `${cx}px ${cy}px`,
             transformBox: 'view-box',
-            transition: 'transform 700ms cubic-bezier(0.22, 1, 0.36, 1)',
+            transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
           }}
         >
-          <polygon
-            points={`${cx},${cy - dims.needle} ${cx + 4},${cy} ${cx - 4},${cy}`}
-            fill={color}
-          />
+          <line x1={cx} y1={cy} x2={cx} y2={cy - dims.needle} stroke={color} strokeWidth="2.5" strokeLinecap="round" />
+          <line x1={cx} y1={cy} x2={cx} y2={cy + 8} stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
         </g>
-        <circle cx={cx} cy={cy} r="5" fill="#07080a" stroke={color} strokeWidth="2" />
+        <circle cx={cx} cy={cy} r="4" fill="var(--bg-surface)" stroke={color} strokeWidth="1.5" />
       </svg>
 
-      <span className={cn('mt-1 font-bold', dims.font, labelTextColor(gauge.label))}>{labelShort(gauge.label)}</span>
+      <span className={cn('mt-1.5 font-semibold leading-none', dims.verdict, labelTextColor(gauge.label))}>
+        {labelShort(gauge.label)}
+      </span>
 
       {showTally && (
-        <div className={cn('mt-1 flex items-center gap-2 font-mono', dims.tally)}>
-          <span className="text-[#4db6ac]">B {gauge.tally.buy}</span>
-          <span className="text-white/35">·</span>
-          <span className="text-amber-400">N {gauge.tally.neutral}</span>
-          <span className="text-white/35">·</span>
-          <span className="text-[#e57373]">S {gauge.tally.sell}</span>
+        <div className={cn('mt-2 flex items-center gap-2 font-mono', dims.tally)}>
+          <span className="text-buy">B {gauge.tally.buy}</span>
+          <span className="text-ink-faint">·</span>
+          <span className="text-ink-secondary">N {gauge.tally.neutral}</span>
+          <span className="text-ink-faint">·</span>
+          <span className="text-sell">S {gauge.tally.sell}</span>
         </div>
       )}
     </div>

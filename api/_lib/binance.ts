@@ -22,8 +22,9 @@
 // Every request goes through the Binance request meter (api/_lib/binanceMeter.ts)
 // and logs one line, so a call that skips the meter is impossible.
 
-import type { GaugeReading, Vote, VoteDetail } from '../../src/core/types.js';
+import type { GaugeReading, OrderFlowBook, Vote, VoteDetail } from '../../src/core/types.js';
 import { DEFAULT_COMPASS_CONFIG } from '../../src/config/compass.js';
+import { cvdSlope } from '../../src/core/orderflow.js';
 import { assertBinanceRequest, binanceMeterSnapshot, markBinanceExhausted, recordBinanceRequest } from './binanceMeter.js';
 import { CreditLimitError } from './rateMeter.js';
 import type { OrderFlowReading } from './orderflow.js';
@@ -201,6 +202,8 @@ export interface AggTrade {
   p: string;
   q: string;
   m: boolean;
+  /** Trade time, epoch ms. */
+  T?: number;
 }
 
 /** Sum the quantity of the first `levels` book rows on one side. */
@@ -230,6 +233,12 @@ export interface BinanceFlowMetrics {
   absorption: number;
   /** Trades read from the tape. */
   tradeCount: number;
+  /** Buyer-aggressed quantity over the window. */
+  buyVolume: number;
+  /** Seller-aggressed quantity over the window. */
+  sellVolume: number;
+  /** Newest trade time in the window, or null. */
+  lastTradeAt: number | null;
 }
 
 /** Compute the flow metrics from one depth snapshot and one aggTrades window. */
@@ -243,6 +252,7 @@ export function computeBinanceFlowMetrics(depth: DepthPayload, trades: AggTrade[
   let sellVolume = 0;
   let firstPrice: number | null = null;
   let lastPrice: number | null = null;
+  let lastTradeAt: number | null = null;
 
   for (const trade of trades) {
     const qty = Number.parseFloat(trade.q);
@@ -253,6 +263,8 @@ export function computeBinanceFlowMetrics(depth: DepthPayload, trades: AggTrade[
     else buyVolume += qty;
     if (firstPrice === null) firstPrice = price;
     lastPrice = price;
+    const at = typeof trade.T === 'number' && Number.isFinite(trade.T) ? trade.T : null;
+    if (at !== null && (lastTradeAt === null || at > lastTradeAt)) lastTradeAt = at;
   }
 
   const totalVolume = buyVolume + sellVolume;
@@ -268,7 +280,21 @@ export function computeBinanceFlowMetrics(depth: DepthPayload, trades: AggTrade[
   // is zero rather than a guess.
   const absorption = netFlowRatio > 0.02 ? clamp(1 - priceMoveRatio / netFlowRatio, 0, 1) : 0;
 
-  return { delta, cvd, imbalance, absorption, tradeCount: trades.length };
+  return { delta, cvd, imbalance, absorption, tradeCount: trades.length, buyVolume, sellVolume, lastTradeAt };
+}
+
+/** The resting book from a depth snapshot, for the Book Flow mode. */
+export function bookFromDepth(depth: DepthPayload, levels = 20): OrderFlowBook {
+  const toLevel = (row: [string, string]) => ({
+    price: Number.parseFloat(row[0]),
+    size: Number.parseFloat(row[1]),
+  });
+  const bids = (depth.bids ?? []).slice(0, levels).map(toLevel).filter(l => Number.isFinite(l.price) && Number.isFinite(l.size));
+  const asks = (depth.asks ?? []).slice(0, levels).map(toLevel).filter(l => Number.isFinite(l.price) && Number.isFinite(l.size));
+  const bidSize = bids.reduce((sum, level) => sum + level.size, 0);
+  const askSize = asks.reduce((sum, level) => sum + level.size, 0);
+  const total = bidSize + askSize;
+  return { bids, asks, bidSize, askSize, imbalance: total > 0 ? (bidSize - askSize) / total : 0 };
 }
 
 function voteFromSign(value: number): Vote {
@@ -349,6 +375,9 @@ export async function fetchBinanceOrderFlowReading(
 
   const metrics = computeBinanceFlowMetrics(depth, trades);
   const gauge = buildBinanceGauge(metrics, totalTradeVolume(trades));
+  const totalVolume = metrics.buyVolume + metrics.sellVolume;
+  const windowMs = trades.length >= 2 ? (metrics.lastTradeAt ?? 0) - firstTradeTime(trades) : 0;
+  const cvdSeries = binanceCvdSeries(trades);
 
   return {
     gauge,
@@ -359,5 +388,60 @@ export async function fetchBinanceOrderFlowReading(
       absorption: metrics.absorption,
     },
     source: `${BINANCE_VENUE} ${symbol}`,
+    instrument: symbol,
+    provider: 'binance',
+    proxy: false,
+    session: {
+      buyVolume: metrics.buyVolume,
+      sellVolume: metrics.sellVolume,
+      delta: metrics.delta,
+      imbalance: totalVolume > 0 ? metrics.delta / totalVolume : 0,
+      buyShare: totalVolume > 0 ? metrics.buyVolume / totalVolume : 0.5,
+      cvd: metrics.cvd,
+      cvdSlope: cvdSlope(binanceCvdSeries(trades)),
+      windowMs: Math.max(0, windowMs),
+      tradeCount: metrics.tradeCount,
+    },
+    book: bookFromDepth(depth),
+    sessionClosed: false,
+    lastTradeAt: metrics.lastTradeAt,
+    computedAt: Date.now(),
+    cvdSeries,
   };
+}
+
+/** Bucketed cumulative volume delta over the tape, oldest first. */
+function binanceCvdSeries(trades: AggTrade[], buckets = 24): Array<{ timestamp: number; cvd: number }> {
+  const withTime = trades
+    .map(trade => ({ trade, ms: typeof trade.T === 'number' ? trade.T : NaN }))
+    .filter(entry => Number.isFinite(entry.ms))
+    .sort((a, b) => a.ms - b.ms);
+  if (withTime.length < 2) return [];
+
+  const first = withTime[0].ms;
+  const last = withTime[withTime.length - 1].ms;
+  const step = Math.max(1, (last - first) / buckets);
+  const samples: Array<{ timestamp: number; cvd: number }> = [];
+  let running = 0;
+  let bucketEnd = first + step;
+  for (const { trade, ms } of withTime) {
+    const qty = Number.parseFloat(trade.q);
+    if (!Number.isFinite(qty)) continue;
+    running += trade.m ? -qty : qty;
+    while (ms >= bucketEnd) {
+      samples.push({ timestamp: bucketEnd, cvd: running });
+      bucketEnd += step;
+    }
+  }
+  samples.push({ timestamp: last, cvd: running });
+  return samples;
+}
+
+/** The oldest trade time in the window, for a window span. */
+function firstTradeTime(trades: AggTrade[]): number {
+  let first = Number.POSITIVE_INFINITY;
+  for (const trade of trades) {
+    if (Number.isFinite(trade.T) && (trade.T as number) < first) first = trade.T as number;
+  }
+  return Number.isFinite(first) ? first : 0;
 }
