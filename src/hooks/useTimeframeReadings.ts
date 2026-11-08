@@ -9,23 +9,16 @@
 // component remount and so switching back to a timeframe already loaded costs
 // nothing and needs no vendor call.
 //
-// Order flow is fetched for the SELECTED timeframe only — one request at a time,
-// never a sweep — and merged into that timeframe's reading. With the shipped
-// `none` adapter there is no source, so the reading is null and the right-hand
-// card says so.
+// Order flow is a SEPARATE provider (see useOrderFlow): this hook receives the
+// selected timeframe's real reading and blends it into THAT timeframe only. It
+// never derives order flow from candles.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef } from 'react';
 import type { Candle, Timeframe, TimeframeReading } from '../core/types';
 import { TIMEFRAMES } from '../core/types';
 import { computeTimeframeReading } from '../core/timeframeEngine';
 import { DEFAULT_COMPASS_CONFIG, type CompassConfig } from '../config/compass';
-import {
-  activeOrderFlowProvider,
-  clearOrderFlowCache,
-  probeOrderFlowProvider,
-  type OrderFlowProbeResult,
-  type OrderFlowReading,
-} from '../core/providers/orderflow';
+import type { OrderFlowReading } from '../core/providers/orderflow';
 import type { InstrumentFeed } from './useInstrumentFeed';
 
 export interface StoredReading {
@@ -43,8 +36,6 @@ export interface UseTimeframeReadingsResult {
   current: StoredReading | null;
   /** Every stored reading for the current asset, in timeframe order. */
   stored: StoredReading[];
-  /** Whether an order-flow source is configured, and what it is. */
-  orderFlow: OrderFlowProbeResult | null;
 }
 
 export function readingKey(instrumentId: string, timeframe: Timeframe): string {
@@ -57,53 +48,10 @@ type Stamp = { series: Candle[]; updatedAt: number };
 export function useTimeframeReadings(
   feed: InstrumentFeed,
   selectedTimeframe: Timeframe,
+  orderFlowReading: OrderFlowReading | null = null,
   config: CompassConfig = DEFAULT_COMPASS_CONFIG
 ): UseTimeframeReadingsResult {
   const stampsRef = useRef(new Map<string, Stamp>());
-  const [orderFlowByKey, setOrderFlowByKey] = useState<Record<string, OrderFlowReading | null>>({});
-  const [orderFlow, setOrderFlow] = useState<OrderFlowProbeResult | null>(null);
-
-  // Ask the server whether an order-flow source exists. A server-side fact, so
-  // it is asked once and cached; the route costs no vendor credits.
-  useEffect(() => {
-    let active = true;
-    probeOrderFlowProvider()
-      .then(result => {
-        if (active) setOrderFlow(result);
-      })
-      .catch(() => {
-        if (active) setOrderFlow(null);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  // Fetch order flow for the selected timeframe only, when a source is
-  // configured. A source that answers null leaves the card with no reading
-  // rather than a placeholder.
-  useEffect(() => {
-    if (!orderFlow?.configured) return;
-    const provider = activeOrderFlowProvider();
-    if (!provider.isConfigured()) return;
-
-    let active = true;
-    const controller = new AbortController();
-    provider
-      .getReading({ instrument: feed.instrument, timeframe: selectedTimeframe, signal: controller.signal })
-      .then(reading => {
-        if (!active) return;
-        setOrderFlowByKey(prev => ({ ...prev, [readingKey(feed.instrument.id, selectedTimeframe)]: reading }));
-      })
-      .catch(() => {
-        // A silent source is reported as no reading, never as a guess.
-      });
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [feed.instrument, selectedTimeframe, orderFlow?.configured, feed.revision]);
 
   const byKey = useMemo(() => {
     const map = new Map<string, StoredReading>();
@@ -121,11 +69,15 @@ export function useTimeframeReadings(
       const updatedAt = previous && previous.series === series ? previous.updatedAt : Date.now();
       stamps.set(key, { series, updatedAt });
 
+      // Order flow is blended into the SELECTED timeframe only: it is read for
+      // one (instrument, timeframe) at a time, never swept across all of them.
+      const orderFlow = timeframe === selectedTimeframe ? orderFlowReading : null;
+
       map.set(key, {
         key,
         instrumentId: feed.instrument.id,
         timeframe,
-        reading: computeTimeframeReading(timeframe, series, config, orderFlowByKey[key] ?? null),
+        reading: computeTimeframeReading(timeframe, series, config, orderFlow),
         updatedAt,
       });
     }
@@ -133,19 +85,17 @@ export function useTimeframeReadings(
     return map;
     // feed.seriesByTimeframe carries a new identity whenever a timeframe's series
     // actually changes, so it is the only series signal the recompute needs.
-  }, [feed.seriesByTimeframe, feed.instrument.id, config, orderFlowByKey]);
+  }, [feed.seriesByTimeframe, feed.instrument.id, config, orderFlowReading, selectedTimeframe]);
 
   const current = byKey.get(readingKey(feed.instrument.id, selectedTimeframe)) ?? null;
 
   const stored = useMemo(
-    () => TIMEFRAMES.map(tf => byKey.get(readingKey(feed.instrument.id, tf))).filter((entry): entry is StoredReading => Boolean(entry)),
+    () =>
+      TIMEFRAMES.map(tf => byKey.get(readingKey(feed.instrument.id, tf))).filter(
+        (entry): entry is StoredReading => Boolean(entry)
+      ),
     [byKey, feed.instrument.id]
   );
 
-  return { current, stored, orderFlow };
-}
-
-/** Test seam: forget the order-flow probe result. */
-export function resetOrderFlow(): void {
-  clearOrderFlowCache();
+  return { current, stored };
 }

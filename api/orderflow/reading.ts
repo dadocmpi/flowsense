@@ -6,16 +6,17 @@
 //
 // Query: instrument, timeframe
 //
-// It costs no vendor credits when nothing is configured, which is the shipped
-// state — the client calls it once on load to learn whether the "Order flow"
-// card should draw a gauge or say "No order flow source configured".
+// The shipped source is Binance (api/_lib/binance.ts): a real public venue whose
+// depth and tape carry the aggressor side and the resting book. It needs no key.
+// The probe below costs no vendor call; only a request that names an instrument
+// reads the venue.
 //
-// The vendor-specific work lives in api/_lib/orderflow.ts, the single file to
-// edit to connect a provider. Nothing here invents a reading: an unconfigured or
-// silent source answers with `reading: null`.
+// Nothing here invents a reading: an instrument with no market on the venue, or a
+// venue that cannot be reached, answers with `reading: null` and a note. The
+// client shows that as an unavailable state, never as a neutral reading.
 //
 // Response:
-//   { configured, provider, label, note, reading }
+//   { configured, provider, label, venue, note, reading }
 //   reading is null when there is nothing real to show.
 
 import { sendJson, first, type ApiRequest, type ApiResponse } from '../_lib/futuresShared.js';
@@ -23,9 +24,11 @@ import {
   fetchOrderFlowReading,
   orderFlowApiKey,
   orderFlowConfigured,
+  orderFlowHasMarket,
   orderFlowLabel,
   resolveOrderFlowVendor,
 } from '../_lib/orderflow.js';
+import { BinanceError } from '../_lib/binance.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
   if (req.method && req.method !== 'GET') {
@@ -33,7 +36,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     return;
   }
 
-  const vendor = resolveOrderFlowVendor();
+  const venue = resolveOrderFlowVendor();
   const configured = orderFlowConfigured();
 
   // A probe with no instrument is the client asking "is there a source?". Answer
@@ -44,9 +47,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       configured,
       provider: configured ? 'http' : 'none',
       label: orderFlowLabel(),
+      venue,
       note: configured
-        ? `Configured: ${vendor}`
-        : 'Set ORDERFLOW_PROVIDER and ORDERFLOW_API_KEY to enable order flow.',
+        ? `Configured: ${orderFlowLabel()}`
+        : 'Set ORDERFLOW_PROVIDER=binance to enable order flow.',
       reading: null,
     });
     return;
@@ -57,6 +61,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       configured: false,
       provider: 'none',
       label: 'None',
+      venue,
       note: 'No order flow source configured.',
       reading: null,
     });
@@ -64,28 +69,45 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   }
 
   const timeframe = first(req.query.timeframe) ?? '15m';
-  const apiKey = orderFlowApiKey();
-  if (!apiKey) {
-    sendJson(res, 200, { configured: false, provider: 'none', label: 'None', note: 'No order flow source configured.', reading: null });
+
+  // An instrument the venue has no market for is not an error: the card says so
+  // rather than reading a different symbol.
+  if (!orderFlowHasMarket(instrumentId)) {
+    sendJson(res, 200, {
+      configured: true,
+      provider: 'http',
+      label: orderFlowLabel(),
+      venue,
+      note: `No ${orderFlowLabel()} market for ${instrumentId}.`,
+      reading: null,
+    });
     return;
   }
 
   try {
-    const reading = await fetchOrderFlowReading({ instrumentId, timeframe, apiKey });
+    const reading = await fetchOrderFlowReading({
+      instrumentId,
+      timeframe,
+      apiKey: orderFlowApiKey(),
+    });
     sendJson(res, 200, {
       configured: true,
       provider: 'http',
       label: orderFlowLabel(),
-      note: reading ? null : 'The order flow source returned no reading.',
+      venue,
+      note: reading ? null : `The ${orderFlowLabel()} source returned no reading.`,
       reading,
     });
   } catch (error) {
-    // A failed vendor call is reported as no reading, never as a fabricated one.
+    // A failed venue call is reported as no reading, never as a fabricated one.
+    const note =
+      error instanceof BinanceError || error instanceof Error ? error.message : 'Order flow request failed';
     sendJson(res, 200, {
       configured: true,
       provider: 'http',
       label: orderFlowLabel(),
-      note: error instanceof Error ? error.message : 'Order flow request failed',
+      venue,
+      note,
       reading: null,
     });
   }

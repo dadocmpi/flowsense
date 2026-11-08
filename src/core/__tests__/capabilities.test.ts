@@ -1,36 +1,31 @@
 // ============================================
 // ORDER-FLOW CAPABILITIES TESTS
 // ============================================
-// The capability flags are what let the UI disable Book Flow instead of showing
-// an error, and what tell the estimate whether a usable volume exists. The one
-// invariant that must never regress: Twelve Data has NO order book.
+// The capability flags are what let the UI decide whether to render the Book
+// Flow toggle, and they are driven by the VENUE the server reports — never
+// hardcoded. The one invariant that must never regress: only a venue with a real
+// book enables Book Flow.
 
 import { describe, expect, it } from 'vitest';
 import {
-  orderFlowCapabilitiesFor,
-  orderFlowCapabilitiesForProvider,
-  VENDOR_ORDER_FLOW_CAPABILITIES,
+  orderFlowCapabilitiesForVenue,
+  VENUE_ORDER_FLOW_CAPABILITIES,
 } from '../providers/capabilities';
-import { findInstrument } from '../instruments';
 
 describe('order-flow capabilities', () => {
-  it('reports no order book for Twelve Data (Gold)', () => {
-    expect(VENDOR_ORDER_FLOW_CAPABILITIES.twelvedata.hasOrderBook).toBe(false);
-    expect(orderFlowCapabilitiesForProvider('twelvedata').hasOrderBook).toBe(false);
+  it('enables Book Flow for Binance, which publishes a real depth book', () => {
+    expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasOrderBook).toBe(true);
+    expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasVolume).toBe(true);
+    expect(orderFlowCapabilitiesForVenue('binance')).toEqual({ hasOrderBook: true, hasVolume: true });
   });
 
-  it('reports no usable volume for Twelve Data, so the estimate falls back to range', () => {
-    expect(VENDOR_ORDER_FLOW_CAPABILITIES.twelvedata.hasVolume).toBe(false);
+  it('does not enable Book Flow with no source', () => {
+    expect(orderFlowCapabilitiesForVenue('none').hasOrderBook).toBe(false);
   });
 
-  it('reports real volume for Alpaca', () => {
-    expect(VENDOR_ORDER_FLOW_CAPABILITIES.alpaca.hasVolume).toBe(true);
-  });
-
-  it('resolves capabilities from the instrument that is being shown', () => {
-    const gold = findInstrument('GC')!;
-    const spx = findInstrument('ES')!;
-    expect(orderFlowCapabilitiesFor(gold)).toEqual({ hasOrderBook: false, hasVolume: false });
-    expect(orderFlowCapabilitiesFor(spx)).toEqual({ hasOrderBook: false, hasVolume: true });
+  it('falls back to the honest minimum for an unknown venue', () => {
+    expect(orderFlowCapabilitiesForVenue('mystery')).toEqual({ hasOrderBook: false, hasVolume: false });
+    expect(orderFlowCapabilitiesForVenue(null)).toEqual({ hasOrderBook: false, hasVolume: false });
+    expect(orderFlowCapabilitiesForVenue(undefined)).toEqual({ hasOrderBook: false, hasVolume: false });
   });
 });

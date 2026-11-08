@@ -333,9 +333,9 @@ pre-existing type errors above.
 ## Streaming
 
 A futures provider serves candles on request — one timeframe per load, the one
-being viewed — plus a polled price when no tick feed is available. Because a
-polled close is not a tick, the status reads "Delayed (polling)" rather than
-"Live", and a market that has stopped producing bars is labelled "Market
+being viewed — plus a polled price when no tick feed is available. The status
+reports the feed's real condition rather than dressing a polled close as a tick,
+and a market that has stopped producing bars is labelled "Market
 closed" instead of continuing to present the last reading as current.
 
 When the server exposes a browser-safe price stream, the client uses it and the

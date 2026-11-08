@@ -44,18 +44,19 @@ src/core/instruments.ts        the asset catalog + which provider serves each
 src/core/providers/            MarketDataProvider interface + the server-proxied provider
 src/core/providers/polling.ts  per-provider poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
-src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
-src/core/orderFlowEstimator.ts      ESTIMATED order flow from candles (no book/tape): CLV, delta, CVD, hysteresis (pure)
-src/core/priceLevels.ts             ESTIMATED price levels from candles: busiest zones + swing high/low (pure)
-src/core/providers/capabilities.ts  what each vendor can supply for the flow panel (hasOrderBook, hasVolume)
+src/core/providers/orderflow.ts     OrderFlowProvider interface + the server-proxied `http` adapter
+src/core/providers/capabilities.ts  what each order-flow VENUE can supply (hasOrderBook, hasVolume)
 src/config/compass.ts          every weight, tolerance and session setting
 src/hooks/marketDataStore.ts         one store of series keyed asset:timeframe, loaded once on open
 src/hooks/useInstrumentFeed.ts        a per-instrument view over the store
+src/hooks/useOrderFlow.ts             the selected (asset, timeframe)'s real order-flow reading (venue-independent)
 src/hooks/useTimeframeReadings.ts     one reading per (asset, timeframe), kept apart
+src/components/flow/OrderFlowPanel.tsx  the RIGHT compass: real tape + book from the venue
 api/_lib/assets.ts             THE per-asset provider + symbol mapping (env-overridable)
 api/_lib/rateMeter.ts          the shared per-minute meter implementation
 api/_lib/creditMeter.ts        the Twelve Data meter instance (credits)
 api/_lib/alpacaMeter.ts        the Alpaca meter instance (requests)
+api/_lib/binanceMeter.ts       the Binance meter instance (requests)
 api/_lib/symbols.ts            the Twelve Data symbol mapping (the ONE place)
 api/_lib/twelvedata.ts         Twelve Data adapter: meter, request, parse, classify error kind
 api/_lib/alpaca.ts             Alpaca adapter: meter, request, parse, pagination, classify error kind
@@ -65,8 +66,9 @@ api/futures/candles.ts         server-side candle proxy (single asset, or one ba
 api/futures/status.ts          which providers are configured, what symbol is read, meter state
 api/health.ts                  provider credentials + last-call time + calls this minute
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
-api/orderflow/reading.ts       is an order-flow source configured, and its reading
+api/orderflow/reading.ts       is an order-flow venue configured, and its real reading
 api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor
+api/_lib/binance.ts            Binance order-flow adapter: depth + aggTrades -> delta/CVD/imbalance
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
@@ -78,8 +80,8 @@ no I/O, no clock, no React in `src/core`.
 
 The provider is asked for candles on a cadence tied to the timeframe, and the
 price is polled every `PRICE_POLL_INTERVAL_MS` (30s) when no tick feed is in
-use. Because a polled close is not a tick, the status reads "Delayed (polling)"
-— do not dress it as `LIVE`. When the server exposes a browser-safe price
+use. Because a polled close is not a tick, the status must not claim a tick
+feed. When the server exposes a browser-safe price
 stream, `subscribeTicks` uses it instead and the status can reach `LIVE`.
 
 The poll cadence and the server cache TTL live together in
@@ -186,62 +188,61 @@ window does not reach the bucket open, the natively fetched bar is kept.
 
 The RIGHT compass is order flow: delta/CVD, order-book imbalance, absorption.
 Twelve Data carries NO order-flow data — a candle has no aggressor side and no
-order book — so it is never computed from the candle feed. It comes from a
-provider behind `src/core/providers/orderflow.ts`, selected server-side by
-`ORDERFLOW_PROVIDER` / `ORDERFLOW_API_KEY` (see `api/_lib/orderflow.ts`).
+order book — so it is never computed from the candle feed. It comes from a real
+VENUE behind `src/core/providers/orderflow.ts`, selected server-side by
+`ORDERFLOW_PROVIDER` (see `api/_lib/orderflow.ts`).
 
-The shipped adapter is `none`: no real source is configured, so the Summary
-compass blends in no real flow. It must never draw a neutral needle or a `0` in
-place of a missing real reading — a neutral needle looks like a real "neutral
-market" read. When no real source exists, the RIGHT panel falls back to the
-clearly-labelled ESTIMATED order flow described below (and, with the estimate
-switched off, the Summary IS the technical reading rather than a blend against a
-stand-in zero).
+The shipped venue is Binance (`api/_lib/binance.ts`): its public market-data API
+carries a resting depth BOOK and a TAPE with the aggressor side of every trade
+(`aggTrades`). Gold is read as PAXG/USDT (PAX Gold, 1 token = 1 troy ounce) —
+a real gold market. The venue needs no key, so order flow works out of the box.
+Set `ORDERFLOW_PROVIDER=none` to switch it off.
 
-Connecting a vendor means implementing `fetchOrderFlowReading` in
-`api/_lib/orderflow.ts` and setting the two environment variables. Nothing else
-changes: the client, the summary blend and the entry check already speak that
-shape. The key stays server-side; check `grep -c "apikey" dist/assets/*.js` is
-still 0 after adding one.
+The reading is fetched INDEPENDENTLY of the candle feed (`src/hooks/useOrderFlow.ts`
++ `/api/orderflow/reading`), so the RIGHT card shows real flow even when the
+candle provider has nothing for the instrument.
 
-### With no source, the RIGHT panel shows an ESTIMATED order flow
+When there is no real reading — the venue is off, has no market for the
+instrument, or cannot be reached — the card says so and draws NO gauge. It must
+never draw a neutral needle or a `0` in place of a missing real reading: a
+neutral needle looks like a real "neutral market" read. There is no candle-derived
+estimate anywhere in the build; order flow is either real or absent.
 
-An instrument whose provider publishes no book and no tape (Twelve Data /
-XAU-USD) still gets a RIGHT panel, but it is an ESTIMATE derived from the closed
-candles, and it is always badged ESTIMATED with a tooltip saying exactly what it
-is. This is the ONE place candles feed the flow panel, and it is clearly labelled
-as an estimate rather than passed off as a real reading:
+Connecting a different vendor means implementing `fetchOrderFlowReading` in
+`api/_lib/orderflow.ts` and setting `ORDERFLOW_PROVIDER` /
+`ORDERFLOW_API_KEY`. Nothing else changes: the client, the summary blend and the
+entry check already speak that shape. The key stays server-side; check
+`grep -c "apikey" dist/assets/*.js` is still 0 after adding one.
 
-- `src/core/orderFlowEstimator.ts` is pure. Per closed candle it computes
-  CLV = ((close - low) - (high - close)) / (high - low), guarded to 0 when
-  high == low. The weight is the candle volume when present and non-zero,
-  otherwise the candle range, or a live tick count when a stream supplies one;
-  the proxy is auto-detected and the chosen one is logged once. delta = CLV *
-  weight, CVD is its running sum, and the window imbalance is the activity-
-  weighted mean CLV on the shared -100..+100 scale.
-- MAIN values are computed on CLOSED candles only. The newest candle of a live
-  series is the forming bar: it is peeled off and shown as a separate
-  "provisional" number that never touches the gauge, the Summary or the Compass.
-  So the main numbers move on candle close, not on every tick. The imbalance is
-  smoothed with a short EMA, and the Buying / Selling / Neutral word uses a
-  neutral zone plus hysteresis (the threshold must hold for N candles).
-- The panel (`src/components/flow/EstimatedOrderFlowPanel.tsx`) keeps the
-  ORDER FLOW / BOOK FLOW toggle. Book Flow is DISABLED with the hint "Unavailable
-  for this provider" when the provider has no book, never an error. With too few
-  candles it says "Collecting data… X/20" rather than drawing a neutral needle.
-- The levels line (`src/components/flow/LevelsLine.tsx`, `src/core/priceLevels.ts`)
-  is the candle-only stand-in for a book map: the busiest estimated price zones
-  plus the recent swing high / low, labelled ESTIMATED. It is where trading
-  already happened, never a resting order.
-- `src/core/providers/capabilities.ts` is the per-vendor switch
-  (`hasOrderBook`, `hasVolume`). Twelve Data: no book, no usable volume. A future
-  provider with a real book sets `hasOrderBook: true` and Book Flow lights up
-  with no UI change.
-- The estimate is an OPTIONAL, low-weight input to the Summary blend
-  (`estimatedOrderFlow.weight` in `src/config/compass.ts`), and it can be
-  switched off entirely (`estimatedOrderFlow.enabled`). It is used only when
-  there is no REAL source; a real reading always wins and is never mixed with an
-  estimate.
+### Every order-flow call goes through the venue's meter
+
+The Binance adapter has its own meter instance (`api/_lib/binanceMeter.ts`),
+separate from the Twelve Data and Alpaca meters, so one venue's limit can never
+block another. `binanceGet` in `api/_lib/binance.ts` checks the meter before the
+request and records it after, and logs one `[binance]` line per request. Do not
+add a `fetch` to a Binance host outside that function.
+
+Binance serves the same public API from several hosts and some are geo-restricted
+(HTTP 451). The adapter tries `data-api.binance.vision`, then `api.binance.us`,
+then `api.binance.com`, remembers the first that answers, and only fails when all
+are unreachable. Pin one with `BINANCE_BASE_URL`.
+
+### The Book Flow toggle is a venue capability, never hardcoded
+
+`src/core/providers/capabilities.ts` maps a venue to what it can supply
+(`hasOrderBook`, `hasVolume`). Binance: real book and real tape. The RIGHT panel
+renders the ORDER FLOW / BOOK FLOW toggle ONLY when the venue has a book AND the
+instrument has a live reading to switch modes on — never for a venue with no
+book, and never for an instrument the venue has no market for. With no book there
+is no toggle at all (not a disabled one) and Order Flow is the only mode. A venue
+with a real book lights the toggle up with no UI change.
+
+### The Summary blends the real reading, or is the technical reading
+
+`buildSummaryGauge` (`src/core/scoring.ts`) blends the technical gauge with the
+REAL order-flow reading when one exists (`orderFlowBlend` in
+`src/config/compass.ts`). With no real reading the Summary IS the technical
+reading — it is never a blend against a stand-in zero.
 
 ## UI
 

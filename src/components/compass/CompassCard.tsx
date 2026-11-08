@@ -1,9 +1,9 @@
 // ============================================
 // COMPASS CARD
 // ============================================
-// One card holding a compass: the gauge and that compass's own key numbers, laid
-// out side by side so the figures are read directly on the compass and the card
-// stays short enough for the screen to fit without scrolling.
+// One card holding a compass: the gauge centered and larger at the top, and that
+// compass's own key numbers in a compact two-column grid below it that fills the
+// card width. The three top cards share this rhythm, so they read as one row.
 //
 // A card with no reading draws no needle and says why. It never renders a
 // placeholder number or a gauge at neutral, because a neutral needle looks like a
@@ -47,27 +47,27 @@ export const CompassCard: React.FC<CompassCardProps> = ({
         {subtitle && <span className="text-micro uppercase tracking-wider text-white/40">{subtitle}</span>}
       </div>
 
-      <div className="mt-2 flex flex-1 items-center gap-4">
-        <div className="flex w-[170px] shrink-0 flex-col items-center">
-          {gauge ? (
-            <CompassGauge title="" gauge={gauge} size="md" />
-          ) : (
-            <div className="flex min-h-[104px] flex-col items-center justify-center gap-1 text-center">
-              <span className="text-label font-semibold text-white/45">{unavailableText}</span>
-              {unavailableHint && <span className="text-micro text-white/30">{unavailableHint}</span>}
-            </div>
-          )}
-        </div>
-
-        <dl className="grid flex-1 grid-cols-2 gap-x-4 gap-y-1">
-          {figures.map(figure => (
-            <div key={figure.label} className="flex items-baseline justify-between gap-2">
-              <dt className="truncate text-micro uppercase tracking-wider text-white/35">{figure.label}</dt>
-              <dd className={cn('font-mono text-label font-semibold text-white/90', figure.tone)}>{figure.value}</dd>
-            </div>
-          ))}
-        </dl>
+      {/* The gauge: centered and larger, at the top of the card. */}
+      <div className="mt-2 flex flex-1 flex-col items-center justify-center">
+        {gauge ? (
+          <CompassGauge title="" gauge={gauge} size="lg" />
+        ) : (
+          <div className="flex min-h-[140px] flex-col items-center justify-center gap-1 text-center">
+            <span className="text-label font-semibold text-white/45">{unavailableText}</span>
+            {unavailableHint && <span className="text-micro text-white/30">{unavailableHint}</span>}
+          </div>
+        )}
       </div>
+
+      {/* The stats: a compact two-column grid that fills the card width. */}
+      <dl className="mt-3 grid w-full grid-cols-2 gap-x-5 gap-y-1.5 border-t border-white/[0.06] pt-3">
+        {figures.map(figure => (
+          <div key={figure.label} className="flex items-baseline justify-between gap-2">
+            <dt className="truncate text-micro uppercase tracking-wider text-white/35">{figure.label}</dt>
+            <dd className={cn('font-mono text-label font-semibold text-white/90', figure.tone)}>{figure.value}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 };

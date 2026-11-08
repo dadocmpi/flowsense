@@ -33,7 +33,10 @@ describe('noneOrderFlowProvider', () => {
   });
 
   it('returns no reading rather than inventing one', async () => {
-    await expect(noneOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toBeNull();
+    await expect(noneOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual({
+      reading: null,
+      note: null,
+    });
   });
 });
 
@@ -120,7 +123,10 @@ describe('httpOrderFlowProvider', () => {
   });
 
   it('returns null while no source is confirmed configured', async () => {
-    await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toBeNull();
+    await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual({
+      reading: null,
+      note: null,
+    });
   });
 
   it('returns the server reading once a source is configured', async () => {
@@ -138,7 +144,10 @@ describe('httpOrderFlowProvider', () => {
     });
 
     await probeOrderFlowProvider();
-    await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual(reading);
+    await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual({
+      reading,
+      note: null,
+    });
   });
 
   it('treats a null reading from the server as no reading, not as a zero', async () => {
@@ -146,10 +155,13 @@ describe('httpOrderFlowProvider', () => {
       if (!url.includes('instrument=')) {
         return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed' });
       }
-      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', reading: null });
+      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', reading: null, note: 'No market.' });
     });
 
     await probeOrderFlowProvider();
-    await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toBeNull();
+    await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual({
+      reading: null,
+      note: 'No market.',
+    });
   });
 });

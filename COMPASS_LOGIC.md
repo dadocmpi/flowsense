@@ -187,7 +187,7 @@ without a re-render per tick.
 The futures provider serves candles on request; its newest bar is current as of
 the last fetch, and the status is reported honestly rather than as a live tick.
 When the server exposes a browser-safe price stream the price can reach `LIVE`;
-otherwise it is polled and labelled "Delayed (polling)".
+otherwise it is polled and the status reflects that rather than claiming a tick.
 
 ---
 
