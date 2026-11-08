@@ -45,7 +45,8 @@ src/core/providers/            MarketDataProvider interface + the server-proxied
 src/core/providers/polling.ts  per-provider poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/core/providers/orderflow.ts     OrderFlowProvider interface + the server-proxied `http` adapter
-src/core/providers/capabilities.ts  what each order-flow VENUE can supply (hasOrderBook, hasVolume)
+src/core/providers/capabilities.ts  what each order-flow VENUE can supply (hasOrderBook, hasVolume, hasQuotes)
+src/core/orderflow.ts               pure trade classification, imbalance, CVD, shift detection
 src/config/compass.ts          every weight, tolerance and session setting
 src/hooks/marketDataStore.ts         one store of series keyed asset:timeframe, loaded once on open
 src/hooks/useInstrumentFeed.ts        a per-instrument view over the store
@@ -67,8 +68,10 @@ api/futures/status.ts          which providers are configured, what symbol is re
 api/health.ts                  provider credentials + last-call time + calls this minute
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
 api/orderflow/reading.ts       is an order-flow venue configured, and its real reading
-api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor
+api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor (per-asset venue registry)
 api/_lib/binance.ts            Binance order-flow adapter: depth + aggTrades -> delta/CVD/imbalance
+api/_lib/alpacaOrderflow.ts    Alpaca order-flow adapter: tape + top-of-book quote (IEX) -> delta/CVD
+scripts/devApiPlugin.ts        dev-only Vite middleware mounting the api/ handlers under /api/*
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
@@ -189,24 +192,36 @@ window does not reach the bucket open, the natively fetched bar is kept.
 The RIGHT compass is order flow: delta/CVD, order-book imbalance, absorption.
 Twelve Data carries NO order-flow data — a candle has no aggressor side and no
 order book — so it is never computed from the candle feed. It comes from a real
-VENUE behind `src/core/providers/orderflow.ts`, selected server-side by
-`ORDERFLOW_PROVIDER` (see `api/_lib/orderflow.ts`).
+VENUE behind `src/core/providers/orderflow.ts`, selected PER ASSET server-side by
+`api/_lib/orderflow.ts` (global `ORDERFLOW_PROVIDER`, per-asset
+`ORDERFLOW_PROVIDER_<ID>`).
 
-The shipped venue is Binance (`api/_lib/binance.ts`): its public market-data API
-carries a resting depth BOOK and a TAPE with the aggressor side of every trade
-(`aggTrades`). Gold is read as PAXG/USDT (PAX Gold, 1 token = 1 troy ounce) —
-a real gold market. The venue needs no key, so order flow works out of the box.
-Set `ORDERFLOW_PROVIDER=none` to switch it off.
+There are TWO shipped venues, because one venue does not have every market:
+
+- **Binance** (`api/_lib/binance.ts`) — Gold, read as PAXG/USDT (PAX Gold, 1
+  token = 1 troy ounce). Its public market-data API carries a resting depth BOOK
+  and a TAPE with the aggressor side of every trade (`aggTrades`). No key, so it
+  works out of the box.
+- **Alpaca** (`api/_lib/alpacaOrderflow.ts`) — the index assets (ES/YM/NQ), read
+  through the SPY/DIA/QQQ ETF proxies: a real tape (IEX) and a real top-of-book
+  quote, but no depth book. Binance has no market for an equity index, which is
+  why the index assets read Alpaca. Set `ORDERFLOW_PROVIDER=none` to switch a
+  venue off; `ALPACA_FEED=iex|sip` picks the Alpaca feed.
+
+The panel header shows the instrument actually used (e.g. `QQQ · Alpaca · IEX`)
+so a proxy is never mistaken for the index itself.
 
 The reading is fetched INDEPENDENTLY of the candle feed (`src/hooks/useOrderFlow.ts`
 + `/api/orderflow/reading`), so the RIGHT card shows real flow even when the
 candle provider has nothing for the instrument.
 
 When there is no real reading — the venue is off, has no market for the
-instrument, or cannot be reached — the card says so and draws NO gauge. It must
-never draw a neutral needle or a `0` in place of a missing real reading: a
-neutral needle looks like a real "neutral market" read. There is no candle-derived
-estimate anywhere in the build; order flow is either real or absent.
+instrument, or cannot be reached — the card says so and draws NO bar. It must
+never draw a neutral bar or a `0` in place of a missing real reading: a neutral
+bar looks like a real "neutral market" read. There is no candle-derived estimate
+anywhere in the build; order flow is either real or absent. A venue whose market
+is CLOSED keeps returning the last session's reading, which the panel labels
+"Session closed · last reading HH:MM" — never "Feed unavailable".
 
 Connecting a different vendor means implementing `fetchOrderFlowReading` in
 `api/_lib/orderflow.ts` and setting `ORDERFLOW_PROVIDER` /
@@ -230,12 +245,13 @@ are unreachable. Pin one with `BINANCE_BASE_URL`.
 ### The Book Flow toggle is a venue capability, never hardcoded
 
 `src/core/providers/capabilities.ts` maps a venue to what it can supply
-(`hasOrderBook`, `hasVolume`). Binance: real book and real tape. The RIGHT panel
-renders the ORDER FLOW / BOOK FLOW toggle ONLY when the venue has a book AND the
+(`hasOrderBook`, `hasVolume`, `hasQuotes`). Binance: real book and real tape.
+Alpaca (IEX): real tape and a real top-of-book quote, but no depth book. The
+RIGHT panel renders the FLOW / BOOK toggle ONLY when the venue has a book AND the
 instrument has a live reading to switch modes on — never for a venue with no
 book, and never for an instrument the venue has no market for. With no book there
-is no toggle at all (not a disabled one) and Order Flow is the only mode. A venue
-with a real book lights the toggle up with no UI change.
+is no toggle at all (not a disabled one) and Flow is the only mode. A venue with a
+real book lights the toggle up with no UI change.
 
 ### The Summary blends the real reading, or is the technical reading
 
