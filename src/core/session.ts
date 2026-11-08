@@ -15,9 +15,9 @@
 // CME products) and resolved through Intl, so daylight saving is handled by
 // the platform rather than by a hand-rolled offset table.
 
-import type { Candle } from './types';
-import type { SessionConfig } from '../config/compass';
-import { parseCandleTime } from './candles';
+import type { Candle } from './types.js';
+import type { SessionConfig } from '../config/compass.js';
+import { parseCandleTime } from './candles.js';
 
 interface ZonedParts {
   year: number;

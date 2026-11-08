@@ -99,6 +99,23 @@ export function cacheTtlForProvider(provider: 'twelvedata' | 'alpaca', timeframe
  */
 export const PRICE_POLL_INTERVAL_MS = 30_000;
 
+/**
+ * How often the ORDER-FLOW reading is refreshed over REST (ms).
+ *
+ * Order flow is a separate venue from the candles and is read on its own. The
+ * reading is a rolling window over the venue's tape, so it is refreshed faster
+ * than a candle: the strength bar should track the tape within a few seconds.
+ * The client coalesces its re-renders to at most ~2 per second regardless, so a
+ * fast refresh cannot flicker the bar.
+ *
+ * When the venue is closed the reading does not change, so the caller backs off
+ * to `ORDER_FLOW_CLOSED_POLL_INTERVAL_MS`.
+ */
+export const ORDER_FLOW_POLL_INTERVAL_MS = 3_000;
+
+/** Refresh cadence while the venue's market is closed (ms). */
+export const ORDER_FLOW_CLOSED_POLL_INTERVAL_MS = 60_000;
+
 export function pollIntervalFor(timeframe: Timeframe): number {
   return POLL_INTERVAL_MS[timeframe] ?? 60_000;
 }

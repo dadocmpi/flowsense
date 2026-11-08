@@ -38,6 +38,12 @@ export default {
         'data-lg': ['2rem', { lineHeight: '1.1' }],
         headline: ['2.5rem', { lineHeight: '1' }],
       },
+      // One sans for the UI, one monospace for every number so digits align in
+      // columns. Both fall back gracefully if the webfont is unavailable.
+      fontFamily: {
+        sans: ['Inter', 'IBM Plex Sans', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['"IBM Plex Mono"', '"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+      },
       // ── Spacing scale ──────────────────────────────────────────────────
       // Panels share these so gutters never drift apart section to section:
       //   gap-panel    space between top-level panels
@@ -56,6 +62,43 @@ export default {
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
+        // ── Institutional theme aliases (see src/globals.css) ──
+        app: 'var(--bg-app)',
+        surface: 'var(--bg-surface)',
+        elevated: 'var(--bg-elevated)',
+        inset: 'var(--bg-inset)',
+        hairline: 'var(--border-hairline)',
+        'hairline-strong': 'var(--border-strong)',
+        ink: {
+          DEFAULT: 'var(--text-primary)',
+          secondary: 'var(--text-secondary)',
+          muted: 'var(--text-muted)',
+          faint: 'var(--text-faint)',
+        },
+        accent: {
+          DEFAULT: 'var(--accent)',
+          soft: 'var(--accent-soft)',
+          border: 'var(--accent-border)',
+        },
+        buy: {
+          DEFAULT: 'var(--buy)',
+          soft: 'var(--buy-soft)',
+          border: 'var(--buy-border)',
+        },
+        sell: {
+          DEFAULT: 'var(--sell)',
+          soft: 'var(--sell-soft)',
+          border: 'var(--sell-border)',
+        },
+        flat: {
+          DEFAULT: 'var(--neutral)',
+          soft: 'var(--neutral-soft)',
+        },
+        warn: {
+          DEFAULT: 'var(--warn)',
+          soft: 'var(--warn-soft)',
+          border: 'var(--warn-border)',
+        },
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",

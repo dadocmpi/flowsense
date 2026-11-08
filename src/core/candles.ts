@@ -2,8 +2,8 @@
 // CANDLE UTILITIES
 // ============================================
 
-import type { Candle, Timeframe } from './types';
-import { TIMEFRAME_MINUTES } from './types';
+import type { Candle, Timeframe } from './types.js';
+import { TIMEFRAME_MINUTES } from './types.js';
 
 /** Parse the "YYYY-MM-DD HH:MM:SS" (UTC) form the providers emit. */
 export function parseCandleTime(datetime: string): number {

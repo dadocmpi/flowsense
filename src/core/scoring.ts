@@ -7,8 +7,8 @@
 // The label is ALWAYS derived from the same score the gauge is drawn from, so
 // a positive score can never read "Sell". This invariant is locked in by tests.
 
-import type { GaugeReading, ScoreLabel, Vote, VoteDetail, VoteTally } from './types';
-import type { CompassConfig } from '../config/compass';
+import type { GaugeReading, ScoreLabel, Vote, VoteDetail, VoteTally } from './types.js';
+import type { CompassConfig } from '../config/compass.js';
 
 /** +1 for a buy, -1 for a sell, 0 for neutral. */
 export function voteValue(vote: Vote): number {

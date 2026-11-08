@@ -18,13 +18,13 @@
 // session clock is resolved through Intl so daylight saving is handled by the
 // platform rather than a hand-rolled offset table.
 
-import type { Candle, Timeframe } from './types';
-import { TIMEFRAME_MINUTES } from './types';
-import { parseCandleTime } from './candles';
-import { marketState, CLOSED_AFTER_BARS, type MarketStateResult } from './marketHours';
-import { zonedParts, zonedTimeToUtc } from './session';
+import type { Candle, Timeframe } from './types.js';
+import { TIMEFRAME_MINUTES } from './types.js';
+import { parseCandleTime } from './candles.js';
+import { marketState, CLOSED_AFTER_BARS, type MarketStateResult } from './marketHours.js';
+import { zonedParts, zonedTimeToUtc } from './session.js';
 
-export type { MarketStateResult, MarketState } from './marketHours';
+export type { MarketStateResult, MarketState } from './marketHours.js';
 
 export const US_EQUITY_TIMEZONE = 'America/New_York';
 /** Regular session open / close, minutes from midnight ET. */

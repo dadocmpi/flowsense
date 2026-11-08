@@ -14,9 +14,9 @@
 // thin market can legitimately skip a bar and a weekend gap is a real closure,
 // not a bug.
 
-import type { Candle } from './types';
-import { TIMEFRAME_MINUTES, type Timeframe } from './types';
-import { parseCandleTime } from './candles';
+import type { Candle } from './types.js';
+import { TIMEFRAME_MINUTES, type Timeframe } from './types.js';
+import { parseCandleTime } from './candles.js';
 
 /** Bar lengths of silence tolerated before a market is called closed. */
 export const CLOSED_AFTER_BARS = 3;

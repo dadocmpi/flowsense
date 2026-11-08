@@ -27,7 +27,13 @@ import {
 import { meterSnapshot } from './_lib/creditMeter.js';
 import { alpacaCallsThisMinute, alpacaLastCallAt, alpacaMeterSnapshot } from './_lib/alpacaMeter.js';
 import { binanceCallsThisMinute, binanceLastCallAt, binanceMeterSnapshot } from './_lib/binanceMeter.js';
-import { orderFlowConfigured, orderFlowHasMarket, orderFlowLabel, resolveOrderFlowVendor } from './_lib/orderflow.js';
+import {
+  orderFlowConfigured,
+  orderFlowHasMarket,
+  orderFlowLabel,
+  orderFlowVenueFor,
+  ORDERFLOW_ASSET_IDS,
+} from './_lib/orderflow.js';
 import { assetProviderConfig, CONFIGURED_ASSET_IDS } from './_lib/assets.js';
 
 const NAMES: Record<string, string> = { GC: 'Gold', ES: 'S&P 500', YM: 'Dow Jones', NQ: 'Nasdaq' };
@@ -76,11 +82,12 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
         /** Epoch ms of the last Alpaca request, or null if none yet. */
         lastCallAt: alpacaLastCallAt(),
       },
-      // The order-flow venue. Binance needs no key; the meter is reported so a
-      // deployment can see the order-flow spend at a glance.
+      // The order-flow venue(s). Binance serves Gold; Alpaca serves the index
+      // proxies. The meters are reported so a deployment can see the order-flow
+      // spend at a glance.
       binance: {
-        configured: orderFlowConfigured() && resolveOrderFlowVendor() === 'binance',
-        venue: resolveOrderFlowVendor(),
+        configured: orderFlowConfigured() && ORDERFLOW_ASSET_IDS.some(id => orderFlowVenueFor(id) === 'binance'),
+        venue: 'binance',
         label: orderFlowLabel(),
         hasMarketForGold: orderFlowHasMarket('GC'),
         requestsPerMinute: binanceMeter.limit,
@@ -89,6 +96,11 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
         exhausted: binanceMeter.exhausted,
         resetAt: binanceMeter.resetAt,
         lastCallAt: binanceLastCallAt(),
+      },
+      orderFlow: {
+        configured: orderFlowConfigured(),
+        label: orderFlowLabel(),
+        venues: Object.fromEntries(ORDERFLOW_ASSET_IDS.map(id => [id, orderFlowVenueFor(id)])),
       },
     },
     assets,

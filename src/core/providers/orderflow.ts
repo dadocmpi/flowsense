@@ -33,9 +33,14 @@ export type { OrderFlowReading, OrderFlowMetrics } from '../types';
 /** Which order-flow adapter is in use. `none` means "no source configured". */
 export type OrderFlowProviderId = 'none' | 'http';
 
+/** The rolling windows the strength bar can be measured over. */
+export type FlowWindow = '1m' | '5m' | '15m';
+
 export interface OrderFlowContext {
   instrument: Instrument;
   timeframe: Timeframe;
+  /** The rolling window the tape figures are measured over. */
+  window?: FlowWindow;
   signal?: AbortSignal;
 }
 
@@ -84,10 +89,11 @@ export const httpOrderFlowProvider: OrderFlowProvider = {
   id: 'http',
   label: 'Server order flow',
   isConfigured: () => configuredOrderFlow,
-  async getReading({ instrument, timeframe, signal }) {
+  async getReading({ instrument, timeframe, window, signal }) {
     if (!configuredOrderFlow) return { reading: null, note: null };
 
     const params = new URLSearchParams({ instrument: instrument.id, timeframe });
+    if (window) params.set('window', window);
     let response: Response;
     try {
       response = await fetch(`/api/orderflow/reading?${params.toString()}`, {
@@ -145,12 +151,20 @@ export interface OrderFlowProbeResult {
   configured: boolean;
   provider: OrderFlowProviderId;
   label: string;
-  /** The configured venue id, e.g. "binance" or "none". */
+  /** The configured venue id, e.g. "binance", "alpaca", "multi" or "none". */
   venue: string;
+  /** The venue serving each asset id, so the client can pick capabilities. */
+  venues: Record<string, string>;
   /** Why it is unavailable, when it is. */
   note: string | null;
   /** False when the route could not be reached at all. */
   reachable: boolean;
+}
+
+/** The venue serving one instrument, from the last probe. */
+export function orderFlowVenueForInstrument(instrumentId: string, probe: OrderFlowProbeResult | null): string {
+  if (!probe) return 'none';
+  return probe.venues[instrumentId.toUpperCase()] ?? probe.venue;
 }
 
 let probeCache: OrderFlowProbeResult | null = null;
@@ -185,13 +199,22 @@ async function runOrderFlowProbe(): Promise<OrderFlowProbeResult> {
   try {
     const response = await fetch('/api/orderflow/reading', { headers: { Accept: 'application/json' } });
     if (!response.ok) {
-      return { configured: false, provider: 'none', label: 'None', venue: 'none', note: `Order flow route returned HTTP ${response.status}`, reachable: false };
+      return {
+        configured: false,
+        provider: 'none',
+        label: 'None',
+        venue: 'none',
+        venues: {},
+        note: `Order flow route returned HTTP ${response.status}`,
+        reachable: false,
+      };
     }
     const payload = (await response.json()) as {
       configured?: boolean;
       provider?: string;
       label?: string;
       venue?: string;
+      venues?: Record<string, string>;
       note?: string;
     };
     const provider: OrderFlowProviderId = payload.provider === 'http' ? 'http' : 'none';
@@ -200,11 +223,20 @@ async function runOrderFlowProbe(): Promise<OrderFlowProbeResult> {
       provider,
       label: payload.label ?? 'None',
       venue: payload.venue ?? 'none',
+      venues: payload.venues ?? {},
       note: payload.note ?? null,
       reachable: true,
     };
   } catch {
-    return { configured: false, provider: 'none', label: 'None', venue: 'none', note: 'Could not reach the order flow route', reachable: false };
+    return {
+      configured: false,
+      provider: 'none',
+      label: 'None',
+      venue: 'none',
+      venues: {},
+      note: 'Could not reach the order flow route',
+      reachable: false,
+    };
   }
 }
 
