@@ -119,7 +119,7 @@ function MarketStatusPill({
     return usEquitySessionState(now);
   }, [isEquity, now]);
 
-  const exchangeLabel = isEquity ? 'ET' : 'local';
+  const exchangeLabel = isEquity ? 'ET' : null;
   const exchangeTime = useMemo(
     () =>
       isEquity
@@ -128,7 +128,7 @@ function MarketStatusPill({
             minute: '2-digit',
             timeZone: 'America/New_York',
           }).format(now)
-        : formatTime(now),
+        : null,
     [isEquity, now]
   );
   const localTime = formatTime(now);
@@ -157,7 +157,9 @@ function MarketStatusPill({
 
   return (
     <Pill tone={tone} glyph={glyph} title={state.reason}>
-      {word} · {exchangeTime} {exchangeLabel} · {localTime} local
+      {word}
+      {exchangeTime && exchangeLabel ? ` · ${exchangeTime} ${exchangeLabel}` : ''}
+      {` · ${localTime} local`}
     </Pill>
   );
 }
@@ -304,7 +306,13 @@ const Index: React.FC = () => {
   const flowProvenance = useMemo(() => {
     const reading = orderFlow.reading;
     if (!reading) return orderFlow.probe?.label ?? 'Order flow';
-    const parts = [reading.instrument ?? instrument.providerSymbol, orderFlow.probe?.label ?? reading.provider ?? ''];
+    const venueName =
+      reading.provider === 'alpaca'
+        ? 'Alpaca'
+        : reading.provider === 'binance'
+          ? 'Binance'
+          : orderFlow.probe?.label ?? reading.provider ?? '';
+    const parts = [reading.instrument ?? instrument.providerSymbol, venueName];
     if (reading.feed) parts.push(reading.feed.toUpperCase());
     return parts.filter(Boolean).join(' · ');
   }, [orderFlow.reading, orderFlow.probe, instrument.providerSymbol]);
