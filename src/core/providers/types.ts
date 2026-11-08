@@ -15,12 +15,26 @@
 
 import type { Candle, Timeframe } from '../types';
 import type { Instrument, ProviderId } from '../instruments';
+import type { OrderFlowCapabilities } from './capabilities';
 
 export interface ProviderCapabilities {
   /** Real candles via getCandles. */
   candles: boolean;
   /** A live tick/price feed via subscribeTicks. */
   ticks: boolean;
+  /**
+   * True when the provider publishes a resting bid/ask BOOK (a DOM / Level 2).
+   * Twelve Data does not, so an instrument it serves has no book and the UI
+   * disables the Book Flow mode rather than showing an error. A provider with a
+   * real book enables Book Flow with no UI change.
+   */
+  hasOrderBook: boolean;
+  /**
+   * True when the provider's candles carry a usable traded volume. Twelve Data
+   * often returns empty or zero volume for XAU/USD, so an estimate over those
+   * candles falls back to a range-based activity proxy.
+   */
+  hasVolume: boolean;
 }
 
 /** Why a provider could not serve a request, in a form the UI can render. */
@@ -83,6 +97,13 @@ export interface MarketDataProvider {
   readonly serves: ProviderId[];
   readonly label: string;
   readonly capabilities: ProviderCapabilities;
+  /**
+   * What this provider can supply for the order-flow panel. Unlike
+   * `capabilities`, which describes the transport, this describes the DATA: a
+   * resting book and/or a usable volume. It is optional so a provider that does
+   * not care omits it and callers fall back to the honest minimum.
+   */
+  readonly orderFlowCapabilities?: OrderFlowCapabilities;
   /**
    * True when the provider has everything it needs to serve requests
    * (typically a server-side API key). The UI uses this to decide between

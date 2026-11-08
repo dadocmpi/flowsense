@@ -82,6 +82,27 @@ export interface CompassConfig {
     orderFlow: number;
   };
 
+  /**
+   * Estimated order flow, used for an instrument whose provider publishes no
+   * book or tape (Twelve Data / XAU-USD). The estimate is derived from candles
+   * and is always labelled as an estimate. `weight` is deliberately low: it is a
+   * weaker input than a real reading, and `enabled` is the switch to drop it
+   * from the Summary blend entirely.
+   */
+  estimatedOrderFlow: {
+    enabled: boolean;
+    /** Weight inside the Summary blend, on the same scale as orderFlowBlend. */
+    weight: number;
+    /** Candles in the cumulative-delta window. */
+    cvdWindow: number;
+    /** EMA length for the smoothed imbalance. */
+    smoothing: number;
+    /** Neutral zone: |imbalance| at or below this reads Neutral. */
+    neutralZone: number;
+    /** Consecutive candles past the zone before the state flips. */
+    hysteresis: number;
+  };
+
   /** Rules behind the LONG / SHORT entry check. */
   entryCheck: EntryCheckConfig;
 
@@ -158,6 +179,18 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     orderFlow: 1.0,
   },
 
+  // Estimated order flow is a weaker input than a real book or tape, so it
+  // carries a low weight. It is enabled by default so Gold shows a reading; set
+  // `enabled: false` to drop it from the Summary blend entirely.
+  estimatedOrderFlow: {
+    enabled: true,
+    weight: 0.35,
+    cvdWindow: 20,
+    smoothing: 5,
+    neutralZone: 15,
+    hysteresis: 2,
+  },
+
   entryCheck: {
     // The summary already blends the technical read and order flow, so it is
     // the strongest single signal and carries the most weight.
@@ -207,6 +240,7 @@ export function mergeCompassConfig(
     indicatorWeights: { ...base.indicatorWeights, ...(override.indicatorWeights ?? {}) },
     technicalBlend: { ...base.technicalBlend, ...(override.technicalBlend ?? {}) },
     orderFlowBlend: { ...base.orderFlowBlend, ...(override.orderFlowBlend ?? {}) },
+    estimatedOrderFlow: { ...base.estimatedOrderFlow, ...(override.estimatedOrderFlow ?? {}) },
     entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
     session: { ...base.session, ...(override.session ?? {}) },
