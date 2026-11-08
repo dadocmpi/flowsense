@@ -8,15 +8,35 @@
 // wall clock, so the panel shows the last session's final reading instead of an
 // empty window.
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  alpacaFeed,
+  alpacaOrderFlowConfigured,
+  alpacaOrderFlowSymbolFor,
   bookFromQuote,
+  buildAlpacaOrderFlowReading,
   classifyAlpacaTape,
   latestQuote,
   summarizeTape,
   type AlpacaQuoteRow,
   type AlpacaTrade,
 } from '../alpacaOrderflow';
+import { resetAlpacaMeter } from '../alpacaMeter';
+
+const KEY_ENV = ['ALPACA_API_KEY_ID', 'ALPACA_API_SECRET_KEY', 'ALPACA_API_KEY', 'ALPACA_API_SECRET'];
+const saved: Record<string, string | undefined> = {};
+beforeEach(() => {
+  for (const name of KEY_ENV) saved[name] = process.env[name];
+  resetAlpacaMeter();
+});
+afterEach(() => {
+  for (const name of KEY_ENV) {
+    if (saved[name] === undefined) delete process.env[name];
+    else process.env[name] = saved[name];
+  }
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 /** ISO string a given number of seconds after a fixed epoch. */
 const T0 = Date.parse('2026-11-06T15:00:00.000Z');
@@ -148,5 +168,94 @@ describe('latestQuote', () => {
 
   it('is null for an empty list', () => {
     expect(latestQuote([])).toBeNull();
+  });
+});
+
+describe('configuration', () => {
+  it('reads the feed from ALPACA_FEED, defaulting to the free IEX feed', () => {
+    delete process.env.ALPACA_FEED;
+    expect(alpacaFeed()).toBe('iex');
+    process.env.ALPACA_FEED = 'sip';
+    expect(alpacaFeed()).toBe('sip');
+    process.env.ALPACA_FEED = 'nonsense';
+    expect(alpacaFeed()).toBe('iex');
+    delete process.env.ALPACA_FEED;
+  });
+
+  it('maps each index asset to its ETF proxy and Gold to GLD', () => {
+    expect(alpacaOrderFlowSymbolFor('ES')).toBe('SPY');
+    expect(alpacaOrderFlowSymbolFor('YM')).toBe('DIA');
+    expect(alpacaOrderFlowSymbolFor('NQ')).toBe('QQQ');
+    expect(alpacaOrderFlowSymbolFor('GC')).toBe('GLD');
+    expect(alpacaOrderFlowSymbolFor('ZZ')).toBeNull();
+  });
+
+  it('honours a per-asset symbol override', () => {
+    process.env.ORDERFLOW_SYMBOL_NQ = 'qqq';
+    try {
+      expect(alpacaOrderFlowSymbolFor('NQ')).toBe('QQQ');
+    } finally {
+      delete process.env.ORDERFLOW_SYMBOL_NQ;
+    }
+  });
+
+  it('is not configured until both credentials are present', () => {
+    delete process.env.ALPACA_API_KEY_ID;
+    delete process.env.ALPACA_API_SECRET_KEY;
+    delete process.env.ALPACA_API_KEY;
+    delete process.env.ALPACA_API_SECRET;
+    expect(alpacaOrderFlowConfigured()).toBe(false);
+    process.env.ALPACA_API_KEY_ID = 'id';
+    expect(alpacaOrderFlowConfigured()).toBe(false);
+    process.env.ALPACA_API_SECRET_KEY = 'secret';
+    expect(alpacaOrderFlowConfigured()).toBe(true);
+  });
+});
+
+/** One stubbed Alpaca response for a path, chosen by which endpoint it is. */
+function stubAlpaca(trades: AlpacaTrade[], quotes: AlpacaQuoteRow[]) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) => {
+      const body = String(url).includes('/trades') ? { trades: { QQQ: trades } } : { quotes: { QQQ: quotes } };
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    })
+  );
+}
+
+describe('buildAlpacaOrderFlowReading', () => {
+  beforeEach(() => {
+    process.env.ALPACA_API_KEY_ID = 'id';
+    process.env.ALPACA_API_SECRET_KEY = 'secret';
+    delete process.env.ALPACA_FEED;
+  });
+
+  it('builds a real reading from the tape and flags a closed session', async () => {
+    // Sunday: the US equity session is closed.
+    const now = Date.parse('2026-11-08T15:00:00.000Z');
+    stubAlpaca(
+      [
+        { t: '2026-11-06T19:00:00Z', p: 101, s: 30 },
+        { t: '2026-11-06T19:00:01Z', p: 100, s: 10 },
+      ],
+      [{ t: '2026-11-06T18:59:59Z', bp: 100, bs: 700, ap: 101, as: 300 }]
+    );
+
+    const reading = await buildAlpacaOrderFlowReading({ symbol: 'QQQ', windowMs: 60_000, now });
+
+    expect(reading.provider).toBe('alpaca');
+    expect(reading.instrument).toBe('QQQ');
+    expect(reading.feed).toBe('iex');
+    expect(reading.proxy).toBe(true);
+    expect(reading.sessionClosed).toBe(true);
+    expect(reading.session!.buyVolume).toBe(30);
+    expect(reading.session!.sellVolume).toBe(10);
+    expect(reading.session!.delta).toBe(20);
+    expect(reading.metrics.absorption).toBeNull();
+    expect(reading.gauge.label).toBe('BUY');
+    expect(reading.book!.bidSize).toBe(700);
+    expect(reading.book!.askSize).toBe(300);
+    // Anchored to the last trade, so the closed-session window still holds the tape.
+    expect(reading.lastTradeAt).toBe(Date.parse('2026-11-06T19:00:01Z'));
   });
 });
