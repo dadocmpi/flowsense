@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["api/**/*.ts", "scripts/*.mjs"],
+  "project": ["src/**/*.{ts,tsx}", "api/**/*.ts", "scripts/**/*.mjs"],
+  "ignore": [
+    "src/components/ui/**",
+    "src/utils/**",
+    "src/hooks/use-mobile.tsx",
+    "src/components/ui/use-toast.ts"
+  ],
+  "ignoreExportsUsedInFile": true
+}

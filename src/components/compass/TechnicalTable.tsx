@@ -12,6 +12,7 @@
 import React from 'react';
 import type { VoteDetail } from '../../core/types';
 import { voteColor, voteWord } from './format';
+import { isShownInTable } from '../../config/indicators';
 
 interface TechnicalTableProps {
   details: VoteDetail[];
@@ -48,9 +49,14 @@ function Rows({ rows }: { rows: VoteDetail[] }) {
 }
 
 function Block({ title, rows }: { title: string; rows: VoteDetail[] }) {
+  const visible = rows.filter(row => isShownInTable(row.name));
+  const hidden = rows.length - visible.length;
   return (
     <div>
-      <h4 className="mb-0.5 text-micro font-semibold uppercase tracking-[0.08em] text-ink-subtle">{title}</h4>
+      <h4 className="mb-0.5 flex items-center justify-between text-micro font-semibold uppercase tracking-[0.08em] text-ink-subtle">
+        <span>{title}</span>
+        {hidden > 0 && <span className="font-normal normal-case tracking-normal text-ink-subtle/70">{hidden} hidden</span>}
+      </h4>
       <table className="w-full border-collapse">
         <thead>
           <tr className="border-b border-line text-left text-micro uppercase tracking-[0.06em] text-ink-subtle">
@@ -60,7 +66,7 @@ function Block({ title, rows }: { title: string; rows: VoteDetail[] }) {
           </tr>
         </thead>
         <tbody>
-          <Rows rows={rows} />
+          <Rows rows={visible} />
         </tbody>
       </table>
     </div>

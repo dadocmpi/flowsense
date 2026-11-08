@@ -21,6 +21,7 @@ import { useOrderFlowFeed } from '../hooks/useOrderFlowFeed';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { TimeframeButtons } from '../components/compass/TimeframeButtons';
 import { CompassCard } from '../components/compass/CompassCard';
+import { CompassInputsDrawer } from '../components/compass/CompassInputsDrawer';
 import { TechnicalTable } from '../components/compass/TechnicalTable';
 import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryCheckPanel';
 import { OrderFlowPanel } from '../components/flow/OrderFlowPanel';
@@ -280,6 +281,7 @@ const Index: React.FC = () => {
                 ? `${frame.candleCount} candles on ${timeframeLabel} — needs ${DEFAULT_COMPASS_CONFIG.minCandles}.`
                 : undefined
             }
+            footer={<CompassInputsDrawer technical={frame?.available ? frame.technical : null} config={DEFAULT_COMPASS_CONFIG} />}
           />
 
           <CompassCard
@@ -299,6 +301,21 @@ const Index: React.FC = () => {
               },
             ]}
             unavailableText={frame ? 'Not enough candles' : feed.isLoading ? 'Loading…' : 'No data'}
+            footer={
+              <CompassInputsDrawer
+                technical={frame?.available ? frame.technical : null}
+                config={DEFAULT_COMPASS_CONFIG}
+                orderFlow={
+                  frame?.orderFlow
+                    ? {
+                        label: `Order flow · ${frame.orderFlow.source}`,
+                        score: frame.orderFlow.gauge.score,
+                        weight: DEFAULT_COMPASS_CONFIG.orderFlowBlend.orderFlow,
+                      }
+                    : null
+                }
+              />
+            }
           />
 
           <OrderFlowPanel
