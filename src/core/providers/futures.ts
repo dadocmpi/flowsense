@@ -197,7 +197,10 @@ export const futuresProvider: MarketDataProvider = {
   id: 'futures',
   serves: ['twelvedata', 'alpaca'],
   label: 'Server-proxied (Twelve Data + Alpaca)',
-  capabilities: { candles: true, ticks: true },
+  capabilities: { candles: true, ticks: true, hasOrderBook: false, hasVolume: false },
+  // The vendor that actually answers decides the order-flow capabilities, so this
+  // is resolved per instrument rather than fixed here (see providers/capabilities).
+  orderFlowCapabilities: { hasOrderBook: false, hasVolume: false },
 
   isConfigured: () => configuredCache === true,
 
