@@ -27,6 +27,7 @@ import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryChec
 import { OrderFlowPanel } from '../components/flow/OrderFlowPanel';
 import type { FlowMode } from '../components/flow/flowMode';
 import { VolumeProfilePanel } from '../components/flow/VolumeProfilePanel';
+import { RiskPanel } from '../components/risk/RiskPanel';
 import { Panel } from '../components/common/Panel';
 import { StatusDot } from '../components/common/ui';
 import { PALETTE } from '../components/common/palette';
@@ -375,6 +376,9 @@ const Index: React.FC = () => {
             </Panel>
           </div>
         </div>
+
+        {/* ── Risk (client-side only) ─────────────────────────────────── */}
+        <RiskPanel />
       </main>
 
       <footer className="border-t border-line px-4 py-2">
