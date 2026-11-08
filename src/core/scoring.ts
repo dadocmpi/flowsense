@@ -152,33 +152,40 @@ export function buildTechnicalGauge(
 /**
  * The CENTER "Summary" gauge: the technical reading blended with order flow.
  *
- * With no order-flow source configured there is nothing to blend, so the summary
- * is the technical gauge itself — never a zero-filled stand-in. The UI labels
- * that case rather than pretending a second input exists.
+ * With a REAL order-flow source the blend is the technical gauge against it.
+ * With no real source, an ESTIMATED flow gauge (derived from candles) may be
+ * blended in at its own low weight, when `estimatedOrderFlow.enabled` is set.
+ * With neither, the summary is the technical gauge itself — never a zero-filled
+ * stand-in. The UI labels whichever case applies rather than pretending a second
+ * input exists.
  */
 export function buildSummaryGauge(
   technical: GaugeReading,
   orderFlow: GaugeReading | null,
-  config: CompassConfig
+  config: CompassConfig,
+  estimatedFlow: GaugeReading | null = null
 ): GaugeReading {
-  if (!orderFlow) return technical;
+  const flow = orderFlow ?? (config.estimatedOrderFlow.enabled ? estimatedFlow : null);
+  if (!flow) return technical;
 
+  // A real source carries the configured order-flow weight; an estimate carries
+  // its own, deliberately low, weight so it can never dominate the technical read.
+  const flowWeight = orderFlow ? config.orderFlowBlend.orderFlow : config.estimatedOrderFlow.weight;
   const techWeight = config.orderFlowBlend.technical;
-  const flowWeight = config.orderFlowBlend.orderFlow;
   const total = techWeight + flowWeight;
 
   const score =
-    total === 0 ? 0 : clampScore((technical.score * techWeight + orderFlow.score * flowWeight) / total);
+    total === 0 ? 0 : clampScore((technical.score * techWeight + flow.score * flowWeight) / total);
 
   return {
     score,
     label: labelFromScore(score, config),
     tally: {
-      buy: technical.tally.buy + orderFlow.tally.buy,
-      neutral: technical.tally.neutral + orderFlow.tally.neutral,
-      sell: technical.tally.sell + orderFlow.tally.sell,
+      buy: technical.tally.buy + flow.tally.buy,
+      neutral: technical.tally.neutral + flow.tally.neutral,
+      sell: technical.tally.sell + flow.tally.sell,
     },
-    details: [...technical.details, ...orderFlow.details],
+    details: [...technical.details, ...flow.details],
   };
 }
 
