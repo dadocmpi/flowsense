@@ -57,7 +57,16 @@ function orderFlow(score: number): OrderFlowReading {
       tally: { buy: 1, neutral: 0, sell: 0 },
       details: [],
     },
-    metrics: { delta: 120, cvd: 480, imbalance: 0.3, absorption: 0.25 },
+    metrics: { delta: 120, cvd: 480, imbalance: 0.3, buyShare: 0.62, volume: 900 },
+    detail: {
+      venue: 'test venue',
+      resetAt: Date.UTC(2024, 0, 1),
+      state: 'BUYING',
+      smoothedImbalance: score,
+      cvdSeries: [],
+      candleCount: 5,
+      imbalanceLevels: 10,
+    },
     source: 'test',
   };
 }
@@ -157,63 +166,33 @@ describe('computeTimeframeReading', () => {
     }
   });
 
-  it('never fabricates a REAL order flow from candles: no source means a null real reading', () => {
+  it('never fabricates order flow from candles: no source means a null reading', () => {
     const reading = computeTimeframeReading('15m', ramp(300), DEFAULT_COMPASS_CONFIG);
-    // The real reading is null: a candle carries no aggressor side and no book.
+    // A candle carries no aggressor side and no book, so there is nothing real
+    // to show. The reading is null and the card says so — it is not estimated.
     expect(reading.orderFlow).toBeNull();
-    // What is shown instead is clearly labelled as an ESTIMATE derived from the
-    // candles, never passed off as a real source.
-    expect(reading.estimatedFlow).not.toBeNull();
-    expect(reading.estimatedFlow?.estimated).toBe(true);
-    // The summary blends the estimate in, so it carries at least the technical
-    // gauge's own votes.
-    expect(reading.summary.details.length).toBeGreaterThanOrEqual(reading.technical.details.length);
-  });
-
-  it('falls back to the technical read when the estimated flow factor is switched off', () => {
-    const config = mergeCompassConfig(DEFAULT_COMPASS_CONFIG, {
-      estimatedOrderFlow: { ...DEFAULT_COMPASS_CONFIG.estimatedOrderFlow, enabled: false },
-    });
-    const reading = computeTimeframeReading('15m', ramp(300), config);
-    expect(reading.orderFlow).toBeNull();
-    // Disabled: the summary is the technical reading itself, unchanged.
+    // With no source the summary IS the technical reading, not a blend against
+    // a stand-in zero.
     expect(reading.summary.score).toBe(reading.technical.score);
     expect(reading.summary.details.length).toBe(reading.technical.details.length);
   });
 
-  it('carries a supplied order-flow reading and blends it into the summary', () => {
+  it('carries a supplied real order-flow reading and blends it into the summary', () => {
     const flow = orderFlow(-100);
     const reading = computeTimeframeReading('15m', ramp(300, 100, 1), DEFAULT_COMPASS_CONFIG, flow);
     expect(reading.orderFlow).toBe(flow);
-    // A real source wins: no estimate is produced alongside it.
-    expect(reading.estimatedFlow).toBeNull();
     // The uptrend is bullish, order flow is strongly bearish, so the blended
     // summary must sit below the technical read and above the flow read.
     expect(reading.summary.score).toBeLessThan(reading.technical.score);
     expect(reading.summary.score).toBeGreaterThan(flow.gauge.score);
   });
 
-  it('reads the estimate on CLOSED candles only: the forming bar cannot move the gauge', () => {
-    const closed = ramp(300, 100, 1);
-    const withoutForming = computeTimeframeReading('15m', closed, DEFAULT_COMPASS_CONFIG);
-    // Append a FORMING candle that closes hard against its low. If the estimator
-    // read it, the gauge would move; it must not, because the main value is
-    // computed on closed candles only.
-    const forming: Candle = {
-      datetime: new Date(Date.UTC(2024, 0, 2)).toISOString(),
-      open: 400,
-      high: 400,
-      low: 300,
-      close: 300,
-      volume: 100,
-    };
-    const withForming = computeTimeframeReading('15m', [...closed, forming], DEFAULT_COMPASS_CONFIG);
-
-    expect(withForming.estimatedFlow?.gauge.score).toBe(withoutForming.estimatedFlow?.gauge.score);
-    expect(withForming.estimatedFlow?.estimate.imbalance).toBe(withoutForming.estimatedFlow?.estimate.imbalance);
-    // The forming candle IS exposed, but only as a separate provisional value.
-    expect(withForming.estimatedFlow?.provisional).not.toBeNull();
-    expect(withForming.estimatedFlow?.provisional).toBeLessThan(0);
+  it('blends a real flow reading into the summary by the configured weights', () => {
+    const flow = orderFlow(100);
+    const reading = computeTimeframeReading('15m', ramp(300, 100, -1), DEFAULT_COMPASS_CONFIG, flow);
+    // A downtrend plus strongly bullish flow: the summary sits between the two.
+    expect(reading.summary.score).toBeGreaterThan(reading.technical.score);
+    expect(reading.summary.score).toBeLessThan(flow.gauge.score);
   });
 
   it('keeps each timeframe reading from its own series', () => {

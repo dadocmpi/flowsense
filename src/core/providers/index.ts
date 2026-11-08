@@ -1,6 +1,5 @@
 export * from './types';
 export * from './registry';
-export * from './capabilities';
 export {
   futuresProvider,
   probeFuturesProvider,

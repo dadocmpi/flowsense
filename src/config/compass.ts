@@ -83,24 +83,26 @@ export interface CompassConfig {
   };
 
   /**
-   * Estimated order flow, used for an instrument whose provider publishes no
-   * book or tape (Twelve Data / XAU-USD). The estimate is derived from candles
-   * and is always labelled as an estimate. `weight` is deliberately low: it is a
-   * weaker input than a real reading, and `enabled` is the switch to drop it
-   * from the Summary blend entirely.
+   * Real order flow, read from a venue feed. The blend above says how much it
+   * counts in the Summary; these say how the reading itself is formed. The
+   * Compass never reads a live-ticking value, so the reading is built from
+   * CLOSED candles, smoothed, with hysteresis on the state word.
    */
-  estimatedOrderFlow: {
-    enabled: boolean;
-    /** Weight inside the Summary blend, on the same scale as orderFlowBlend. */
-    weight: number;
-    /** Candles in the cumulative-delta window. */
-    cvdWindow: number;
+  orderFlow: {
+    /** Book levels of each side summed for the imbalance. */
+    imbalanceLevels: number;
     /** EMA length for the smoothed imbalance. */
     smoothing: number;
-    /** Neutral zone: |imbalance| at or below this reads Neutral. */
+    /** |imbalance| at or below this reads Neutral. */
     neutralZone: number;
     /** Consecutive candles past the zone before the state flips. */
     hysteresis: number;
+    /** Trade-print ring capacity, for the tape and short-window profile. */
+    tapeCapacity: number;
+    /** UI commit cadence for the live feed, ms (~4 updates a second). */
+    commitIntervalMs: number;
+    /** Instrument tick size for the volume-profile bins. */
+    tickSize: number;
   };
 
   /** Rules behind the LONG / SHORT entry check. */
@@ -179,16 +181,14 @@ export const DEFAULT_COMPASS_CONFIG: CompassConfig = {
     orderFlow: 1.0,
   },
 
-  // Estimated order flow is a weaker input than a real book or tape, so it
-  // carries a low weight. It is enabled by default so Gold shows a reading; set
-  // `enabled: false` to drop it from the Summary blend entirely.
-  estimatedOrderFlow: {
-    enabled: true,
-    weight: 0.35,
-    cvdWindow: 20,
+  orderFlow: {
+    imbalanceLevels: 10,
     smoothing: 5,
     neutralZone: 15,
     hysteresis: 2,
+    tapeCapacity: 400,
+    commitIntervalMs: 250,
+    tickSize: 0.01,
   },
 
   entryCheck: {
@@ -240,8 +240,8 @@ export function mergeCompassConfig(
     indicatorWeights: { ...base.indicatorWeights, ...(override.indicatorWeights ?? {}) },
     technicalBlend: { ...base.technicalBlend, ...(override.technicalBlend ?? {}) },
     orderFlowBlend: { ...base.orderFlowBlend, ...(override.orderFlowBlend ?? {}) },
-    estimatedOrderFlow: { ...base.estimatedOrderFlow, ...(override.estimatedOrderFlow ?? {}) },
     entryCheck: { ...base.entryCheck, ...(override.entryCheck ?? {}) },
+    orderFlow: { ...base.orderFlow, ...(override.orderFlow ?? {}) },
     thresholds: { ...base.thresholds, ...(override.thresholds ?? {}) },
     session: { ...base.session, ...(override.session ?? {}) },
   };

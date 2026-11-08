@@ -15,7 +15,6 @@
 
 import type { Candle, Timeframe } from '../types';
 import type { Instrument, ProviderId } from '../instruments';
-import type { OrderFlowCapabilities } from './capabilities';
 
 export interface ProviderCapabilities {
   /** Real candles via getCandles. */
@@ -97,13 +96,6 @@ export interface MarketDataProvider {
   readonly serves: ProviderId[];
   readonly label: string;
   readonly capabilities: ProviderCapabilities;
-  /**
-   * What this provider can supply for the order-flow panel. Unlike
-   * `capabilities`, which describes the transport, this describes the DATA: a
-   * resting book and/or a usable volume. It is optional so a provider that does
-   * not care omits it and callers fall back to the honest minimum.
-   */
-  readonly orderFlowCapabilities?: OrderFlowCapabilities;
   /**
    * True when the provider has everything it needs to serve requests
    * (typically a server-side API key). The UI uses this to decide between

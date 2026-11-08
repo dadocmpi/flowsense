@@ -9,23 +9,26 @@
 // component remount and so switching back to a timeframe already loaded costs
 // nothing and needs no vendor call.
 //
-// Order flow is fetched for the SELECTED timeframe only — one request at a time,
-// never a sweep — and merged into that timeframe's reading. With the shipped
-// `none` adapter there is no source, so the reading is null and the right-hand
-// card says so.
+// Order flow comes from the live venue feed (one connection, shared through the
+// order-flow store). It is derived per timeframe from CLOSED candle buckets, so
+// the Compass never reads a live-ticking value, and the same reading is what the
+// Order Flow panel shows. With no feed the reading is null and the card says so.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { Candle, Timeframe, TimeframeReading } from '../core/types';
 import { TIMEFRAMES } from '../core/types';
 import { computeTimeframeReading } from '../core/timeframeEngine';
 import { DEFAULT_COMPASS_CONFIG, type CompassConfig } from '../config/compass';
+import { TIMEFRAME_MINUTES } from '../core/types';
+import type { OrderFlowReading } from '../core/types';
+import { utcResetBoundary, bookImbalance } from '../core/orderflow/aggregate';
+import { buildLiveOrderFlowReading } from '../core/orderflow/reading';
 import {
-  activeOrderFlowProvider,
-  clearOrderFlowCache,
-  probeOrderFlowProvider,
-  type OrderFlowProbeResult,
-  type OrderFlowReading,
-} from '../core/providers/orderflow';
+  ensureOrderFlowStarted,
+  getOrderFlowVersion,
+  readOrderFlowState,
+  subscribeOrderFlowStore,
+} from './orderFlowStore';
 import type { InstrumentFeed } from './useInstrumentFeed';
 
 export interface StoredReading {
@@ -43,8 +46,6 @@ export interface UseTimeframeReadingsResult {
   current: StoredReading | null;
   /** Every stored reading for the current asset, in timeframe order. */
   stored: StoredReading[];
-  /** Whether an order-flow source is configured, and what it is. */
-  orderFlow: OrderFlowProbeResult | null;
 }
 
 export function readingKey(instrumentId: string, timeframe: Timeframe): string {
@@ -60,50 +61,54 @@ export function useTimeframeReadings(
   config: CompassConfig = DEFAULT_COMPASS_CONFIG
 ): UseTimeframeReadingsResult {
   const stampsRef = useRef(new Map<string, Stamp>());
-  const [orderFlowByKey, setOrderFlowByKey] = useState<Record<string, OrderFlowReading | null>>({});
-  const [orderFlow, setOrderFlow] = useState<OrderFlowProbeResult | null>(null);
 
-  // Ask the server whether an order-flow source exists. A server-side fact, so
-  // it is asked once and cached; the route costs no vendor credits.
+  // The live venue feed. This hook owns no socket: it reads the shared store, so
+  // the panel and the Compass see the very same connection.
   useEffect(() => {
-    let active = true;
-    probeOrderFlowProvider()
-      .then(result => {
-        if (active) setOrderFlow(result);
-      })
-      .catch(() => {
-        if (active) setOrderFlow(null);
-      });
-    return () => {
-      active = false;
-    };
+    ensureOrderFlowStarted();
   }, []);
+  const flowVersion = useSyncExternalStore(subscribeOrderFlowStore, getOrderFlowVersion, getOrderFlowVersion);
 
-  // Fetch order flow for the selected timeframe only, when a source is
-  // configured. A source that answers null leaves the card with no reading
-  // rather than a placeholder.
-  useEffect(() => {
-    if (!orderFlow?.configured) return;
-    const provider = activeOrderFlowProvider();
-    if (!provider.isConfigured()) return;
+  // One reading per timeframe, built from the closed-candle delta buckets. The
+  // imbalance is the live book read once; it is the only live input, and it is
+  // the resting book, not a ticking trade.
+  const orderFlowByKey = useMemo(() => {
+    const state = readOrderFlowState();
+    const imbalance = state.book
+      ? bookImbalance(state.book.bids, state.book.asks, config.orderFlow.imbalanceLevels)
+      : null;
+    const resetAt = state.aggregator.resetAt ?? utcResetBoundary(state.health.lastMessageAt ?? Date.now());
 
-    let active = true;
-    const controller = new AbortController();
-    provider
-      .getReading({ instrument: feed.instrument, timeframe: selectedTimeframe, signal: controller.signal })
-      .then(reading => {
-        if (!active) return;
-        setOrderFlowByKey(prev => ({ ...prev, [readingKey(feed.instrument.id, selectedTimeframe)]: reading }));
-      })
-      .catch(() => {
-        // A silent source is reported as no reading, never as a guess.
+    const out: Record<string, OrderFlowReading | null> = {};
+    for (const timeframe of TIMEFRAMES) {
+      const result = buildLiveOrderFlowReading({
+        minutes: state.aggregator.minuteBuckets(),
+        timeframeMinutes: TIMEFRAME_MINUTES[timeframe],
+        resetAt,
+        imbalance,
+        venue: state.health.venue,
+        config,
       });
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [feed.instrument, selectedTimeframe, orderFlow?.configured, feed.revision]);
+      out[readingKey(feed.instrument.id, timeframe)] = result
+        ? {
+            gauge: result.gauge,
+            metrics: result.metrics,
+            detail: {
+              venue: state.health.venue,
+              resetAt: state.aggregator.resetAt,
+              state: result.state,
+              smoothedImbalance: result.smoothedImbalance,
+              cvdSeries: result.cvdSeries,
+              candleCount: result.candleCount,
+              imbalanceLevels: config.orderFlow.imbalanceLevels,
+            },
+            source: state.health.venue,
+          }
+        : null;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flowVersion, feed.instrument.id, config]);
 
   const byKey = useMemo(() => {
     const map = new Map<string, StoredReading>();
@@ -142,10 +147,5 @@ export function useTimeframeReadings(
     [byKey, feed.instrument.id]
   );
 
-  return { current, stored, orderFlow };
-}
-
-/** Test seam: forget the order-flow probe result. */
-export function resetOrderFlow(): void {
-  clearOrderFlowCache();
+  return { current, stored };
 }

@@ -9,22 +9,13 @@
 // and no book, so order flow can only arrive from a provider; it is passed in,
 // or it is null and the right-hand card says there is no source.
 
-import type {
-  Candle,
-  ChangeBasis,
-  EstimatedOrderFlowReading,
-  GaugeReading,
-  Timeframe,
-  TimeframeReading,
-  VoteDetail,
-} from './types';
+import type { Candle, ChangeBasis, Timeframe, TimeframeReading } from './types';
 import { DEFAULT_COMPASS_CONFIG, type CompassConfig } from '../config/compass';
-import { buildGauge, buildSummaryGauge, buildTechnicalGauge, labelFromScore } from './scoring';
+import { buildGauge, buildSummaryGauge, buildTechnicalGauge } from './scoring';
 import { indicatorVotes, movingAverageVotes } from './votes';
 import { analyzeMarketStructure } from './structure';
 import { computeTechnicalMetrics } from './metrics';
 import { candlesInCurrentSession } from './session';
-import { estimateOrderFlow, stateToVote, provisionalImbalance, DEFAULT_ESTIMATED_ORDER_FLOW_CONFIG } from './orderFlowEstimator';
 
 const EMPTY_READING_BASE = {
   score: 0,
@@ -32,63 +23,6 @@ const EMPTY_READING_BASE = {
   tally: { buy: 0, neutral: 0, sell: 0 },
   details: [],
 };
-
-/**
- * Build an ESTIMATED order-flow gauge from the candles, for an instrument with
- * no real source. The score is the smoothed imbalance on the shared -100..+100
- * scale; the label comes from `labelFromScore`, so it can never disagree with
- * the score. Returns null when the series is too short to estimate.
- *
- * The MAIN value is computed on CLOSED candles only: the newest candle of a live
- * series is the forming bar, so it is peeled off and read as a separate
- * provisional value that never touches the gauge, the Summary or the Compass.
- */
-function buildEstimatedFlow(
-  candles: Candle[],
-  config: CompassConfig
-): EstimatedOrderFlowReading | null {
-  const forming = candles.length > 0 ? candles[candles.length - 1] : null;
-  const closed = forming ? candles.slice(0, -1) : candles;
-
-  const estimate = estimateOrderFlow(closed, {
-    ...DEFAULT_ESTIMATED_ORDER_FLOW_CONFIG,
-    cvdWindow: config.estimatedOrderFlow.cvdWindow,
-    smoothing: config.estimatedOrderFlow.smoothing,
-    neutralZone: config.estimatedOrderFlow.neutralZone,
-    hysteresis: config.estimatedOrderFlow.hysteresis,
-  });
-  if (!estimate.available) return null;
-
-  const score = Math.max(-100, Math.min(100, estimate.smoothedImbalance));
-  const vote = stateToVote(estimate.state);
-  const details: VoteDetail[] = [
-    {
-      name: 'Estimated delta (CLV x activity)',
-      value: estimate.cvd,
-      display: `${estimate.cvd >= 0 ? '+' : ''}${Math.round(estimate.cvd)}`,
-      vote,
-      group: 'ORDER_FLOW',
-      note: `Activity proxy: ${estimate.proxy}`,
-    },
-  ];
-
-  return {
-    gauge: {
-      score,
-      label: labelFromScore(score, config),
-      tally: {
-        buy: vote === 'BUY' ? 1 : 0,
-        neutral: vote === 'NEUTRAL' ? 1 : 0,
-        sell: vote === 'SELL' ? 1 : 0,
-      },
-      details,
-    },
-    estimate,
-    estimated: true,
-    source: 'Estimated from candles',
-    provisional: forming ? provisionalImbalance(forming, estimate.proxy) : null,
-  };
-}
 
 /**
  * Price change since the session open when the loaded window reaches it,
@@ -136,7 +70,6 @@ export function computeTimeframeReading(
       technical: { ...EMPTY_READING_BASE, details: [] },
       summary: { ...EMPTY_READING_BASE, details: [] },
       orderFlow,
-      estimatedFlow: null,
       structure: analyzeMarketStructure(candles),
       metrics: computeTechnicalMetrics(candles, config.session),
       price,
@@ -154,15 +87,15 @@ export function computeTimeframeReading(
 
   // An estimate is only produced when there is no REAL source: a real reading
   // always wins, and an estimate is never mixed with one.
-  const estimatedFlow = orderFlow ? null : buildEstimatedFlow(candles, config);
-  const summary = buildSummaryGauge(technical, orderFlow?.gauge ?? null, config, estimatedFlow?.gauge ?? null);
+  // The summary blends REAL order flow when a venue feed supplied one; with no
+  // source it is the technical reading itself.
+  const summary = buildSummaryGauge(technical, orderFlow?.gauge ?? null, config);
 
   return {
     timeframe,
     technical,
     summary,
     orderFlow,
-    estimatedFlow,
     structure: analyzeMarketStructure(candles),
     metrics: computeTechnicalMetrics(candles, config.session),
     price,
