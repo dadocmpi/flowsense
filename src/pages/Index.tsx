@@ -14,14 +14,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useInstrumentFeed } from '../hooks/useInstrumentFeed';
 import { useTimeframeReadings } from '../hooks/useTimeframeReadings';
+import { useTickStream } from '../hooks/useTickStream';
+import { useDepthStream } from '../hooks/useDepthStream';
 import { InstrumentSelector } from '../components/compass/InstrumentSelector';
 import { TimeframeButtons } from '../components/compass/TimeframeButtons';
 import { CompassCard } from '../components/compass/CompassCard';
+import { ConfluenceCompass } from '../components/compass/ConfluenceCompass';
+import { InstitutionalOrderFlow, type FlowMode } from '../components/flow/InstitutionalOrderFlow';
+import { ThermalLinePanel } from '../components/flow/ThermalLinePanel';
 import { TechnicalTable } from '../components/compass/TechnicalTable';
 import { EntryCheckPanel, type EntryChip } from '../components/compass/EntryCheckPanel';
 import { Section } from '../components/common/Section';
 import { ALL_INSTRUMENTS, DEFAULT_INSTRUMENT_ID, findInstrument, type Instrument } from '../core/instruments';
 import { TIMEFRAME_LABELS, TIMEFRAMES, type Timeframe } from '../core/types';
+import { TICK_WINDOW } from '../core/tickflow';
 import { probeFuturesProvider, providerConfiguredState } from '../core/providers';
 import { checkEntry, type EntryCompassInput, type EntryDirection } from '../core/entryCheck';
 import { DEFAULT_COMPASS_CONFIG } from '../config/compass';
@@ -99,6 +105,20 @@ const Index: React.FC = () => {
 
   const feed = useInstrumentFeed(instrument, selectedTimeframe);
   const { current, stored, orderFlow } = useTimeframeReadings(feed, selectedTimeframe);
+
+  // The live flow panel and the thermal line share ONE price-tape socket. The
+  // symbol is whatever the server resolved for this asset (XAU/USD for Gold).
+  const [flowMode, setFlowMode] = useState<FlowMode>('ORDER_FLOW');
+  const flowSymbol = feed.resolvedSource?.symbol ?? instrument.providerSymbol;
+  const tickFlow = useTickStream({ symbol: flowSymbol, windowSize: TICK_WINDOW });
+  const depthFlow = useDepthStream(flowSymbol);
+
+  // The flow reading for the compass's FLOW tab: order flow reads the tape,
+  // book flow reads the book. Both come from the same lifted streams.
+  const activeFlow = flowMode === 'ORDER_FLOW' ? tickFlow : depthFlow;
+  const flowReading = activeFlow.hasData ? activeFlow.reading : null;
+  const flowConfigured = flowMode === 'ORDER_FLOW' ? true : depthFlow.configured;
+  const flowLabel = flowMode === 'ORDER_FLOW' ? 'ORDER FLOW' : depthFlow.providerLabel;
 
   // Ages are shown live ("updated 42s ago"), so a one-second tick drives them.
   const [now, setNow] = useState(() => Date.now());
@@ -377,6 +397,30 @@ const Index: React.FC = () => {
             unavailableText="No order flow source configured"
             unavailableHint="Twelve Data has no order-flow data. Set ORDERFLOW_PROVIDER and ORDERFLOW_API_KEY to add one."
           />
+        </div>
+
+        {/* ── Live flow: confluence compass, order flow, thermal line ─────
+            Three panels that share one price-tape socket. The compass is the
+            technical read with a FLOW tab; the order-flow panel and the thermal
+            line both follow the ORDER FLOW / BOOK FLOW toggle. */}
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <ConfluenceCompass
+            timeframeLabel={timeframeLabel}
+            technical={frame?.technical ?? { score: 0, label: 'NEUTRAL', tally: { buy: 0, neutral: 0, sell: 0 }, details: [] }}
+            candleCount={frame?.candleCount ?? 0}
+            available={Boolean(frame?.available)}
+            flow={flowReading}
+            flowConfigured={flowConfigured}
+            flowLabel={flowLabel}
+          />
+          <InstitutionalOrderFlow
+            orderFlowSymbol={flowSymbol}
+            mode={flowMode}
+            onModeChange={setFlowMode}
+            orderFlow={tickFlow}
+            bookFlow={depthFlow}
+          />
+          <ThermalLinePanel mode={flowMode} orderFlow={tickFlow} bookFlow={depthFlow} />
         </div>
 
         {/* ── Below the compasses: the merged table and the entry check ──

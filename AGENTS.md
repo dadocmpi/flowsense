@@ -199,12 +199,60 @@ changes: the client, the summary blend and the entry check already speak that
 shape. The key stays server-side; check `grep -c "apikey" dist/assets/*.js` is
 still 0 after adding one.
 
+### Live flow: the tick rule and the depth seam
+
+The live flow panels (Institutional Order Flow, Thermal Line, the compass FLOW
+tab) read the price tape through THIS APP'S OWN relay,
+`GET /api/futures/stream?symbol=...` (`api/futures/stream.ts`). The browser opens
+a socket to the app; the relay opens the vendor socket server-side with
+`TWELVE_DATA_API_KEY` and forwards each price. The key never reaches the browser.
+The relay is the ONLY place the vendor socket is opened, so one page cannot
+multiply the vendor spend.
+
+The relay carries a PRICE only. It has no aggressor side and no book, so the
+client infers each print's side with the **tick rule**
+(`src/core/tickflow.ts`): up = buy, down = sell, unchanged inherits the previous
+side. This is an inference and the UI labels it as one. The tape carries no size,
+so the delta counts prints rather than volume, and the UI labels that too — a
+tick-count delta must never be presented as a volume delta.
+
+BOOK FLOW reads a real order book through the `DepthProvider` seam
+(`src/core/providers/depth.ts`). The only shipped adapter is `none`, so until a
+real provider is registered the panel shows "Sem feed de profundidade
+conectado" and draws nothing. A book is NEVER reconstructed from prints. Adding a
+real provider is a server route (it holds the key) plus one `registerDepthProvider`
+call; the UI needs no change.
+
+`useTickStream` reconnects on a capped backoff, and it stops reconnecting on a
+permanent failure (no key, or a plan without WebSocket access) rather than
+hammering a socket that can never succeed. Both flow hooks are lifted into
+`src/pages/Index.tsx` so ONE socket feeds every panel.
+
 ## UI
 
 The main screen, top to bottom, and it fits 1920x1080 without scrolling: the top
 bar (price, feed state, provenance, asset tabs, timeframe buttons), three
-compasses in one row, then the merged technical table (two thirds) beside the
-entry check (one third).
+compasses in one row, then the live flow row (Confluence Compass, Institutional
+Order Flow, Thermal Line), then the merged technical table (two thirds) beside
+the entry check (one third).
+
+The Confluence Compass is the semicircular gauge: radial tick marks in a
+red→gold→green gradient, a yellow needle on a dark hub with a gold ring, the five
+STRONG SELL … STRONG BUY labels with the active one highlighted, the OVERALL /
+OSCILLATORS / MOVING AVG / FLOW tabs, a large verdict box and the Sell / Neutral
+/ Buy counters. Its needle glides through a ~600 ms CSS transition and its score
+is damped with an EMA plus a hysteresis deadband (`src/core/compassSmoothing.ts`),
+so the needle does not twitch and the label cannot flap across a threshold. Every
+factor it lists is shown even when it could not be computed: too few candles
+reads "N/A" with the warmup it needs (`src/core/compassRoster.ts`), never a
+missing row.
+
+The Institutional Order Flow panel toggles ORDER FLOW ⇄ BOOK FLOW and both drive
+the same UI (BUYERS %, SELLERS %, the rolling-window volume delta and
+INSTITUTIONAL PRESSURE). The Thermal Line is a green↔red bar whose equilibrium
+point follows the buyers/sellers proportion, and it works in both modes. Neither
+panel invents data: BOOK FLOW with no provider reads "Sem feed de profundidade
+conectado", and a tick-count delta is labelled as counts rather than volume.
 
 The timeframe buttons carry the LABEL ONLY — M1 M5 M15 M30 1H 4H 1D. No score,
 no signal word, no colour that implies a signal; only the selected one is
