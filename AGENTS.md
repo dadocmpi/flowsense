@@ -45,6 +45,9 @@ src/core/providers/            MarketDataProvider interface + the server-proxied
 src/core/providers/polling.ts  per-provider poll cadence + server cache TTLs (one place)
 src/core/providers/twelvedataWs.ts  pure parsing of the vendor price stream
 src/core/providers/orderflow.ts     OrderFlowProvider interface + the `none` adapter
+src/core/orderFlowEstimator.ts      ESTIMATED order flow from candles (no book/tape): CLV, delta, CVD, hysteresis (pure)
+src/core/priceLevels.ts             ESTIMATED price levels from candles: busiest zones + swing high/low (pure)
+src/core/providers/capabilities.ts  what each vendor can supply for the flow panel (hasOrderBook, hasVolume)
 src/config/compass.ts          every weight, tolerance and session setting
 src/hooks/marketDataStore.ts         one store of series keyed asset:timeframe, loaded once on open
 src/hooks/useInstrumentFeed.ts        a per-instrument view over the store
@@ -187,17 +190,58 @@ order book — so it is never computed from the candle feed. It comes from a
 provider behind `src/core/providers/orderflow.ts`, selected server-side by
 `ORDERFLOW_PROVIDER` / `ORDERFLOW_API_KEY` (see `api/_lib/orderflow.ts`).
 
-The shipped adapter is `none`: the card then reads "No order flow source
-configured" and draws NO gauge. It must never draw a neutral needle or a `0` in
-place of a missing reading — a neutral needle looks like a real "neutral market"
-read. With no source the Summary compass IS the technical reading rather than a
-blend against a stand-in zero.
+The shipped adapter is `none`: no real source is configured, so the Summary
+compass blends in no real flow. It must never draw a neutral needle or a `0` in
+place of a missing real reading — a neutral needle looks like a real "neutral
+market" read. When no real source exists, the RIGHT panel falls back to the
+clearly-labelled ESTIMATED order flow described below (and, with the estimate
+switched off, the Summary IS the technical reading rather than a blend against a
+stand-in zero).
 
 Connecting a vendor means implementing `fetchOrderFlowReading` in
 `api/_lib/orderflow.ts` and setting the two environment variables. Nothing else
 changes: the client, the summary blend and the entry check already speak that
 shape. The key stays server-side; check `grep -c "apikey" dist/assets/*.js` is
 still 0 after adding one.
+
+### With no source, the RIGHT panel shows an ESTIMATED order flow
+
+An instrument whose provider publishes no book and no tape (Twelve Data /
+XAU-USD) still gets a RIGHT panel, but it is an ESTIMATE derived from the closed
+candles, and it is always badged ESTIMATED with a tooltip saying exactly what it
+is. This is the ONE place candles feed the flow panel, and it is clearly labelled
+as an estimate rather than passed off as a real reading:
+
+- `src/core/orderFlowEstimator.ts` is pure. Per closed candle it computes
+  CLV = ((close - low) - (high - close)) / (high - low), guarded to 0 when
+  high == low. The weight is the candle volume when present and non-zero,
+  otherwise the candle range, or a live tick count when a stream supplies one;
+  the proxy is auto-detected and the chosen one is logged once. delta = CLV *
+  weight, CVD is its running sum, and the window imbalance is the activity-
+  weighted mean CLV on the shared -100..+100 scale.
+- MAIN values are computed on CLOSED candles only. The newest candle of a live
+  series is the forming bar: it is peeled off and shown as a separate
+  "provisional" number that never touches the gauge, the Summary or the Compass.
+  So the main numbers move on candle close, not on every tick. The imbalance is
+  smoothed with a short EMA, and the Buying / Selling / Neutral word uses a
+  neutral zone plus hysteresis (the threshold must hold for N candles).
+- The panel (`src/components/flow/EstimatedOrderFlowPanel.tsx`) keeps the
+  ORDER FLOW / BOOK FLOW toggle. Book Flow is DISABLED with the hint "Unavailable
+  for this provider" when the provider has no book, never an error. With too few
+  candles it says "Collecting data… X/20" rather than drawing a neutral needle.
+- The levels line (`src/components/flow/LevelsLine.tsx`, `src/core/priceLevels.ts`)
+  is the candle-only stand-in for a book map: the busiest estimated price zones
+  plus the recent swing high / low, labelled ESTIMATED. It is where trading
+  already happened, never a resting order.
+- `src/core/providers/capabilities.ts` is the per-vendor switch
+  (`hasOrderBook`, `hasVolume`). Twelve Data: no book, no usable volume. A future
+  provider with a real book sets `hasOrderBook: true` and Book Flow lights up
+  with no UI change.
+- The estimate is an OPTIONAL, low-weight input to the Summary blend
+  (`estimatedOrderFlow.weight` in `src/config/compass.ts`), and it can be
+  switched off entirely (`estimatedOrderFlow.enabled`). It is used only when
+  there is no REAL source; a real reading always wins and is never mixed with an
+  estimate.
 
 ## UI
 
