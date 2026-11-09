@@ -140,13 +140,15 @@ describe('httpOrderFlowProvider', () => {
       if (url.includes('/api/orderflow/reading') && !url.includes('instrument=')) {
         return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed' });
       }
-      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', reading });
+      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', venue: 'alpaca', reading });
     });
 
     await probeOrderFlowProvider();
     await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual({
       reading,
       note: null,
+      venue: 'alpaca',
+      label: 'MyFeed',
     });
   });
 
@@ -155,13 +157,22 @@ describe('httpOrderFlowProvider', () => {
       if (!url.includes('instrument=')) {
         return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed' });
       }
-      return jsonResponse({ configured: true, provider: 'http', label: 'MyFeed', reading: null, note: 'No market.' });
+      return jsonResponse({
+        configured: true,
+        provider: 'http',
+        label: 'MyFeed',
+        venue: 'alpaca',
+        reading: null,
+        note: 'No market.',
+      });
     });
 
     await probeOrderFlowProvider();
     await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual({
       reading: null,
       note: 'No market.',
+      venue: 'alpaca',
+      label: 'MyFeed',
     });
   });
 });

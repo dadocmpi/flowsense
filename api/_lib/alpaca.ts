@@ -480,3 +480,242 @@ function mergeCandles(existing: Candle[], incoming: Candle[], keep: number): Can
   const merged = [...byTime.values()].sort((a, b) => a.datetime.localeCompare(b.datetime));
   return merged.length > keep ? merged.slice(merged.length - keep) : merged;
 }
+
+// ============================================
+// ORDER-FLOW INPUTS: THE TAPE AND THE TOP OF BOOK
+// ============================================
+// Order flow needs the tape and the book, not bars. Alpaca publishes both for
+// US equities, but NOT the depth book a futures venue carries:
+//
+//   /v2/stocks/trades        every print: price, size, exchange, conditions
+//   /v2/stocks/quotes/latest the latest best bid/ask PRICE and SIZE (feed=iex)
+//
+// Two facts follow, and the adapter must not hide either:
+//   * a stock trade carries NO aggressor side, so buy/sell is classified with the
+//     standard tick rule (see api/_lib/alpacaOrderflow.ts) — an inference over
+//     real prints, never a fabricated one;
+//   * Alpaca offers no depth beyond the top of book, so "book imbalance" is the
+//     best bid size against its best ask size, a real one-level book.
+//
+// Like the bars path, every request goes through the Alpaca meter and logs one
+// line. There is no fetch here that skips the meter.
+
+export interface AlpacaTrade {
+  t: string;
+  p: number;
+  s: number;
+  x?: string;
+  z?: string;
+  c?: string[];
+}
+
+export interface AlpacaQuote {
+  t: string;
+  bp: number;
+  bs: number;
+  ap: number;
+  as: number;
+  bx?: string;
+  ax?: string;
+}
+
+export interface AlpacaTradesResponse {
+  trades?: Record<string, AlpacaTrade[] | null> | null;
+  next_page_token?: string | null;
+  message?: string;
+}
+
+export interface AlpacaLatestQuoteResponse {
+  quotes?: Record<string, AlpacaQuote | null> | null;
+  message?: string;
+}
+
+/** The URL for one page of a trades request (newest-first by default). */
+export function buildAlpacaTradesUrl(params: {
+  symbol: string;
+  limit: number;
+  start?: string;
+  pageToken?: string | null;
+  feed?: string;
+}): string {
+  const search = new URLSearchParams({
+    symbols: params.symbol,
+    limit: String(Math.max(1, Math.min(10_000, params.limit))),
+    feed: params.feed ?? 'iex',
+    // Newest-first so the window is the most recent activity, not the start of
+    // the day. The adapter reverses it into chronological order.
+    sort: 'desc',
+  });
+  if (params.start) search.set('start', params.start);
+  if (params.pageToken) search.set('page_token', params.pageToken);
+  return `https://data.alpaca.markets/v2/stocks/trades?${search.toString()}`;
+}
+
+/** The URL for the latest best bid/ask of one symbol. */
+export function buildAlpacaLatestQuoteUrl(params: { symbol: string; feed?: string }): string {
+  const search = new URLSearchParams({ symbols: params.symbol, feed: params.feed ?? 'iex' });
+  return `https://data.alpaca.markets/v2/stocks/quotes/latest?${search.toString()}`;
+}
+
+/** Turn one trades page into real prints, oldest-first. */
+export function parseAlpacaTrades(payload: AlpacaTradesResponse, symbol: string): AlpacaTrade[] {
+  const list = payload.trades?.[symbol];
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter(trade => Number.isFinite(trade.p) && Number.isFinite(trade.s) && trade.s > 0)
+    .sort((a, b) => a.t.localeCompare(b.t));
+}
+
+/** The latest quote for one symbol, or null when the venue sent none. */
+export function parseAlpacaQuote(payload: AlpacaLatestQuoteResponse, symbol: string): AlpacaQuote | null {
+  const quote = payload.quotes?.[symbol];
+  if (!quote) return null;
+  // A 0 price means "no active side"; a quote with neither side is unusable.
+  const hasBid = Number.isFinite(quote.bp) && quote.bp > 0;
+  const hasAsk = Number.isFinite(quote.ap) && quote.ap > 0;
+  if (!hasBid && !hasAsk) return null;
+  return {
+    t: quote.t,
+    bp: hasBid ? quote.bp : 0,
+    bs: hasBid ? quote.bs : 0,
+    ap: hasAsk ? quote.ap : 0,
+    as: hasAsk ? quote.as : 0,
+    bx: quote.bx,
+    ax: quote.ax,
+  };
+}
+
+interface AlpacaGetOptions {
+  keyId: string;
+  secretKey: string;
+  signal?: AbortSignal;
+  baseUrl?: string;
+}
+
+/**
+ * One metered Alpaca GET for a JSON payload.
+ *
+ * The meter is consulted before the call and the response recorded after it, so
+ * a request that would breach the minute is refused without spending anything.
+ * The log line carries the endpoint and the request count, never a key.
+ */
+async function alpacaGetJson<T>(
+  url: string,
+  meta: { endpoint: string; symbols: string[]; timeframe?: string },
+  options: AlpacaGetOptions
+): Promise<T> {
+  try {
+    alpacaMeter.assert(1);
+  } catch (error) {
+    if (error instanceof CreditLimitError) {
+      logAlpacaRequest({
+        endpoint: meta.endpoint,
+        symbols: meta.symbols,
+        timeframe: meta.timeframe,
+        status: 'BLOCKED',
+        meter: alpacaMeter.snapshot(),
+        note: error.message,
+      });
+      throw new AlpacaError('RATE_LIMIT', 'Alpaca rate limit reached', 429, Math.max(0, error.resetAt - Date.now()));
+    }
+    throw error;
+  }
+
+  let response: Response;
+  try {
+    noteAlpacaCall();
+    response = await fetch(url, {
+      signal: options.signal,
+      headers: {
+        Accept: 'application/json',
+        'APCA-API-KEY-ID': options.keyId,
+        'APCA-API-SECRET-KEY': options.secretKey,
+      },
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    logAlpacaRequest({ endpoint: meta.endpoint, symbols: meta.symbols, timeframe: meta.timeframe, status: 'NETWORK', meter: alpacaMeter.snapshot() });
+    throw new AlpacaError('NETWORK', 'Could not reach Alpaca');
+  }
+
+  const meter = recordAlpacaRequest({ endpoint: meta.endpoint, symbol: meta.symbols.join(','), timeframe: meta.timeframe, credits: 1 }, {});
+
+  let payload: T & { message?: string };
+  try {
+    payload = (await response.json()) as T & { message?: string };
+  } catch {
+    logAlpacaRequest({ endpoint: meta.endpoint, symbols: meta.symbols, timeframe: meta.timeframe, status: response.status, meter, note: 'unreadable body' });
+    throw new AlpacaError('UPSTREAM', `Alpaca returned HTTP ${response.status} with an unreadable body`, response.status);
+  }
+
+  if (!response.ok) {
+    const message = payload.message ?? `Alpaca returned HTTP ${response.status}`;
+    const kind = classifyAlpacaError(message, response.status);
+    logAlpacaRequest({ endpoint: meta.endpoint, symbols: meta.symbols, timeframe: meta.timeframe, status: response.status, meter, note: kind, message });
+    if (kind === 'RATE_LIMIT') {
+      const snapshot = markAlpacaExhausted();
+      throw new AlpacaError('RATE_LIMIT', 'Alpaca rate limit reached', response.status, Math.max(0, snapshot.resetAt - Date.now()));
+    }
+    throw new AlpacaError(kind, message, response.status);
+  }
+
+  logAlpacaRequest({ endpoint: meta.endpoint, symbols: meta.symbols, timeframe: meta.timeframe, status: response.status, meter });
+  return payload;
+}
+
+/**
+ * The most recent `limit` trades for one symbol, oldest-first.
+ *
+ * Pages newest-first and walks backwards until the window is full, so a quiet
+ * symbol still yields its most recent prints rather than the start of the day.
+ */
+export async function fetchAlpacaTrades(params: {
+  symbol: string;
+  limit: number;
+  keyId: string;
+  secretKey: string;
+  signal?: AbortSignal;
+  maxPages?: number;
+  baseUrl?: string;
+  start?: string;
+}): Promise<AlpacaTrade[]> {
+  const perPage = Math.max(1, Math.min(10_000, params.limit));
+  const maxPages = params.maxPages ?? 3;
+  const collected: AlpacaTrade[] = [];
+  let pageToken: string | null = null;
+
+  for (let page = 0; page < maxPages && collected.length < params.limit; page += 1) {
+    const url = params.baseUrl
+      ? `${params.baseUrl}?${new URL(buildAlpacaTradesUrl({ symbol: params.symbol, limit: perPage, start: params.start, pageToken })).searchParams.toString()}`
+      : buildAlpacaTradesUrl({ symbol: params.symbol, limit: perPage, start: params.start, pageToken });
+    const payload: AlpacaTradesResponse = await alpacaGetJson<AlpacaTradesResponse>(
+      url,
+      { endpoint: 'stocks_trades', symbols: [params.symbol] },
+      params
+    );
+    collected.push(...parseAlpacaTrades(payload, params.symbol));
+    pageToken = payload.next_page_token ?? null;
+    if (!pageToken) break;
+  }
+
+  return collected.sort((a, b) => a.t.localeCompare(b.t)).slice(-params.limit);
+}
+
+/** The latest quote for one symbol, or null when the venue sent none. */
+export async function fetchAlpacaLatestQuote(params: {
+  symbol: string;
+  keyId: string;
+  secretKey: string;
+  signal?: AbortSignal;
+  baseUrl?: string;
+}): Promise<AlpacaQuote | null> {
+  const url = params.baseUrl
+    ? `${params.baseUrl}?${new URL(buildAlpacaLatestQuoteUrl({ symbol: params.symbol })).searchParams.toString()}`
+    : buildAlpacaLatestQuoteUrl({ symbol: params.symbol });
+  const payload = await alpacaGetJson<AlpacaLatestQuoteResponse>(
+    url,
+    { endpoint: 'stocks_quotes_latest', symbols: [params.symbol] },
+    params
+  );
+  return parseAlpacaQuote(payload, params.symbol);
+}

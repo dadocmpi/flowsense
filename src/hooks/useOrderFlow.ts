@@ -21,7 +21,11 @@ import {
   type OrderFlowProbeResult,
   type OrderFlowReading,
 } from '../core/providers/orderflow';
-import { orderFlowCapabilitiesForVenue, type OrderFlowCapabilities } from '../core/providers/capabilities';
+import {
+  orderFlowBookLabelForVenue,
+  orderFlowCapabilitiesForVenue,
+  type OrderFlowCapabilities,
+} from '../core/providers/capabilities';
 
 export type OrderFlowState = 'LOADING' | 'READY' | 'UNAVAILABLE';
 
@@ -32,7 +36,7 @@ export interface UseOrderFlowResult {
   reading: OrderFlowReading | null;
   /**
    * Why there is no reading, when there is none — the venue's own reason (e.g.
-   * "No Binance market for ES."). Null while loading or when a reading exists.
+   * "No Alpaca market for ES."). Null while loading or when a reading exists.
    */
   note: string | null;
   /**
@@ -43,6 +47,15 @@ export interface UseOrderFlowResult {
    * for an instrument the venue has no market for.
    */
   capabilities: OrderFlowCapabilities;
+  /**
+   * The venue THIS instrument reads, as named by the server (e.g. "alpaca").
+   * Drives the capabilities above; null until the first response.
+   */
+  venue: string | null;
+  /** Human venue label for this instrument, e.g. "Alpaca". */
+  label: string;
+  /** How to name the book this venue publishes ("Depth", "Top of book"). */
+  bookLabel: string;
   /** LOADING while the probe or the venue call is in flight. */
   state: OrderFlowState;
 }
@@ -51,6 +64,11 @@ export function useOrderFlow(instrument: Instrument, timeframe: Timeframe): UseO
   const [probe, setProbe] = useState<OrderFlowProbeResult | null>(null);
   const [reading, setReading] = useState<OrderFlowReading | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // The venue for the selected instrument, from the last response. The probe
+  // reports the deployment-wide venue; a per-asset response reports the venue
+  // this asset actually reads (every shipped asset reads Alpaca).
+  const [venue, setVenue] = useState<string | null>(null);
+  const [venueLabel, setVenueLabel] = useState<string | null>(null);
   const [state, setState] = useState<OrderFlowState>('LOADING');
 
   // Ask the server whether a venue exists. Cached, so several callers share it.
@@ -92,6 +110,10 @@ export function useOrderFlow(instrument: Instrument, timeframe: Timeframe): UseO
         if (!active) return;
         setReading(result.reading);
         setNote(result.note);
+        // Prefer the venue this asset reads; fall back to the deployment-wide one
+        // so the panel still has a venue before the first per-asset answer lands.
+        setVenue(result.venue ?? probe?.venue ?? null);
+        setVenueLabel(result.label ?? probe?.label ?? null);
         setState(result.reading ? 'READY' : 'UNAVAILABLE');
       })
       .catch(() => {
@@ -106,9 +128,11 @@ export function useOrderFlow(instrument: Instrument, timeframe: Timeframe): UseO
       active = false;
       controller.abort();
     };
-  }, [instrument, timeframe, probe?.configured]);
+    // `probe` is set once from the cached probe, so this effect re-runs only when
+    // the instrument, the timeframe or the (single) probe answer changes.
+  }, [instrument, timeframe, probe]);
 
-  const venueCapabilities = orderFlowCapabilitiesForVenue(probe?.venue);
+  const venueCapabilities = orderFlowCapabilitiesForVenue(venue ?? probe?.venue);
   // A toggle needs a reading to switch modes on. Without one the panel shows the
   // unavailable state, so no toggle is offered.
   const capabilities = useMemo(
@@ -119,5 +143,8 @@ export function useOrderFlow(instrument: Instrument, timeframe: Timeframe): UseO
     [venueCapabilities.hasOrderBook, venueCapabilities.hasVolume, reading]
   );
 
-  return { probe, reading, note, capabilities, state };
+  const bookLabel = useMemo(() => orderFlowBookLabelForVenue(venue ?? probe?.venue), [venue, probe?.venue]);
+  const label = venueLabel ?? probe?.label ?? 'Order flow';
+
+  return { probe, reading, note, capabilities, venue, label, bookLabel, state };
 }

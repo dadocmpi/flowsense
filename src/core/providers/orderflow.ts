@@ -43,12 +43,18 @@ export interface OrderFlowContext {
  * The outcome of asking a venue for a reading.
  *
  * `reading` is null when there is nothing real to show; `note` then carries the
- * venue's own reason (e.g. "No Binance market for ES."), so the card can say why
+ * venue's own reason (e.g. "No Alpaca market for ES."), so the card can say why
  * instead of a generic message. A note is never a substitute for a reading.
+ *
+ * `venue`/`label` name the venue THIS instrument reads, which the server decides
+ * per asset (every shipped asset reads Alpaca). They drive the
+ * panel's capabilities, so the book a venue publishes is named correctly.
  */
 export interface OrderFlowResult {
   reading: OrderFlowReading | null;
   note: string | null;
+  venue?: string | null;
+  label?: string | null;
 }
 
 export interface OrderFlowProvider {
@@ -99,16 +105,26 @@ export const httpOrderFlowProvider: OrderFlowProvider = {
       return { reading: null, note: 'Could not reach the order flow route.' };
     }
 
-    let payload: { reading?: OrderFlowReading | null; note?: string | null } | null = null;
+    let payload: { reading?: OrderFlowReading | null; note?: string | null; venue?: string; label?: string } | null = null;
     try {
-      payload = (await response.json()) as { reading?: OrderFlowReading | null; note?: string | null };
+      payload = (await response.json()) as {
+        reading?: OrderFlowReading | null;
+        note?: string | null;
+        venue?: string;
+        label?: string;
+      };
     } catch {
       return { reading: null, note: 'The order flow route returned an unreadable body.' };
     }
 
     // A source that has nothing to report says so with null; we do not turn that
-    // into a reading, but we do keep its reason.
-    return { reading: payload?.reading ?? null, note: payload?.note ?? null };
+    // into a reading, but we do keep its reason and the venue it names.
+    return {
+      reading: payload?.reading ?? null,
+      note: payload?.note ?? null,
+      venue: payload?.venue ?? null,
+      label: payload?.label ?? null,
+    };
   },
 };
 
@@ -145,7 +161,7 @@ export interface OrderFlowProbeResult {
   configured: boolean;
   provider: OrderFlowProviderId;
   label: string;
-  /** The configured venue id, e.g. "binance" or "none". */
+  /** The configured venue id, e.g. "alpaca" or "none". */
   venue: string;
   /** Why it is unavailable, when it is. */
   note: string | null;

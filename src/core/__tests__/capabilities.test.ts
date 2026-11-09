@@ -8,15 +8,16 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  orderFlowBookLabelForVenue,
   orderFlowCapabilitiesForVenue,
   VENUE_ORDER_FLOW_CAPABILITIES,
 } from '../providers/capabilities';
 
 describe('order-flow capabilities', () => {
-  it('enables Book Flow for Binance, which publishes a real depth book', () => {
-    expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasOrderBook).toBe(true);
-    expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasVolume).toBe(true);
-    expect(orderFlowCapabilitiesForVenue('binance')).toEqual({ hasOrderBook: true, hasVolume: true });
+  it('enables Book Flow for Alpaca, which publishes the IEX top of book', () => {
+    expect(VENUE_ORDER_FLOW_CAPABILITIES.alpaca.hasOrderBook).toBe(true);
+    expect(VENUE_ORDER_FLOW_CAPABILITIES.alpaca.hasVolume).toBe(true);
+    expect(orderFlowCapabilitiesForVenue('alpaca')).toEqual({ hasOrderBook: true, hasVolume: true });
   });
 
   it('does not enable Book Flow with no source', () => {
@@ -27,5 +28,15 @@ describe('order-flow capabilities', () => {
     expect(orderFlowCapabilitiesForVenue('mystery')).toEqual({ hasOrderBook: false, hasVolume: false });
     expect(orderFlowCapabilitiesForVenue(null)).toEqual({ hasOrderBook: false, hasVolume: false });
     expect(orderFlowCapabilitiesForVenue(undefined)).toEqual({ hasOrderBook: false, hasVolume: false });
+  });
+});
+
+describe('order-flow book label', () => {
+  it('names Alpaca\'s one-level book "Top of book"', () => {
+    expect(orderFlowBookLabelForVenue('alpaca')).toBe('Top of book');
+  });
+
+  it('never calls a one-level book a depth ladder', () => {
+    expect(orderFlowBookLabelForVenue('alpaca')).not.toBe('Depth');
   });
 });
