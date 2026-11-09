@@ -19,7 +19,7 @@
 // change.
 
 /** The order-flow venues this build understands. */
-export type OrderFlowVenue = 'none' | 'binance' | 'custom';
+export type OrderFlowVenue = 'none' | 'alpaca' | 'custom';
 
 export interface OrderFlowCapabilities {
   /** The venue publishes a real resting bid/ask book. */
@@ -32,15 +32,16 @@ export interface OrderFlowCapabilities {
 export const VENUE_ORDER_FLOW_CAPABILITIES: Record<OrderFlowVenue, OrderFlowCapabilities> = {
   // No source at all: no tape and no book.
   none: { hasOrderBook: false, hasVolume: false },
-  // Binance publishes a real depth book and a tape with the aggressor side.
-  binance: { hasOrderBook: true, hasVolume: true },
+  // Alpaca publishes a real top-of-book quote (bid/ask with sizes) and a tape
+  // of every trade with a real traded size.
+  alpaca: { hasOrderBook: true, hasVolume: true },
   // A named vendor we have not implemented: assume the honest minimum.
   custom: { hasOrderBook: false, hasVolume: false },
 };
 
 /** Capabilities for a venue id, defaulting to the honest minimum. */
 export function orderFlowCapabilitiesForVenue(venue: string | null | undefined): OrderFlowCapabilities {
-  if (venue === 'binance' || venue === 'none' || venue === 'custom') {
+  if (venue === 'alpaca' || venue === 'none' || venue === 'custom') {
     return VENUE_ORDER_FLOW_CAPABILITIES[venue];
   }
   return { hasOrderBook: false, hasVolume: false };

@@ -13,10 +13,10 @@ import {
 } from '../providers/capabilities';
 
 describe('order-flow capabilities', () => {
-  it('enables Book Flow for Binance, which publishes a real depth book', () => {
-    expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasOrderBook).toBe(true);
-    expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasVolume).toBe(true);
-    expect(orderFlowCapabilitiesForVenue('binance')).toEqual({ hasOrderBook: true, hasVolume: true });
+  it('enables Book Flow for Alpaca, which publishes a real top-of-book quote', () => {
+    expect(VENUE_ORDER_FLOW_CAPABILITIES.alpaca.hasOrderBook).toBe(true);
+    expect(VENUE_ORDER_FLOW_CAPABILITIES.alpaca.hasVolume).toBe(true);
+    expect(orderFlowCapabilitiesForVenue('alpaca')).toEqual({ hasOrderBook: true, hasVolume: true });
   });
 
   it('does not enable Book Flow with no source', () => {

@@ -1,7 +1,7 @@
 // ============================================
 // INSTITUTIONAL ORDER FLOW
 // ============================================
-// The RIGHT compass: real order flow from the configured venue (Binance). It
+// The RIGHT compass: real order flow from the configured venue (Alpaca). It
 // draws the gauge, the tape numbers (aggressor delta, CVD) and the resting book
 // imbalance, all from the venue's own payloads.
 //
@@ -34,7 +34,7 @@ interface OrderFlowPanelProps {
   capabilities: OrderFlowCapabilities;
   mode: FlowMode;
   onModeChange: (mode: FlowMode) => void;
-  /** Venue name for the provenance line, e.g. "Binance". */
+  /** Venue name for the provenance line, e.g. "Alpaca". */
   venueLabel: string;
   /** Why there is no reading, when there is none. */
   unavailableText: string;

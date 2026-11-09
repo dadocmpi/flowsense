@@ -32,7 +32,7 @@ export interface UseOrderFlowResult {
   reading: OrderFlowReading | null;
   /**
    * Why there is no reading, when there is none — the venue's own reason (e.g.
-   * "No Binance market for ES."). Null while loading or when a reading exists.
+   * "No Alpaca market for ES."). Null while loading or when a reading exists.
    */
   note: string | null;
   /**
