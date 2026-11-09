@@ -66,9 +66,10 @@ api/futures/candles.ts         server-side candle proxy (single asset, or one ba
 api/futures/status.ts          which providers are configured, what symbol is read, meter state
 api/health.ts                  provider credentials + last-call time + calls this minute
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
-api/orderflow/reading.ts       is an order-flow venue configured, and its real reading
-api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor
+api/orderflow/reading.ts       is an order-flow venue configured, and its real reading (per asset)
+api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor; picks the venue PER ASSET
 api/_lib/binance.ts            Binance order-flow adapter: depth + aggTrades -> delta/CVD/imbalance
+api/_lib/alpacaOrderflow.ts    Alpaca order-flow adapter: trades (tick rule) + IEX top of book -> delta/CVD/imbalance
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
 
@@ -189,14 +190,33 @@ window does not reach the bucket open, the natively fetched bar is kept.
 The RIGHT compass is order flow: delta/CVD, order-book imbalance, absorption.
 Twelve Data carries NO order-flow data — a candle has no aggressor side and no
 order book — so it is never computed from the candle feed. It comes from a real
-VENUE behind `src/core/providers/orderflow.ts`, selected server-side by
-`ORDERFLOW_PROVIDER` (see `api/_lib/orderflow.ts`).
+VENUE behind `src/core/providers/orderflow.ts`, chosen server-side PER ASSET
+(`api/_lib/orderflow.ts`).
 
-The shipped venue is Binance (`api/_lib/binance.ts`): its public market-data API
-carries a resting depth BOOK and a TAPE with the aggressor side of every trade
-(`aggTrades`). Gold is read as PAXG/USDT (PAX Gold, 1 token = 1 troy ounce) —
-a real gold market. The venue needs no key, so order flow works out of the box.
-Set `ORDERFLOW_PROVIDER=none` to switch it off.
+TWO real venues ship, and the venue is a per-asset fact:
+
+- **Gold (GC) reads Binance** (`api/_lib/binance.ts`): its public market-data API
+  carries a resting depth BOOK and a TAPE with the aggressor side of every trade
+  (`aggTrades`). Gold is read as PAXG/USDT (PAX Gold, 1 token = 1 troy ounce) — a
+  real gold market. The venue needs no key.
+- **The index assets (ES/YM/NQ) read Alpaca** (`api/_lib/alpacaOrderflow.ts`):
+  the same provider that serves their candles, so no extra key. It reads the
+  trade TAPE (`/v2/stocks/trades`) and the latest best bid/ask (`/v2/stocks/quotes/latest`).
+
+Alpaca's equities API is not a futures book, and the adapter must not pretend it
+is. Three facts are disclosed, never hidden: a stock trade carries **no aggressor
+side**, so buy/sell is classified with the standard **tick rule** (a print above
+the previous one is buyer-initiated, below is seller-initiated, unchanged carries
+the previous side) — an inference over real prints, not a fabricated number;
+Alpaca exposes **no depth beyond the top of book**, so "book imbalance" is the
+best bid SIZE against the best ask SIZE — a real one-level book, labelled "Top of
+book", never called a depth ladder; and the feed is pinned to **IEX**, so that
+best bid/ask is **IEX's own top of book, one exchange's quote — NOT the
+consolidated NBBO** (which needs the SIP feed). The UI never claims NBBO.
+
+`ORDERFLOW_PROVIDER` overrides the venue for the WHOLE deployment (`none` switches
+it off everywhere); `ORDERFLOW_PROVIDER_<ID>` overrides one asset. The defaults
+live in `DEFAULT_ORDERFLOW_VENUE` in `api/_lib/orderflow.ts`.
 
 The reading is fetched INDEPENDENTLY of the candle feed (`src/hooks/useOrderFlow.ts`
 + `/api/orderflow/reading`), so the RIGHT card shows real flow even when the
@@ -216,11 +236,14 @@ entry check already speak that shape. The key stays server-side; check
 
 ### Every order-flow call goes through the venue's meter
 
-The Binance adapter has its own meter instance (`api/_lib/binanceMeter.ts`),
-separate from the Twelve Data and Alpaca meters, so one venue's limit can never
-block another. `binanceGet` in `api/_lib/binance.ts` checks the meter before the
-request and records it after, and logs one `[binance]` line per request. Do not
-add a `fetch` to a Binance host outside that function.
+Each venue has its OWN meter instance, so one venue's limit can never block
+another: `api/_lib/binanceMeter.ts` for Binance and `api/_lib/alpacaMeter.ts` for
+Alpaca (the Alpaca order-flow calls share the Alpaca candle meter, since both are
+Alpaca requests). `binanceGet` in `api/_lib/binance.ts` checks the Binance meter
+before the request and records it after; the Alpaca order-flow calls go through
+`fetchAlpacaTrades` / `fetchAlpacaLatestQuote` in `api/_lib/alpaca.ts`, which use
+the same metered `alpacaGetJson` gate. Do not add a `fetch` to a Binance host
+outside `binanceGet`, or to `data.alpaca.markets` outside `api/_lib/alpaca.ts`.
 
 Binance serves the same public API from several hosts and some are geo-restricted
 (HTTP 451). The adapter tries `data-api.binance.vision`, then `api.binance.us`,
@@ -230,12 +253,16 @@ are unreachable. Pin one with `BINANCE_BASE_URL`.
 ### The Book Flow toggle is a venue capability, never hardcoded
 
 `src/core/providers/capabilities.ts` maps a venue to what it can supply
-(`hasOrderBook`, `hasVolume`). Binance: real book and real tape. The RIGHT panel
-renders the ORDER FLOW / BOOK FLOW toggle ONLY when the venue has a book AND the
-instrument has a live reading to switch modes on — never for a venue with no
-book, and never for an instrument the venue has no market for. With no book there
-is no toggle at all (not a disabled one) and Order Flow is the only mode. A venue
-with a real book lights the toggle up with no UI change.
+(`hasOrderBook`, `hasVolume`). Binance: a real multi-level book and a real tape.
+Alpaca: a real tape and the IEX best bid/ask — a real but ONE-LEVEL book, so
+Book Flow is offered and labelled "Top of book". The RIGHT panel renders the
+ORDER FLOW / BOOK FLOW toggle ONLY when the venue has a book AND the instrument
+has a live reading to switch modes on — never for a venue with no book, and never
+for an instrument the venue has no market for. With no book there is no toggle at
+all (not a disabled one) and Order Flow is the only mode. A venue with a real book
+lights the toggle
+up with no UI change, and `orderFlowBookLabelForVenue` names the book honestly
+("Depth" for Binance, "Top of book" for Alpaca).
 
 ### The Summary blends the real reading, or is the technical reading
 
@@ -327,10 +354,22 @@ any key-shaped token redacted — a key is never logged.
 [alpaca] 2026-01-02T14:31:01.004Z endpoint=stocks_bars symbols=SPY timeframe=15m page=1 status=401 meterUsed=2/200 meter=OK note=AUTH message=invalid credentials supplied
 ```
 
+The index assets' order-flow reads log under the same `[alpaca]` tag with their
+own `endpoint=`: `stocks_trades` for the tape and `stocks_quotes_latest` for the
+top of book. One order-flow reading is one trades page (plus a page or two when
+the tape is busy) and one quote — a handful of requests against the same 200/min
+budget.
+
+```
+[alpaca] 2026-01-02T14:31:02.010Z endpoint=stocks_trades symbols=SPY status=200 meterUsed=8/200 meter=OK
+[alpaca] 2026-01-02T14:31:02.140Z endpoint=stocks_quotes_latest symbols=SPY status=200 meterUsed=9/200 meter=OK
+```
+
 A blocked call never reaches the vendor and logs `status=BLOCKED` with the
 meter's reason instead. One full load is 7 Alpaca requests (all three symbols
 each) plus 7 Twelve Data credits (Gold). `GET /api/health` costs no vendor calls
-and reports each provider's credentials, last call time and calls this minute.
+and reports each provider's credentials, last call time, calls this minute, and
+each asset's order-flow venue.
 
 ## Testing indicator math
 

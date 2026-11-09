@@ -7,9 +7,10 @@
 //   3. one merged "Technical indicators" table (moving averages + oscillators)
 //   4. the LONG / SHORT entry check for the selected timeframe
 //
-// The right compass is REAL order flow from the configured venue (Binance). When
-// the venue has no market for the instrument, or cannot be reached, the card says
-// so and draws no gauge — it never falls back to a candle-derived estimate.
+// The right compass is REAL order flow from the configured venue, chosen per
+// asset (Gold reads Binance; the index assets read Alpaca). When the venue has no
+// market for the instrument, or cannot be reached, the card says so and draws no
+// gauge — it never falls back to a candle-derived estimate.
 //
 // There is no multi-timeframe confluence grid, no timeframe-detail panel and no
 // separate technical-metrics panel. Nothing is collapsible: everything renders
@@ -383,7 +384,8 @@ const Index: React.FC = () => {
             capabilities={flowCapabilities}
             mode={flowMode}
             onModeChange={setFlowMode}
-            venueLabel={orderFlow.probe?.label ?? 'Order flow'}
+            venueLabel={orderFlow.label}
+            bookLabel={orderFlow.bookLabel}
             unavailableText={
               orderFlow.probe?.configured
                 ? 'Feed unavailable'
@@ -396,7 +398,7 @@ const Index: React.FC = () => {
                 ? undefined
                 : orderFlow.note ??
                   (orderFlow.probe && !orderFlow.probe.configured
-                    ? 'Set ORDERFLOW_PROVIDER=binance to enable order flow.'
+                    ? 'No order-flow venue is configured for this asset.'
                     : undefined)
             }
             precision={pricePrecision}

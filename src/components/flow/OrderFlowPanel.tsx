@@ -1,9 +1,10 @@
 // ============================================
 // INSTITUTIONAL ORDER FLOW
 // ============================================
-// The RIGHT compass: real order flow from the configured venue (Binance). It
-// draws the gauge, the tape numbers (aggressor delta, CVD) and the resting book
-// imbalance, all from the venue's own payloads.
+// The RIGHT compass: real order flow from the configured venue, chosen per asset
+// (Gold reads Binance; the index assets read Alpaca). It draws the gauge, the tape
+// numbers (aggressor delta, CVD) and the resting book imbalance, all from the
+// venue's own payloads.
 //
 // The panel offers two modes:
 //
@@ -36,6 +37,12 @@ interface OrderFlowPanelProps {
   onModeChange: (mode: FlowMode) => void;
   /** Venue name for the provenance line, e.g. "Binance". */
   venueLabel: string;
+  /**
+   * How this venue names its book, for the Book Flow mode. "Depth" for a
+   * multi-level book (Binance), "Top of book" for the IEX best bid/ask only
+   * (Alpaca). The panel never calls a one-level book a depth ladder.
+   */
+  bookLabel: string;
   /** Why there is no reading, when there is none. */
   unavailableText: string;
   unavailableHint?: string;
@@ -83,6 +90,7 @@ export const OrderFlowPanel: React.FC<OrderFlowPanelProps> = ({
   mode,
   onModeChange,
   venueLabel,
+  bookLabel,
   unavailableText,
   unavailableHint,
   precision,
@@ -156,7 +164,7 @@ export const OrderFlowPanel: React.FC<OrderFlowPanelProps> = ({
                   value={metrics?.absorption != null ? `${Math.round(metrics.absorption * 100)}%` : '--'}
                 />
                 <Stat label="Venue" value={venueLabel} />
-                <Stat label="Book" value="Depth" />
+                <Stat label="Book" value={bookLabel} />
               </>
             ) : (
               <>
@@ -186,7 +194,7 @@ export const OrderFlowPanel: React.FC<OrderFlowPanelProps> = ({
 
           <div className="mt-auto w-full pt-2 text-micro text-white/35">
             Real order flow from {venueLabel}: aggressor delta and cumulative volume delta from the venue tape, plus
-            the resting bid/ask imbalance from the venue depth.
+            the resting bid/ask imbalance from the venue&rsquo;s {bookLabel === 'Depth' ? 'depth' : 'top of book'}.
           </div>
         </div>
       )}
