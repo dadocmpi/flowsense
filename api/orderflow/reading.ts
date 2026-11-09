@@ -6,8 +6,10 @@
 //
 // Query: instrument, timeframe
 //
-// The shipped source is Binance (api/_lib/binance.ts): a real public venue whose
-// depth and tape carry the aggressor side and the resting book. It needs no key.
+// The shipped source is Alpaca (api/_lib/alpacaOrderFlow.ts): its market-data
+// API carries a tape of every trade and the real top-of-book quote for the index
+// assets (S&P 500, Dow, Nasdaq) and Gold. It authenticates with the same
+// server-side credentials the candle feed uses.
 // The probe below costs no vendor call; only a request that names an instrument
 // reads the venue.
 //
@@ -28,7 +30,7 @@ import {
   orderFlowLabel,
   resolveOrderFlowVendor,
 } from '../_lib/orderflow.js';
-import { BinanceError } from '../_lib/binance.js';
+import { AlpacaError } from '../_lib/alpaca.js';
 
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
   if (req.method && req.method !== 'GET') {
@@ -50,7 +52,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
       venue,
       note: configured
         ? `Configured: ${orderFlowLabel()}`
-        : 'Set ORDERFLOW_PROVIDER=binance to enable order flow.',
+        : 'Set ALPACA_API_KEY/ALPACA_API_SECRET to enable order flow.',
       reading: null,
     });
     return;
@@ -101,7 +103,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   } catch (error) {
     // A failed venue call is reported as no reading, never as a fabricated one.
     const note =
-      error instanceof BinanceError || error instanceof Error ? error.message : 'Order flow request failed';
+      error instanceof AlpacaError || error instanceof Error ? error.message : 'Order flow request failed';
     sendJson(res, 200, {
       configured: true,
       provider: 'http',

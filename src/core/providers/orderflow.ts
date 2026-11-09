@@ -43,7 +43,7 @@ export interface OrderFlowContext {
  * The outcome of asking a venue for a reading.
  *
  * `reading` is null when there is nothing real to show; `note` then carries the
- * venue's own reason (e.g. "No Binance market for ES."), so the card can say why
+ * venue's own reason (e.g. "No Alpaca market for ES."), so the card can say why
  * instead of a generic message. A note is never a substitute for a reading.
  */
 export interface OrderFlowResult {
@@ -145,7 +145,7 @@ export interface OrderFlowProbeResult {
   configured: boolean;
   provider: OrderFlowProviderId;
   label: string;
-  /** The configured venue id, e.g. "binance" or "none". */
+  /** The configured venue id, e.g. "alpaca" or "none". */
   venue: string;
   /** Why it is unavailable, when it is. */
   note: string | null;

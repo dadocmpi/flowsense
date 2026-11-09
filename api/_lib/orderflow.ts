@@ -9,13 +9,15 @@
 // implementing `fetchOrderFlowReading` here and setting the environment in the
 // deployment:
 //
-//   ORDERFLOW_PROVIDER=binance           a real venue, wired up in this build
+//   ORDERFLOW_PROVIDER=alpaca            a real venue, wired up in this build
 //   ORDERFLOW_PROVIDER=<name>            any other vendor you implement
 //   ORDERFLOW_API_KEY=...                only for vendors that need one
 //
-// Binance is the SHIPPED real source (api/_lib/binance.ts): its public
-// market-data API carries a resting order book and a tape with the aggressor
-// side of every trade. That is real order flow, not a candle-derived proxy.
+// Alpaca is the SHIPPED real source (api/_lib/alpacaOrderFlow.ts): its
+// market-data API carries a tape of every trade and the real top-of-book quote
+// for the index assets (S&P 500, Dow, Nasdaq) and Gold, read with the same
+// server-side credentials the candle feed already uses. That is real order flow,
+// not a candle-derived proxy.
 //
 // Twelve Data has NO order-flow data. A candle carries no aggressor side and no
 // order book, so order flow can never be derived from the candle feed.
@@ -33,7 +35,8 @@
 // label must come from labelFromScore so it can never disagree with the score.
 
 import type { GaugeReading } from '../../src/core/types.js';
-import { binanceHasMarket, fetchBinanceOrderFlowReading } from './binance.js';
+import { alpacaConfigured, alpacaKeyId, alpacaSecretKey } from './futuresShared.js';
+import { alpacaOrderFlowHasMarket, fetchAlpacaOrderFlowReading } from './alpacaOrderFlow.js';
 
 export interface OrderFlowMetrics {
   delta: number | null;
@@ -48,24 +51,30 @@ export interface OrderFlowReading {
   source: string;
 }
 
-export type OrderFlowVendor = 'none' | 'binance' | 'custom';
+export type OrderFlowVendor = 'none' | 'alpaca' | 'custom';
 
 /**
  * Which adapter this deployment is configured to use.
  *
- * Default: Binance. It is a real public venue that needs no key, so order flow
- * works out of the box. Set ORDERFLOW_PROVIDER=none to switch it off, or to a
- * named vendor you implement yourself.
+ * Default: Alpaca. It reads the index assets (S&P 500, Dow, Nasdaq) and Gold
+ * through their liquid ETF proxies, using the same server-side credentials the
+ * candle feed already uses. Set ORDERFLOW_PROVIDER=none to switch it off, or to
+ * a named vendor you implement yourself.
  */
 export function resolveOrderFlowVendor(): OrderFlowVendor {
-  const raw = (process.env.ORDERFLOW_PROVIDER ?? 'binance').trim().toLowerCase();
+  const raw = (process.env.ORDERFLOW_PROVIDER ?? 'alpaca').trim().toLowerCase();
   if (raw === 'none' || raw === 'off' || raw === 'false') return 'none';
-  if (raw === 'binance') return 'binance';
-  if (raw === '') return 'binance';
+  if (raw === 'alpaca') return 'alpaca';
+  if (raw === '') return 'alpaca';
   return 'custom';
 }
 
-/** The vendor key. Read only on the server; never returned to the client. */
+/**
+ * The vendor key, when a named `custom` vendor needs one.
+ *
+ * The shipped Alpaca source does NOT use this: it authenticates with the shared
+ * ALPACA_API_KEY / ALPACA_API_SECRET pair, read only under api/.
+ */
 export function orderFlowApiKey(): string | null {
   const key = (process.env.ORDERFLOW_API_KEY ?? '').trim();
   return key.length > 0 ? key : null;
@@ -74,20 +83,20 @@ export function orderFlowApiKey(): string | null {
 /**
  * True when a source is configured AND has everything it needs.
  *
- * Binance needs no key. A named `custom` vendor without a key is not configured:
- * saying so is more useful than failing later with a vendor error the user
- * cannot act on.
+ * Alpaca needs its two server-side credentials (the same pair the candle feed
+ * uses). A named `custom` vendor without a key is not configured: saying so is
+ * more useful than failing later with a vendor error the user cannot act on.
  */
 export function orderFlowConfigured(): boolean {
   const vendor = resolveOrderFlowVendor();
-  if (vendor === 'binance') return true;
+  if (vendor === 'alpaca') return alpacaConfigured();
   return vendor === 'custom' && orderFlowApiKey() !== null;
 }
 
 /** A human label for the configured source, for the provenance line. */
 export function orderFlowLabel(): string {
   const vendor = resolveOrderFlowVendor();
-  if (vendor === 'binance') return 'Binance';
+  if (vendor === 'alpaca') return 'Alpaca';
   if (vendor === 'custom') return (process.env.ORDERFLOW_PROVIDER ?? 'custom').trim();
   return 'None';
 }
@@ -95,16 +104,17 @@ export function orderFlowLabel(): string {
 /** True when the configured venue has a market for this instrument. */
 export function orderFlowHasMarket(instrumentId: string): boolean {
   const vendor = resolveOrderFlowVendor();
-  if (vendor === 'binance') return binanceHasMarket(instrumentId);
+  if (vendor === 'alpaca') return alpacaOrderFlowHasMarket(instrumentId);
   return vendor === 'custom';
 }
 
 /**
  * Fetch a real order-flow reading for one instrument and timeframe.
  *
- * Binance is the shipped source; the call itself lives in api/_lib/binance.ts,
- * where every request runs through the Binance meter. A `custom` vendor with no
- * implementation returns null rather than inventing a value.
+ * Alpaca is the shipped source; the call itself lives in
+ * api/_lib/alpacaOrderFlow.ts, where every request runs through the Alpaca
+ * meter. A `custom` vendor with no implementation returns null rather than
+ * inventing a value.
  */
 export async function fetchOrderFlowReading(params: {
   instrumentId: string;
@@ -113,8 +123,16 @@ export async function fetchOrderFlowReading(params: {
   signal?: AbortSignal;
 }): Promise<OrderFlowReading | null> {
   const vendor = resolveOrderFlowVendor();
-  if (vendor === 'binance') {
-    return fetchBinanceOrderFlowReading(params.instrumentId, params.timeframe, params.signal);
+  if (vendor === 'alpaca') {
+    const keyId = alpacaKeyId();
+    const secretKey = alpacaSecretKey();
+    if (!keyId || !secretKey) return null;
+    return fetchAlpacaOrderFlowReading({
+      instrumentId: params.instrumentId,
+      keyId,
+      secretKey,
+      signal: params.signal,
+    });
   }
   // A named custom vendor has no implementation in this build. Returning null is
   // the honest answer: the card says the source returned no reading.
