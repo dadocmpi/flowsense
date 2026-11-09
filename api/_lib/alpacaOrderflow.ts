@@ -1,10 +1,15 @@
 // ============================================
 // ALPACA ORDER FLOW ADAPTER (server-side)
 // ============================================
-// A real order-flow source for the index assets (ES/SPY, YM/DIA, NQ/QQQ). It
+// A real order-flow source for every shipped asset, read through Alpaca. It
 // reads two real Alpaca payloads — the trade TAPE (/v2/stocks/trades) and the
 // latest best bid/ask (/v2/stocks/quotes/latest) — and derives aggressor delta,
 // window CVD, book imbalance and absorption.
+//
+// The symbols are PROXIES (see ALPACA_ORDERFLOW_MARKETS): the index assets read
+// their index ETF (SPY/DIA/QQQ) and Gold reads GLD, a real gold ETF, because
+// Alpaca has no spot-gold market. The reading's source label names the proxy, so
+// a proxy is never presented as the instrument itself.
 //
 // WHAT ALPACA DOES AND DOES NOT PUBLISH. This matters, because order flow must
 // never be invented:
@@ -30,7 +35,6 @@
 
 import type { GaugeReading, Vote, VoteDetail } from '../../src/core/types.js';
 import { DEFAULT_COMPASS_CONFIG } from '../../src/config/compass.js';
-import { assetProviderConfig } from './assets.js';
 import {
   fetchAlpacaLatestQuote,
   fetchAlpacaTrades,
@@ -54,14 +58,49 @@ export const ALPACA_ORDERFLOW_FEED = 'IEX';
 export const ALPACA_ORDERFLOW_TRADES = 1000;
 
 /**
+ * The Alpaca symbol each instrument's ORDER FLOW is read from.
+ *
+ * This is deliberately independent of the CANDLE provider: Gold's candles come
+ * from Twelve Data (spot XAU/USD), but Alpaca has no spot-gold market, so its
+ * flow is read from GLD, a real gold ETF. Every entry here is a PROXY for the
+ * instrument — an ETF, or the index ETF the app already uses — and the reading's
+ * source label says so, so a proxy is never presented as the instrument itself.
+ *
+ * Overridable per asset with ORDERFLOW_SYMBOL_<ID>.
+ */
+export interface AlpacaFlowMarket {
+  /** The Alpaca symbol whose tape and top of book are read. */
+  symbol: string;
+  /** True when the symbol is an ETF proxy rather than the instrument itself. */
+  proxy: boolean;
+}
+
+export const ALPACA_ORDERFLOW_MARKETS: Record<string, AlpacaFlowMarket> = {
+  GC: { symbol: 'GLD', proxy: true }, // SPDR Gold Shares — a real gold ETF
+  ES: { symbol: 'SPY', proxy: true }, // SPDR S&P 500 ETF
+  YM: { symbol: 'DIA', proxy: true }, // SPDR Dow Jones Industrial Average ETF
+  NQ: { symbol: 'QQQ', proxy: true }, // Invesco QQQ Trust (Nasdaq-100)
+};
+
+/**
+ * The Alpaca market for an instrument, or null when Alpaca has none. An unknown
+ * asset returns null so the route answers "no market" rather than reading a
+ * different symbol.
+ */
+export function alpacaFlowMarketFor(instrumentId: string): AlpacaFlowMarket | null {
+  const id = instrumentId.toUpperCase();
+  const override = (process.env[`ORDERFLOW_SYMBOL_${id}`] ?? '').trim();
+  const base = ALPACA_ORDERFLOW_MARKETS[id];
+  if (override.length > 0) return { symbol: override, proxy: base?.proxy ?? true };
+  return base ?? null;
+}
+
+/**
  * The Alpaca symbol to read for an instrument, or null when Alpaca does not
- * serve it. The mapping is the per-asset configuration in api/_lib/assets.ts, so
- * an asset moved off Alpaca has no order-flow market here either.
+ * serve it.
  */
 export function alpacaFlowSymbolFor(instrumentId: string): string | null {
-  const config = assetProviderConfig(instrumentId);
-  if (!config || config.provider !== 'alpaca') return null;
-  return config.symbol;
+  return alpacaFlowMarketFor(instrumentId)?.symbol ?? null;
 }
 
 /** True when Alpaca has a market to read for this instrument. */
@@ -178,8 +217,7 @@ function labelFor(score: number): GaugeReading['label'] {
 export function buildAlpacaGauge(metrics: AlpacaFlowMetrics, totalVolume: number): GaugeReading {
   const flowBias = totalVolume > 0 ? metrics.delta / totalVolume : 0;
   // The tape carries more of the signal than the resting top of book, so it
-  // weighs more. Same 60/40 split as the Binance venue, so the two venues read
-  // on one scale.
+  // weighs more, on the same -100..+100 scale as the other two compasses.
   const score = clamp(100 * (0.6 * flowBias + 0.4 * metrics.imbalance), -100, 100);
 
   const details: VoteDetail[] = [
@@ -231,8 +269,9 @@ export async function fetchAlpacaOrderFlowReading(
   secretKey: string,
   signal?: AbortSignal
 ): Promise<OrderFlowReading | null> {
-  const symbol = alpacaFlowSymbolFor(instrumentId);
-  if (!symbol) return null;
+  const market = alpacaFlowMarketFor(instrumentId);
+  if (!market) return null;
+  const symbol = market.symbol;
 
   const [trades, quote] = await Promise.all([
     fetchAlpacaTrades({ symbol, limit: ALPACA_ORDERFLOW_TRADES, keyId, secretKey, signal }),
@@ -246,6 +285,10 @@ export async function fetchAlpacaOrderFlowReading(
   const metrics = computeAlpacaFlowMetrics(trades, quote);
   const gauge = buildAlpacaGauge(metrics, totalTradeVolume(trades));
 
+  // The source names the real symbol read and, when it is an ETF, that it is a
+  // PROXY — never the index or the metal itself.
+  const proxyTag = market.proxy ? ' proxy' : '';
+
   return {
     gauge,
     metrics: {
@@ -254,6 +297,6 @@ export async function fetchAlpacaOrderFlowReading(
       imbalance: metrics.imbalance,
       absorption: metrics.absorption,
     },
-    source: `${ALPACA_VENUE} ${symbol} (${ALPACA_ORDERFLOW_FEED})`,
+    source: `${ALPACA_VENUE} ${symbol}${proxyTag} (${ALPACA_ORDERFLOW_FEED})`,
   };
 }

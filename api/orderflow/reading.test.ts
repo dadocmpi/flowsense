@@ -7,7 +7,8 @@
 // response shape all run together. The invariants:
 //
 //   * a probe with no instrument costs no vendor call and reports the venue
-//   * an index asset reads Alpaca (tape + IEX top of book) with the configured key
+//   * every shipped asset reads Alpaca (tape + IEX top of book) with the key
+//   * Gold reads the GLD ETF proxy, and the source label says it is a proxy
 //   * with no Alpaca key the card is told "not configured", never given a number
 //   * a venue that fails is reported as no reading, never a fabricated one
 
@@ -46,7 +47,13 @@ function runHandler(query: Record<string, string>): Promise<Captured> {
   return handler(req, res).then(() => captured);
 }
 
-const ENV_KEYS = ['ALPACA_API_KEY', 'ALPACA_API_SECRET', 'ORDERFLOW_PROVIDER', 'ORDERFLOW_PROVIDER_ES'];
+const ENV_KEYS = [
+  'ALPACA_API_KEY',
+  'ALPACA_API_SECRET',
+  'ORDERFLOW_PROVIDER',
+  'ORDERFLOW_PROVIDER_ES',
+  'ORDERFLOW_SYMBOL_GC',
+];
 
 function clearEnv(): void {
   for (const key of ENV_KEYS) delete process.env[key];
@@ -55,6 +62,11 @@ function clearEnv(): void {
 function setAlpacaCreds(): void {
   process.env.ALPACA_API_KEY = 'key-id';
   process.env.ALPACA_API_SECRET = 'secret-key';
+}
+
+/** The symbol an Alpaca trades/quotes URL names, e.g. "SPY" from `symbols=SPY`. */
+function symbolOf(url: string): string {
+  return new URL(url).searchParams.get('symbols') ?? '';
 }
 
 describe('GET /api/orderflow/reading', () => {
@@ -69,6 +81,7 @@ describe('GET /api/orderflow/reading', () => {
   });
 
   it('answers the probe with no vendor call and names the venue', async () => {
+    setAlpacaCreds();
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
 
@@ -77,6 +90,19 @@ describe('GET /api/orderflow/reading', () => {
     expect(status).toBe(200);
     expect(body.configured).toBe(true);
     expect(body.provider).toBe('http');
+    expect(body.venue).toBe('alpaca');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('reports the probe as not configured when no Alpaca key is present', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { status, body } = await runHandler({});
+
+    expect(status).toBe(200);
+    expect(body.configured).toBe(false);
+    expect(body.provider).toBe('none');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -107,9 +133,33 @@ describe('GET /api/orderflow/reading', () => {
     expect(reading!.metrics.delta).toBeCloseTo(3, 6); // two buyer-initiated prints
     expect(reading!.metrics.imbalance).toBeCloseTo(0.5, 6);
     expect(reading!.source).toContain('Alpaca');
+    expect(reading!.source).toContain('SPY');
   });
 
-  it('tells the client an index asset is not configured without an Alpaca key', async () => {
+  it('reads Gold through the GLD ETF proxy and labels it as a proxy', async () => {
+    setAlpacaCreds();
+    let sawSymbol = '';
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (url.includes('/v2/stocks/trades')) {
+        sawSymbol = symbolOf(url);
+        return jsonResponse({
+          trades: { GLD: [{ t: '2024-06-10T13:30:01Z', p: 240, s: 5, x: 'V' }] },
+          next_page_token: null,
+        });
+      }
+      return jsonResponse({ quotes: { GLD: { t: '2024-06-10T13:30:00Z', bp: 239.9, bs: 10, ap: 240.1, as: 8 } } });
+    });
+
+    const { body } = await runHandler({ instrument: 'GC', timeframe: '15m' });
+
+    expect(sawSymbol).toBe('GLD');
+    const reading = body.reading as { source: string } | null;
+    expect(reading).not.toBeNull();
+    expect(reading!.source).toContain('GLD');
+    expect(reading!.source).toContain('proxy');
+  });
+
+  it('tells the client an asset is not configured without an Alpaca key', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
 
@@ -130,5 +180,19 @@ describe('GET /api/orderflow/reading', () => {
     expect(status).toBe(200);
     expect(body.reading).toBeNull();
     expect(typeof body.note).toBe('string');
+  });
+
+  it('never echoes the vendor raw error text in the note', async () => {
+    setAlpacaCreds();
+    vi.stubGlobal('fetch', async () =>
+      jsonResponse({ message: 'internal request id 0xdeadbeef key=secret' }, 401)
+    );
+
+    const { body } = await runHandler({ instrument: 'ES', timeframe: '15m' });
+
+    expect(body.reading).toBeNull();
+    expect(body.note).not.toContain('0xdeadbeef');
+    expect(body.note).not.toContain('key=secret');
+    expect(body.note).toBe('The Alpaca credentials for order flow are not accepted.');
   });
 });

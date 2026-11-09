@@ -14,12 +14,6 @@ import {
 } from '../providers/capabilities';
 
 describe('order-flow capabilities', () => {
-  it('enables Book Flow for Binance, which publishes a real depth book', () => {
-    expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasOrderBook).toBe(true);
-    expect(VENUE_ORDER_FLOW_CAPABILITIES.binance.hasVolume).toBe(true);
-    expect(orderFlowCapabilitiesForVenue('binance')).toEqual({ hasOrderBook: true, hasVolume: true });
-  });
-
   it('enables Book Flow for Alpaca, which publishes the IEX top of book', () => {
     expect(VENUE_ORDER_FLOW_CAPABILITIES.alpaca.hasOrderBook).toBe(true);
     expect(VENUE_ORDER_FLOW_CAPABILITIES.alpaca.hasVolume).toBe(true);
@@ -38,8 +32,7 @@ describe('order-flow capabilities', () => {
 });
 
 describe('order-flow book label', () => {
-  it('names a multi-level book "Depth" and a one-level book "Top of book"', () => {
-    expect(orderFlowBookLabelForVenue('binance')).toBe('Depth');
+  it('names Alpaca\'s one-level book "Top of book"', () => {
     expect(orderFlowBookLabelForVenue('alpaca')).toBe('Top of book');
   });
 

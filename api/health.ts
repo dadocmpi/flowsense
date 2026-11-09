@@ -26,7 +26,6 @@ import {
 } from './_lib/futuresShared.js';
 import { meterSnapshot } from './_lib/creditMeter.js';
 import { alpacaCallsThisMinute, alpacaLastCallAt, alpacaMeterSnapshot } from './_lib/alpacaMeter.js';
-import { binanceCallsThisMinute, binanceLastCallAt, binanceMeterSnapshot } from './_lib/binanceMeter.js';
 import {
   orderFlowConfigured,
   orderFlowConfiguredFor,
@@ -45,7 +44,6 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
   const alpaca = alpacaConfigured();
   const meter = meterSnapshot();
   const alpacaMeter = alpacaMeterSnapshot();
-  const binanceMeter = binanceMeterSnapshot();
 
   const assets = CONFIGURED_ASSET_IDS.map(instrumentId => {
     const config = assetProviderConfig(instrumentId)!;
@@ -55,9 +53,9 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
       provider: config.provider,
       symbol: config.symbol,
       proxy: config.provider === 'alpaca',
-      // The order-flow venue this asset reads, and whether it can answer. Gold
-      // reads Binance; the index assets read Alpaca. A deployment can confirm at
-      // a glance that every asset has a real flow source.
+      // The order-flow venue this asset reads, and whether it can answer. Every
+      // shipped asset reads Alpaca (Gold through the GLD ETF proxy). A deployment
+      // can confirm at a glance that every asset has a real flow source.
       orderFlow: {
         venue: orderFlowVenueFor(instrumentId),
         label: orderFlowLabelFor(instrumentId),
@@ -92,29 +90,17 @@ export default function handler(_req: ApiRequest, res: ApiResponse): void {
         /** Epoch ms of the last Alpaca request, or null if none yet. */
         lastCallAt: alpacaLastCallAt(),
       },
-      // Order flow is per asset: Gold reads Binance (no key), the index assets
-      // read Alpaca through the same credentials as their candles. The meters are
-      // reported so a deployment can see each venue's spend at a glance.
+      // Order flow is read from Alpaca for every shipped asset, through the same
+      // credentials as their candles, so the meter reported above is its budget.
       orderflow: {
         anyConfigured: orderFlowConfigured(),
         globalOverride: resolveOrderFlowVendor(),
-        binance: {
-          configured: orderFlowVenueFor('GC') === 'binance' && orderFlowConfiguredFor('GC'),
-          venue: orderFlowVenueFor('GC'),
-          label: orderFlowLabelFor('GC'),
-          hasMarketForGold: orderFlowHasMarket('GC'),
-          requestsPerMinute: binanceMeter.limit,
-          callsThisMinute: binanceCallsThisMinute(),
-          remainingThisMinute: binanceMeter.remaining,
-          exhausted: binanceMeter.exhausted,
-          resetAt: binanceMeter.resetAt,
-          lastCallAt: binanceLastCallAt(),
-        },
         alpaca: {
           configured: orderFlowConfiguredFor('ES') && orderFlowVenueFor('ES') === 'alpaca',
           venue: orderFlowVenueFor('ES'),
           label: orderFlowLabelFor('ES'),
           hasMarketForIndex: orderFlowHasMarket('ES'),
+          hasMarketForGold: orderFlowHasMarket('GC'),
           // Alpaca order flow shares the Alpaca request meter reported above.
           requestsPerMinute: alpacaMeter.limit,
           callsThisMinute: alpacaCallsThisMinute(),

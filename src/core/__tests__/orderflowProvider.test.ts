@@ -161,7 +161,7 @@ describe('httpOrderFlowProvider', () => {
         configured: true,
         provider: 'http',
         label: 'MyFeed',
-        venue: 'binance',
+        venue: 'alpaca',
         reading: null,
         note: 'No market.',
       });
@@ -171,7 +171,7 @@ describe('httpOrderFlowProvider', () => {
     await expect(httpOrderFlowProvider.getReading({ instrument, timeframe: '15m' })).resolves.toEqual({
       reading: null,
       note: 'No market.',
-      venue: 'binance',
+      venue: 'alpaca',
       label: 'MyFeed',
     });
   });

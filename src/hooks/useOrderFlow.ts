@@ -36,7 +36,7 @@ export interface UseOrderFlowResult {
   reading: OrderFlowReading | null;
   /**
    * Why there is no reading, when there is none — the venue's own reason (e.g.
-   * "No Binance market for ES."). Null while loading or when a reading exists.
+   * "No Alpaca market for ES."). Null while loading or when a reading exists.
    */
   note: string | null;
   /**
@@ -48,8 +48,8 @@ export interface UseOrderFlowResult {
    */
   capabilities: OrderFlowCapabilities;
   /**
-   * The venue THIS instrument reads, as named by the server (e.g. "binance",
-   * "alpaca"). Drives the capabilities above; null until the first response.
+   * The venue THIS instrument reads, as named by the server (e.g. "alpaca").
+   * Drives the capabilities above; null until the first response.
    */
   venue: string | null;
   /** Human venue label for this instrument, e.g. "Alpaca". */
@@ -66,7 +66,7 @@ export function useOrderFlow(instrument: Instrument, timeframe: Timeframe): UseO
   const [note, setNote] = useState<string | null>(null);
   // The venue for the selected instrument, from the last response. The probe
   // reports the deployment-wide venue; a per-asset response reports the venue
-  // this asset actually reads (Gold -> Binance, the index assets -> Alpaca).
+  // this asset actually reads (every shipped asset reads Alpaca).
   const [venue, setVenue] = useState<string | null>(null);
   const [venueLabel, setVenueLabel] = useState<string | null>(null);
   const [state, setState] = useState<OrderFlowState>('LOADING');

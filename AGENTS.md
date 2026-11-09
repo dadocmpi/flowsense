@@ -56,7 +56,6 @@ api/_lib/assets.ts             THE per-asset provider + symbol mapping (env-over
 api/_lib/rateMeter.ts          the shared per-minute meter implementation
 api/_lib/creditMeter.ts        the Twelve Data meter instance (credits)
 api/_lib/alpacaMeter.ts        the Alpaca meter instance (requests)
-api/_lib/binanceMeter.ts       the Binance meter instance (requests)
 api/_lib/symbols.ts            the Twelve Data symbol mapping (the ONE place)
 api/_lib/twelvedata.ts         Twelve Data adapter: meter, request, parse, classify error kind
 api/_lib/alpaca.ts             Alpaca adapter: meter, request, parse, pagination, classify error kind
@@ -68,7 +67,6 @@ api/health.ts                  provider credentials + last-call time + calls thi
 api/futures/symbols.ts         symbol discovery, used by npm run check:symbols
 api/orderflow/reading.ts       is an order-flow venue configured, and its real reading (per asset)
 api/_lib/orderflow.ts          THE file to edit to connect an order-flow vendor; picks the venue PER ASSET
-api/_lib/binance.ts            Binance order-flow adapter: depth + aggTrades -> delta/CVD/imbalance
 api/_lib/alpacaOrderflow.ts    Alpaca order-flow adapter: trades (tick rule) + IEX top of book -> delta/CVD/imbalance
 scripts/checkSymbols.mjs       discovery CLI (bundles symbols.ts, no copy)
 ```
@@ -193,15 +191,22 @@ order book — so it is never computed from the candle feed. It comes from a rea
 VENUE behind `src/core/providers/orderflow.ts`, chosen server-side PER ASSET
 (`api/_lib/orderflow.ts`).
 
-TWO real venues ship, and the venue is a per-asset fact:
+ONE real venue ships, and the venue is still a per-asset fact:
 
-- **Gold (GC) reads Binance** (`api/_lib/binance.ts`): its public market-data API
-  carries a resting depth BOOK and a TAPE with the aggressor side of every trade
-  (`aggTrades`). Gold is read as PAXG/USDT (PAX Gold, 1 token = 1 troy ounce) — a
-  real gold market. The venue needs no key.
-- **The index assets (ES/YM/NQ) read Alpaca** (`api/_lib/alpacaOrderflow.ts`):
-  the same provider that serves their candles, so no extra key. It reads the
+- **Every shipped asset reads Alpaca** (`api/_lib/alpacaOrderflow.ts`): the same
+  provider that serves the index assets' candles, so no extra key. It reads the
   trade TAPE (`/v2/stocks/trades`) and the latest best bid/ask (`/v2/stocks/quotes/latest`).
+- **The symbol read is an ETF PROXY**: the index assets read their index ETF
+  (ES->SPY, YM->DIA, NQ->QQQ) and **Gold reads GLD** — a real gold ETF — because
+  Alpaca has no spot-gold market. The reading's source label names the symbol and
+  marks it a proxy, so a proxy is never presented as the index or the metal
+  itself. The map is `ALPACA_ORDERFLOW_MARKETS` in `api/_lib/alpacaOrderflow.ts`,
+  overridable per asset with `ORDERFLOW_SYMBOL_<ID>`.
+
+Binance is NO LONGER a venue. It used to be the default for Gold, but it has no
+market for the three American index assets, so it left those assets with no
+reading. A leftover `ORDERFLOW_PROVIDER=binance` now resolves to Alpaca rather
+than silently leaving the compass empty.
 
 Alpaca's equities API is not a futures book, and the adapter must not pretend it
 is. Three facts are disclosed, never hidden: a stock trade carries **no aggressor
@@ -236,33 +241,25 @@ entry check already speak that shape. The key stays server-side; check
 
 ### Every order-flow call goes through the venue's meter
 
-Each venue has its OWN meter instance, so one venue's limit can never block
-another: `api/_lib/binanceMeter.ts` for Binance and `api/_lib/alpacaMeter.ts` for
-Alpaca (the Alpaca order-flow calls share the Alpaca candle meter, since both are
-Alpaca requests). `binanceGet` in `api/_lib/binance.ts` checks the Binance meter
-before the request and records it after; the Alpaca order-flow calls go through
-`fetchAlpacaTrades` / `fetchAlpacaLatestQuote` in `api/_lib/alpaca.ts`, which use
-the same metered `alpacaGetJson` gate. Do not add a `fetch` to a Binance host
-outside `binanceGet`, or to `data.alpaca.markets` outside `api/_lib/alpaca.ts`.
-
-Binance serves the same public API from several hosts and some are geo-restricted
-(HTTP 451). The adapter tries `data-api.binance.vision`, then `api.binance.us`,
-then `api.binance.com`, remembers the first that answers, and only fails when all
-are unreachable. Pin one with `BINANCE_BASE_URL`.
+Order flow is read from Alpaca, so its calls share `api/_lib/alpacaMeter.ts` with
+the Alpaca candle requests (both are Alpaca requests against the same 200/min
+budget). They go through `fetchAlpacaTrades` / `fetchAlpacaLatestQuote` in
+`api/_lib/alpaca.ts`, which use the metered `alpacaGetJson` gate. Do not add a
+`fetch` to `data.alpaca.markets` outside `api/_lib/alpaca.ts`.
 
 ### The Book Flow toggle is a venue capability, never hardcoded
 
 `src/core/providers/capabilities.ts` maps a venue to what it can supply
-(`hasOrderBook`, `hasVolume`). Binance: a real multi-level book and a real tape.
-Alpaca: a real tape and the IEX best bid/ask — a real but ONE-LEVEL book, so
-Book Flow is offered and labelled "Top of book". The RIGHT panel renders the
-ORDER FLOW / BOOK FLOW toggle ONLY when the venue has a book AND the instrument
-has a live reading to switch modes on — never for a venue with no book, and never
-for an instrument the venue has no market for. With no book there is no toggle at
-all (not a disabled one) and Order Flow is the only mode. A venue with a real book
-lights the toggle
+(`hasOrderBook`, `hasVolume`). Alpaca: a real tape and the IEX best bid/ask — a
+real but ONE-LEVEL book, so Book Flow is offered and labelled "Top of book". The
+RIGHT panel renders the ORDER FLOW / BOOK FLOW toggle ONLY when the venue has a
+book AND the instrument has a live reading to switch modes on — never for a venue
+with no book, and never for an instrument the venue has no market for. With no
+book there is no toggle at all (not a disabled one) and Order Flow is the only
+mode. A venue with a real book lights the toggle
 up with no UI change, and `orderFlowBookLabelForVenue` names the book honestly
-("Depth" for Binance, "Top of book" for Alpaca).
+("Top of book" for Alpaca; never "Depth", which would claim a ladder Alpaca does
+not publish).
 
 ### The Summary blends the real reading, or is the technical reading
 

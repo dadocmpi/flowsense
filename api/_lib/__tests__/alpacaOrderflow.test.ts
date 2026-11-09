@@ -26,7 +26,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-const ENV_KEYS = ['ASSET_PROVIDER_ES', 'ASSET_SYMBOL_ES', 'ORDERFLOW_PROVIDER'];
+const ENV_KEYS = ['ORDERFLOW_SYMBOL_ES', 'ORDERFLOW_SYMBOL_GC', 'ORDERFLOW_PROVIDER'];
 
 describe('alpacaFlowSymbolFor', () => {
   beforeEach(() => {
@@ -36,13 +36,23 @@ describe('alpacaFlowSymbolFor', () => {
     for (const key of ENV_KEYS) delete process.env[key];
   });
 
-  it('maps the index assets to their ETF proxies and Gold to none', () => {
+  it('maps the index assets to their ETFs and Gold to the GLD ETF proxy', () => {
     expect(alpacaFlowSymbolFor('ES')).toBe('SPY');
     expect(alpacaFlowSymbolFor('YM')).toBe('DIA');
     expect(alpacaFlowSymbolFor('NQ')).toBe('QQQ');
-    expect(alpacaFlowSymbolFor('GC')).toBeNull();
+    expect(alpacaFlowSymbolFor('GC')).toBe('GLD');
     expect(alpacaHasMarket('ES')).toBe(true);
-    expect(alpacaHasMarket('GC')).toBe(false);
+    expect(alpacaHasMarket('GC')).toBe(true);
+  });
+
+  it('has no market for an unknown instrument', () => {
+    expect(alpacaFlowSymbolFor('XX')).toBeNull();
+    expect(alpacaHasMarket('XX')).toBe(false);
+  });
+
+  it('honours a per-asset symbol override', () => {
+    process.env.ORDERFLOW_SYMBOL_ES = 'IVV';
+    expect(alpacaFlowSymbolFor('ES')).toBe('IVV');
   });
 });
 
@@ -128,7 +138,7 @@ describe('fetchAlpacaOrderFlowReading', () => {
   });
 
   it('returns no reading for an instrument Alpaca does not serve', async () => {
-    await expect(fetchAlpacaOrderFlowReading('GC', '15m', 'k', 's')).resolves.toBeNull();
+    await expect(fetchAlpacaOrderFlowReading('XX', '15m', 'k', 's')).resolves.toBeNull();
   });
 
   it('reads the tape and the top of book and returns a real reading', async () => {

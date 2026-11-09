@@ -6,10 +6,11 @@
 //
 // Query: instrument, timeframe
 //
-// The venue is chosen PER ASSET (api/_lib/orderflow.ts): Gold reads Binance
-// (PAXG/USDT, no key), the index assets read Alpaca (their tape + IEX top of
-// same configured credentials as their candles). The probe below costs no vendor
-// call; only a request that names an instrument reads a venue.
+// The venue is chosen PER ASSET (api/_lib/orderflow.ts): every shipped asset
+// reads Alpaca — the index assets through their index ETF (SPY/DIA/QQQ) and Gold
+// through the GLD ETF proxy — using the same configured credentials as their
+// candles. The probe below costs no vendor call; only a request that names an
+// instrument reads a venue.
 //
 // Nothing here invents a reading: an instrument with no market on its venue, or
 // a venue that cannot be reached, answers with `reading: null` and a note. The
@@ -18,7 +19,7 @@
 // Response:
 //   { configured, provider, label, venue, note, reading }
 //   `venue`/`label` describe the venue THIS instrument reads, so the client can
-//   pick the right capabilities (a real depth book or the IEX top of book).
+//   pick the right capabilities (Alpaca publishes a one-level top of book).
 
 import { alpacaKeyId, alpacaSecretKey, sendJson, first, type ApiRequest, type ApiResponse } from '../_lib/futuresShared.js';
 import {
@@ -32,7 +33,18 @@ import {
   orderFlowVenueFor,
   resolveOrderFlowVendor,
 } from '../_lib/orderflow.js';
-import { BinanceError } from '../_lib/binance.js';
+import { AlpacaError, type AlpacaErrorKind } from '../_lib/alpaca.js';
+
+// Our own wording for an upstream failure, keyed by the kind. The vendor's raw
+// text is never shown in the UI: it can echo a request or an internal detail.
+const VENUE_ERROR_NOTES: Record<AlpacaErrorKind, string> = {
+  AUTH: 'The Alpaca credentials for order flow are not accepted.',
+  RATE_LIMIT: 'Alpaca rate limit reached.',
+  SYMBOL_NOT_FOUND: 'Alpaca has no market for this instrument.',
+  SUBSCRIPTION: 'This Alpaca feed does not carry order flow for this instrument.',
+  NETWORK: 'Could not reach Alpaca.',
+  UPSTREAM: 'Alpaca could not serve the order flow request.',
+};
 
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
   if (req.method && req.method !== 'GET') {
@@ -109,8 +121,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     });
   } catch (error) {
     // A failed venue call is reported as no reading, never as a fabricated one.
-    const note =
-      error instanceof BinanceError || error instanceof Error ? error.message : 'Order flow request failed';
+    // The note is OUR wording for the failure kind, never the vendor's raw text.
+    const note = error instanceof AlpacaError ? VENUE_ERROR_NOTES[error.kind] : 'Order flow request failed';
     sendJson(res, 200, {
       configured: true,
       provider: 'http',

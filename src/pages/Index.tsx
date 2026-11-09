@@ -8,7 +8,7 @@
 //   4. the LONG / SHORT entry check for the selected timeframe
 //
 // The right compass is REAL order flow from the configured venue, chosen per
-// asset (Gold reads Binance; the index assets read Alpaca). When the venue has no
+// asset (every shipped asset reads Alpaca). When the venue has no
 // market for the instrument, or cannot be reached, the card says so and draws no
 // gauge — it never falls back to a candle-derived estimate.
 //
